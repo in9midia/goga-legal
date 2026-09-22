@@ -9,6 +9,10 @@ auditoria:
   fonte: "research/auditoria_citacoes.md — §2, item 22"
   conferido_por: "curadoria"
 
+armadilha: "Citação EM VERIFICAÇÃO (auditoria, item 22): não confirmada com o objeto indicado. Vedado usar em parecer ou peça até a conferência (auditoria §5)."
+
+verified: false
+
 competencias: [15]
 ---
 

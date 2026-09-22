@@ -1,0 +1,51 @@
+# Postgres do Studio (fluxos, execucoes, spans, custos, auditoria). Banco
+# PROPRIO, e nao um schema no Postgres da KB: os dois servicos tem ciclos de
+# vida e migracoes independentes, e um `down.sh --purge` da KB nao pode levar
+# junto o historico de simulacoes.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: studio-postgres-data
+  namespace: stack-studio
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources: { requests: { storage: 4Gi } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: studio-postgres
+  namespace: stack-studio
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: studio-postgres } }
+  template:
+    metadata: { labels: { app: studio-postgres } }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            - { name: POSTGRES_DB, value: studio }
+            - { name: POSTGRES_USER, value: studio }
+            - { name: POSTGRES_PASSWORD, value: studio }
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+          ports: [{ containerPort: 5432 }]
+          volumeMounts: [{ name: data, mountPath: /var/lib/postgresql/data }]
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "studio", "-d", "studio"] }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { cpu: "1", memory: 512Mi }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: studio-postgres-data }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: studio-postgres, namespace: stack-studio }
+spec:
+  selector: { app: studio-postgres }
+  ports: [{ port: 5432, targetPort: 5432 }]

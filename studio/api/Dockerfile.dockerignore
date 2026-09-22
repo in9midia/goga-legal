@@ -1,0 +1,12 @@
+# Contexto e a raiz do repo: sem isto o build mandaria ao daemon a KB inteira
+# (e os node_modules), gigabytes que a imagem nao usa.
+*
+!studio/api/package.json
+!studio/api/package-lock.json
+!studio/api/tsconfig.json
+!studio/api/tsconfig.build.json
+!studio/api/src
+!studio/api/drizzle
+!studio/api/seed
+!knowledge-base/content/evaluation
+studio/api/src/**/*.test.ts

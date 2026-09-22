@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "studio-api",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "studio/api", "run", "dev"],
+      "port": 8787
+    },
+    {
+      "name": "studio-ui",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "studio/ui", "run", "dev"],
+      "port": 5173
+    }
+  ]
+}

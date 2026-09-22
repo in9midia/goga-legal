@@ -2,6 +2,7 @@
 #
 # Fonte normativa: `planning/02-BASE-CONHECIMENTO.md` §2.1 (os 17 Espaços), §2.2
 # (grants), §3.1 (motor de corte), §6 (onde a wiki é ligada) e §10 (as ondas).
+# Os 5 Espaços do fim do arquivo vêm de `planning/00-MVP-PLANO.md` §5.4 item 2.
 #
 # POR QUE ISTO É ARQUIVO E NÃO UMA SEQUÊNCIA DE CLIQUES
 #
@@ -89,10 +90,12 @@ agents:
   - runtime: exclusao
     group: /goga/agentes/exclusao
     competencias: [5]
-    spaces: []
+    spaces: [encaminhamento]
     motivo: >-
-      Exclusão e encaminhamento para fora da plataforma. Nenhum Espaço da §2.1
-      lista a competência 5.
+      Exclusão e encaminhamento para fora da plataforma. A §2.1 não lista a
+      competência 5, e o `planning/00-MVP-PLANO.md` §5.4 item 2 cria para ela
+      o Espaço `encaminhamento` (Defensoria, OAB, MP, Procon, delegacias): o
+      agente precisa saber PARA ONDE mandar, não analisar mérito.
 
   - runtime: orquestrador
     group: /goga/agentes/orquestrador
@@ -141,8 +144,11 @@ agents:
   - runtime: extrajudicial
     group: /goga/agentes/extrajudicial
     competencias: [52]
-    spaces: [cdc, estilo-peca]
-    motivo: §2.1 lista a competência 52 em `cdc` e em `estilo-peca`.
+    spaces: [cdc, estilo-peca, extrajudicial]
+    motivo: >-
+      §2.1 lista a competência 52 em `cdc` e em `estilo-peca`; o
+      `planning/00-MVP-PLANO.md` §5.4 item 2 acrescenta `extrajudicial`
+      (canais e modelos de reclamação).
 
   - runtime: registro
     group: /goga/agentes/registro
@@ -209,8 +215,10 @@ agents:
   - runtime: especialista
     competencia: 16
     group: /goga/agentes/especialista-16
-    spaces: [cdc]
-    motivo: §2.1 lista a competência 16 em `cdc`.
+    spaces: [cdc, telecom-essenciais]
+    motivo: >-
+      §2.1 lista a competência 16 em `cdc`; o `planning/00-MVP-PLANO.md` §5.4
+      item 2 acrescenta `telecom-essenciais`.
 
   - runtime: especialista
     competencia: 17
@@ -241,14 +249,18 @@ agents:
   - runtime: especialista
     competencia: 21
     group: /goga/agentes/especialista-21
-    spaces: [cdc]
-    motivo: §2.1 lista a competência 21 em `cdc`.
+    spaces: [cdc, transito-veiculos]
+    motivo: >-
+      §2.1 lista a competência 21 em `cdc`; o `planning/00-MVP-PLANO.md` §5.4
+      item 2 acrescenta `transito-veiculos`.
 
   - runtime: especialista
     competencia: 22
     group: /goga/agentes/especialista-22
-    spaces: [cdc]
-    motivo: §2.1 lista a competência 22 em `cdc`.
+    spaces: [cdc, educacao]
+    motivo: >-
+      §2.1 lista a competência 22 em `cdc`; o `planning/00-MVP-PLANO.md` §5.4
+      item 2 acrescenta `educacao`.
 
   - runtime: especialista
     competencia: 23
@@ -321,10 +333,11 @@ agents:
   - runtime: especialista
     competencia: 54
     group: /goga/agentes/especialista-54
-    spaces: [civil-contratos, calculo-monetario, seguros]
+    spaces: [civil-contratos, calculo-monetario, seguros, transito-veiculos]
     motivo: >-
       §2.1 lista a competência 54 em `civil-contratos`, em `calculo-monetario`
-      e em `seguros`.
+      e em `seguros`; o `planning/00-MVP-PLANO.md` §5.4 item 2 acrescenta
+      `transito-veiculos` (CTB, colisão).
 
 # ── Grupos humanos ───────────────────────────────────────────────────────────
 #
@@ -355,7 +368,7 @@ groups:
       todos os Espaços porque a etapa 4 do pipeline (§8) é dele em qualquer área,
       e é a única etapa que abre a zona amarela.
 
-# ── Os 17 Espaços ────────────────────────────────────────────────────────────
+# ── Os 17 Espaços da §2.1, e os 5 do MVP no fim ────────────────────────────────────────────────────────────
 #
 # `chunking.enrichment: conceito` é o que a §3 chama de `enrichment = conceito`:
 # a identidade do conceito é prependada a cada trecho antes do embedding. É o que
@@ -539,3 +552,70 @@ spaces:
     camada: operacional
     wiki: false
     competencias: [32, 44, 52]
+
+  # ── Os 5 Espaços do MVP ────────────────────────────────────────────────────
+  #
+  # Vêm do `planning/00-MVP-PLANO.md` §5.4 item 2, e não da §2.1: são as
+  # especialidades que, sem Espaço próprio, liam repertório emprestado do `cdc`
+  # (16, 21, 22) ou nenhum (5, e os canais da 52). Sem Espaço, a legislação
+  # setorial (CTB, Lei 9.472/97) não tinha onde entrar sem ampliar o alcance de
+  # TODO especialista que lê `cdc`, que é o grant a mais que a §2.2 proíbe.
+  #
+  # `onda: mvp`, e não um número: a §10 fixa quatro ondas e nenhuma delas
+  # prevê estes Espaços. Um número inventado aqui faria o `--onda N` do
+  # `apply-spaces.py` misturá-los a uma onda que não os planejou.
+  #
+  # Wiki desligada nos cinco. A §6 nomeia onde ela liga, e estes não estão lá;
+  # nos dois operacionais a razão é a mesma do `estilo-peca`: destilar canal ou
+  # modelo perde a literalidade que eles existem para ter.
+  - slug: telecom-essenciais
+    label: Telecom e serviços essenciais
+    description: >-
+      Lei 9.472/97, Decreto 6.523/2008 (SAC) e regulação da Anatel e da
+      Aneel. Telefonia, internet, TV, energia e água.
+    onda: mvp
+    camada: merito
+    wiki: false
+    competencias: [16]
+
+  - slug: transito-veiculos
+    label: Trânsito e veículos
+    description: >-
+      CTB (Lei 9.503/97), responsabilidade civil por colisão e vício de
+      veículo. Repertório das competências 21 e 54.
+    onda: mvp
+    camada: merito
+    wiki: false
+    competencias: [21, 54]
+
+  - slug: educacao
+    label: Educação
+    description: >-
+      Relação de consumo com instituição de ensino: mensalidade, matrícula,
+      rematrícula e cobrança.
+    onda: mvp
+    camada: merito
+    wiki: false
+    competencias: [22]
+
+  - slug: extrajudicial
+    label: Canais e reclamação extrajudicial
+    description: >-
+      Canais de reclamação (consumidor.gov.br, Procon, ouvidorias, Anatel, ANS,
+      Bacen, ANAC, Aneel), modelos de reclamação e de notificação
+      extrajudicial. Repertório operacional.
+    onda: mvp
+    camada: operacional
+    wiki: false
+    competencias: [52]
+
+  - slug: encaminhamento
+    label: Encaminhamento para fora da plataforma
+    description: >-
+      Para onde mandar o que o Goga não atende: Defensoria Pública, OAB
+      (assistência judiciária), Ministério Público, Procon e delegacias.
+      Repertório operacional.
+    onda: mvp
+    camada: operacional
+    wiki: false
+    competencias: [5]

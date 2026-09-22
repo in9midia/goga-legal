@@ -133,6 +133,12 @@ produto, e é publicado no host em `http://kc.localtest.me:8481`.
 Sem `KB_KEYCLOAK_ISSUER` a auth fica desligada e tudo é permitido, igual ao
 agentic-sdlc em dev offline. É o que permite subir o ambiente local sem rede.
 
+No deploy local, quem decide é `KB_AUTH` (padrão `off`, pelo §6 do
+`planning/00-MVP-PLANO.md`): `off` esvazia o issuer e o `20-deploy.sh` não
+toca no `coredns` nem cria o `keycloak-config`; `on` segue o caminho do
+Keycloak descrito acima. Com `off` o túnel ngrok é recusado mesmo com token,
+porque seria a KB aberta na internet com acesso total.
+
 ### O que precisa existir no realm
 
 | | |

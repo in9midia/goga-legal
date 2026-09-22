@@ -1,0 +1,9 @@
+# O Studio entra como namespace NOVO no cluster que a KB ja cria (decisao D2):
+# sem Keycloak no MVP nao ha motivo para um segundo cluster, e o studio-api
+# alcanca a KB pela rede interna (kb-api.stack-knowledge-base), sem expor nada.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: stack-studio
+  labels:
+    app.kubernetes.io/part-of: goga-studio

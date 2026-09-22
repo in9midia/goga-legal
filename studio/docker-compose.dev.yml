@@ -1,0 +1,15 @@
+# Postgres de desenvolvimento do Studio. No cluster, o Postgres é o do
+# namespace stack-studio (infra/k8s/local/studio); aqui é só para `npm run dev`.
+# Porta 5442 e não 5432: nesta máquina a 5432 costuma estar ocupada por outro projeto.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: goga-studio-postgres
+    environment:
+      POSTGRES_USER: studio
+      POSTGRES_PASSWORD: studio
+      POSTGRES_DB: studio
+    ports: ["5442:5432"]
+    volumes: [studio-pg:/var/lib/postgresql/data]
+volumes:
+  studio-pg:

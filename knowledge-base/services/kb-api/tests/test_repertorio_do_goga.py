@@ -44,6 +44,16 @@ SLUGS_DO_PLANO = {
     "fazenda-publica", "etica-regulatorio", "estilo-peca",
 }
 
+# Os 5 do `planning/00-MVP-PLANO.md` §5.4 item 2. Conjunto separado, e nao
+# somado ao de cima, para que a origem de cada slug continue legivel: os 17
+# vem da §2.1, estes vem do plano do MVP, e misturar esconderia qual documento
+# autoriza qual Espaco.
+SLUGS_DO_MVP = {
+    "telecom-essenciais", "transito-veiculos", "educacao", "extrajudicial",
+    "encaminhamento",
+}
+TODOS_OS_SLUGS = SLUGS_DO_PLANO | SLUGS_DO_MVP
+
 # §10 do plano. A onda 1 e pre-requisito de tudo, e e a unica que tem conjunto
 # de avaliacao nesta entrega.
 ONDA_1 = {"cdc", "bancario", "calculo-monetario", "etica-regulatorio", "estilo-peca"}
@@ -58,8 +68,8 @@ def config() -> dict:
 # ── os Espacos ─────────────────────────────────────────────────────────────
 
 
-def test_os_dezessete_espacos_da_secao_2_1(config):
-    assert {e["slug"] for e in config["spaces"]} == SLUGS_DO_PLANO
+def test_os_dezessete_espacos_da_secao_2_1_e_os_cinco_do_mvp(config):
+    assert {e["slug"] for e in config["spaces"]} == TODOS_OS_SLUGS
 
 
 def test_onda_1_e_a_do_plano(config):
@@ -95,7 +105,8 @@ def test_wiki_ligada_so_nos_espacos_de_merito_que_a_secao_6_nomeia(config):
 def test_nenhum_agente_e_irrestrito(config):
     for agente in config["agents"]:
         alcance = set(agente.get("spaces") or [])
-        assert alcance != SLUGS_DO_PLANO, agente["group"]
+        assert alcance != TODOS_OS_SLUGS, agente["group"]
+        assert not SLUGS_DO_PLANO <= alcance, agente["group"]
 
 
 def test_o_orquestrador_nao_tem_grant_nenhum(config):
@@ -106,7 +117,7 @@ def test_o_orquestrador_nao_tem_grant_nenhum(config):
 def test_todo_agente_aponta_para_espaco_que_existe(config):
     for agente in config["agents"]:
         for slug in agente.get("spaces") or []:
-            assert slug in SLUGS_DO_PLANO, f"{agente['group']} -> {slug}"
+            assert slug in TODOS_OS_SLUGS, f"{agente['group']} -> {slug}"
 
 
 def test_todo_agente_sem_grant_diz_por_que(config):
@@ -169,6 +180,11 @@ def test_item_em_verificacao_nao_alcanca_parecer_nem_peca():
     assert len(em_verificacao) == 9
     for arquivo, conceito in em_verificacao:
         assert conceito.trust == "unverified", arquivo
+        # O nivel sozinho so trava quem filtra por `min_trust`. O aviso colado
+        # chega tambem a quem busca sem filtro, e e o que a skill
+        # `verificar_citacao` do Studio le para bloquear (00-MVP-PLANO §5.4.5).
+        assert "EM VERIFICAÇÃO" in conceito.armadilha, arquivo
+        assert conceito.meta.get("verified") is False, arquivo
 
 
 def test_item_conferido_entra_como_machine_confirmed():
@@ -234,6 +250,109 @@ def test_copia_do_mesmo_conceito_em_dois_espacos_e_identica():
         )
     for nome, versoes in por_nome.items():
         assert len(versoes) == 1, nome
+
+
+# ── legislacao e modelos (00-MVP-PLANO §5.4, itens 4 e 6) ───────────────────
+
+LEGISLACAO = CONTENT / "legislacao"
+MODELOS = CONTENT / "modelos"
+SCRIPTS = CONTENT.parent / "scripts"
+
+
+def _arquivos(raiz: pathlib.Path) -> list[tuple[pathlib.Path, okf.Concept]]:
+    saida = []
+    for arquivo in sorted(raiz.rglob("*.md")):
+        conceito = okf.parse(arquivo.read_text(encoding="utf-8"))
+        assert conceito is not None, arquivo
+        saida.append((arquivo, conceito))
+    return saida
+
+
+def _script(nome: str):
+    """Carrega um script de `scripts/` como modulo (o nome tem hifen)."""
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location(nome.replace("-", "_"), SCRIPTS / f"{nome}.py")
+    modulo = importlib.util.module_from_spec(spec)
+    # Registrar antes de executar: `@dataclass` procura o modulo em
+    # `sys.modules`, e sem isto o carregamento morre com AttributeError.
+    sys.modules[spec.name] = modulo
+    spec.loader.exec_module(modulo)
+    return modulo
+
+
+def test_legislacao_e_norma_conferida_por_maquina_e_nunca_revisada():
+    """Texto do Planalto e fonte primaria coletada por maquina, e so isso.
+
+    `human-reviewed` e a assinatura do responsavel tecnico; um arquivo baixado
+    nascer nesse nivel abriria a zona amarela sem ninguem ter lido.
+    """
+    for arquivo, conceito in _arquivos(LEGISLACAO):
+        assert arquivo.parent.name in TODOS_OS_SLUGS, arquivo
+        assert conceito.type == "Norma", arquivo
+        assert conceito.trust == "machine-confirmed", arquivo
+        assert conceito.meta.get("fonte", {}).get("url", "").startswith(
+            "https://www.planalto.gov.br/"), arquivo
+
+
+def test_mapa_de_legislacao_aponta_para_espaco_declarado():
+    fetch = _script("fetch-legislacao")
+    for diploma in fetch.DIPLOMAS:
+        for espaco in diploma.espacos:
+            assert espaco in TODOS_OS_SLUGS, f"{diploma.slug} -> {espaco}"
+
+
+def test_conversor_descarta_o_texto_riscado_e_preserva_o_ordinal():
+    """As duas metades da regra do riscado, no HTML do Planalto.
+
+    O revogado dentro de `<strike>` sai (senao a redacao velha e recuperada
+    com o mesmo score da vigente); o `<s>º</s>` do CC fica (senao "§ 1º" vira
+    "§ 1" e a busca lexical pelo paragrafo deixa de casar).
+    """
+    fetch = _script("fetch-legislacao")
+    html_cp1252 = (
+        "<p>CAPÍTULO I</p><p>DAS COISAS</p>"
+        "<p><strike>Art. 7º Redação revogada.</strike></p>"
+        "<p>Art. 7º Redação vigente.</p><p>§ 1<s>º</s> Parágrafo.</p>"
+    ).encode("cp1252")
+    diploma = fetch.Diploma("t", "T", "https://www.planalto.gov.br/t", ("cdc",))
+    partes = fetch.para_markdown(fetch.decodificar(html_cp1252), diploma)
+    texto = "\n".join(linha for parte in partes for linha in parte.linhas)
+    assert "revogada" not in texto
+    assert "Redação vigente" in texto
+    assert "§ 1º Parágrafo" in texto
+    assert "###### Art. 7" in texto
+
+
+def test_todo_modelo_e_conceito_okf_do_tipo_modelo():
+    modelos = _arquivos(MODELOS)
+    assert modelos
+    for arquivo, conceito in modelos:
+        assert conceito.type == "Modelo", arquivo
+        assert arquivo.parent.name in TODOS_OS_SLUGS, arquivo
+        # Modelo nao nasce conferido: e texto operacional que o responsavel
+        # tecnico ainda nao assinou.
+        assert conceito.trust == "unverified", arquivo
+
+
+def test_copia_do_mesmo_modelo_em_dois_espacos_e_identica():
+    por_nome: dict[str, set[str]] = {}
+    for arquivo, _ in _arquivos(MODELOS):
+        por_nome.setdefault(arquivo.name, set()).add(arquivo.read_text(encoding="utf-8"))
+    for nome, versoes in por_nome.items():
+        assert len(versoes) == 1, nome
+
+
+def test_seed_de_templates_do_studio_e_o_export_dos_modelos():
+    """O JSON do Studio e gerado; editado a mao, ele diverge da KB em silencio."""
+    exportar = _script("export-templates")
+    esperado = exportar.serializar(exportar.montar())
+    if not exportar.SAIDA.exists():
+        pytest.skip("studio/api/seed fora deste checkout")
+    assert exportar.SAIDA.read_text(encoding="utf-8") == esperado, (
+        "rode scripts/export-templates.py"
+    )
 
 
 # ── os conjuntos de avaliacao ──────────────────────────────────────────────

@@ -74,7 +74,7 @@ Não pesquisa mérito; pesquisa precedentes de competência e acúmulo de pedido
 
 Matriz completa de prescrição e decadência: CC (arts. 205, 206), CDC (art. 27), CDC decadencial (art. 26), CTN, CLT (bienal/quinquenal), Lei 9.784/99 (art. 54), Lei 6.015/73, prazos recursais CPC/CLT.
 
-Jurisprudência de marcos interruptivos e de início de prazo (ciência inequívoca do dano; Súmula 150/STF; Tema 898/STJ sobre prescrição em negativação; marcos em planos de saúde e seguros).
+Jurisprudência de marcos interruptivos e de início de prazo (ciência inequívoca do dano; Súmula 150/STF; prescrição em negativação pela jurisprudência consolidada do STJ (referência em verificação — auditoria item 22; o Tema 898/STJ não foi localizado com esse objeto); marcos em planos de saúde e seguros).
 
 Estudo de caso: cronologia do fato → cálculo com data de referência → alerta de perecimento iminente.
 
@@ -94,7 +94,7 @@ Conhecimento amplo e raso de vias de solução extrajudicial (consumidor.gov.br,
 
 Apresentação da escolha de via após a análise: quadro comparativo entre (i) via extrajudicial, (ii) processo civil comum — sempre com advogado (art. 104, CPC): se a causa for destinada a essa via por opção ou por necessidade, o agente informa expressamente que a postulação exige advogado e que a plataforma agendará consulta por vídeo com advogado (Agente 11) — nessa via a ferramenta não gera peça para protocolo do usuário nem minuta; com cálculo e informação das custas estimadas e prazos, e (iii) JEC/JEF — sem custas em 1º grau, com suporte integral da ferramenta (peças + acompanhamento, Agentes 32 e 33). O usuário escolhe explicitamente; nenhuma peça é gerada antes da escolha.
 
-Critérios de elegibilidade JEC (20 SM sem advogado; até 40 SM com), JEF (60 SM sem advogado — art. 2º, Lei 10.259/2001) e JT (art. 791, CLT); cálculo de custas (incluindo gratuidade — art. 98 CPC) e informação de custas recursais do JEC (art. 54, Lei 9.099/95).
+Critérios de elegibilidade JEC (20 SM sem advogado; até 40 SM com), JEF (60 SM sem advogado — art. 3º, Lei 10.259/2001) e JT (art. 791, CLT); cálculo de custas (incluindo gratuidade — art. 98 CPC) e informação de custas recursais do JEC (art. 54, Lei 9.099/95).
 
 Peças formais em nome próprio somente nos foros com jus postulandi; recursos exigem advogado — bloqueio duro + handoff obrigatório; demais hipóteses, handoff permanece opção.
 
@@ -244,7 +244,7 @@ Produtos: parecer com matriz de risco (alta complexidade → handoff), linha do 
 
 ### Agente 19 — E-commerce e Compras Online
 
-Normativo: CDC art. 49 (arrependimento 7 dias); Decreto 7.962/2013 (e-commerce); Lei 14.870/2024 (responsabilidade de marketplaces); Marco Civil da Internet arts. 18–19 no nível de responsabilidade de plataforma.
+Normativo: CDC art. 49 (arrependimento 7 dias); Decreto 7.962/2013 (e-commerce); responsabilidade de marketplaces pelo CDC art. 34 e jurisprudência (referência à Lei 14.870/2024 em verificação — auditoria item 24); Marco Civil da Internet arts. 18–19 no nível de responsabilidade de plataforma.
 
 Jurisprudência: responsabilidade do marketplace por vendedor terceiro (padrão STJ recente); estorno/chargeback; não entrega (dano moral por quebra de confiança — padrões por tribunal); golpes em plataformas (falso anúncio — nexo com plataforma); negativação por dívida de terceiro/conta fraudada: dano moral conforme jurisprudência (Súmula 385/STJ não se aplica quando não há inscrição legítima preexistente — ver sentido correto da súmula no Agente 15).
 
@@ -484,7 +484,7 @@ Dupla função comum a todos: (a) criar minuta contratual sob medida — com int
 
 Tipos: locação residencial/comercial, compra e venda, promessa de compra e venda, comodato, cessão de direitos, permuta.
 
-Peculiaridades dominadas: garantias locatícias e vedação de cumulação (art. 44, Lei 8.245/91); laudo de vistoria e estado de conservação; benfeitorias (indenizáveis × não indenizáveis); prazo, denúncia vazia e desocupação; multa rescisória proporcional; na compra e venda: matrícula atualizada, cadeia dominial, certidões negativas, ônus e gravames, escritura pública e registro (arts. 108, 124 CC), arras/sinal (arts. 417–420 CC), correção e condições de pagamento.
+Peculiaridades dominadas: garantias locatícias e vedação de cumulação (art. 37, parágrafo único, Lei 8.245/91); laudo de vistoria e estado de conservação; benfeitorias (indenizáveis × não indenizáveis); prazo, denúncia vazia e desocupação; multa rescisória proporcional; na compra e venda: matrícula atualizada, cadeia dominial, certidões negativas, ônus e gravames, escritura pública e registro (arts. 108, 124 CC), arras/sinal (arts. 417–420 CC), correção e condições de pagamento.
 
 Análise de contrato enviado: checklist de cláusulas essenciais × ausentes; flags de risco (garantia cumulada, multa desproporcional, ausência de vistoria, vício de consentimento aparente).
 

@@ -1,0 +1,61 @@
+# studio-api: Fastify + motor do fluxo EM PROCESSO (sem fila, sem worker). Uma
+# replica so: o barramento do SSE e em memoria, e com duas o EventSource podia
+# cair no pod que nao esta executando o turno.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: studio-files, namespace: stack-studio }
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources: { requests: { storage: 4Gi } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: studio-api
+  namespace: stack-studio
+spec:
+  replicas: 1
+  # RWO no volume de anexos: o pod novo so monta quando o antigo solta.
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: studio-api } }
+  template:
+    metadata: { labels: { app: studio-api } }
+    spec:
+      securityContext: { fsGroup: 1000 }
+      containers:
+        - name: studio-api
+          image: localhost:5112/studio-api:dev
+          imagePullPolicy: Always
+          env:
+            - { name: DATABASE_URL, value: "postgres://studio:studio@studio-postgres:5432/studio" }
+            - { name: KB_URL, value: "http://kb-api.stack-knowledge-base" }
+            # Link da sidebar: o navegador abre a kb-ui pelo ingress do host.
+            - { name: KB_UI_URL, value: "http://localhost:8890" }
+            - { name: STUDIO_FILES_DIR, value: /data/files }
+          envFrom:
+            # STUDIO_SECRET_KEY, STUDIO_SESSION_SECRET, admin e chaves de
+            # provedor: criado pelo deploy.sh a partir do .env da raiz, FORA do
+            # kustomize (senao todo apply sobrescreveria com placeholder).
+            - secretRef: { name: studio-secrets }
+          ports: [{ containerPort: 8787, name: http }]
+          readinessProbe:
+            httpGet: { path: /api/v1/health, port: 8787 }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /api/v1/health, port: 8787 }
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          volumeMounts: [{ name: files, mountPath: /data }]
+          resources:
+            requests: { cpu: 100m, memory: 192Mi }
+            limits: { cpu: "1", memory: 768Mi }
+      volumes:
+        - name: files
+          persistentVolumeClaim: { claimName: studio-files }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: studio-api, namespace: stack-studio }
+spec:
+  selector: { app: studio-api }
+  ports: [{ name: http, port: 80, targetPort: 8787 }]

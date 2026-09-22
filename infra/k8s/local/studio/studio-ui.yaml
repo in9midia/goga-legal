@@ -1,0 +1,57 @@
+# studio-ui: bundle estatico + proxy /api no nginx (mesma origem, cookie sem CORS).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: studio-ui
+  namespace: stack-studio
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: studio-ui } }
+  template:
+    metadata: { labels: { app: studio-ui } }
+    spec:
+      containers:
+        - name: studio-ui
+          image: localhost:5112/studio-ui:dev
+          imagePullPolicy: Always
+          env:
+            - { name: API_PROXY_TARGET, value: "http://studio-api.stack-studio.svc.cluster.local" }
+          ports: [{ containerPort: 8080, name: http }]
+          readinessProbe:
+            httpGet: { path: /index.html, port: 8080 }
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 20m, memory: 32Mi }
+            limits: { cpu: 500m, memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: studio-ui, namespace: stack-studio }
+spec:
+  selector: { app: studio-ui }
+  ports: [{ name: http, port: 80, targetPort: 8080 }]
+---
+# Host proprio no MESMO ingress da KB (porta 8890 do host). `*.localtest.me`
+# resolve para 127.0.0.1 em qualquer DNS publico, entao nao ha /etc/hosts a
+# editar. A regra da KB nao tem host e continua pegando http://localhost:8890.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: studio-ui
+  namespace: stack-studio
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "30m"
+    # Turno com 3 especialistas + 2 ciclos de compliance passa de 60 s, e o SSE
+    # fica aberto o turno inteiro.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: studio.localtest.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: studio-ui, port: { number: 80 } }

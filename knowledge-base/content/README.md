@@ -1,12 +1,19 @@
 # Repertório do Goga: o que é configuração, o que é conteúdo
 
-Três artefatos versionados, e dois scripts que os aplicam contra uma KB de pé.
+Os artefatos versionados, e os scripts que os aplicam contra uma KB de pé.
 
 | O quê | Onde | Aplica com |
 |---|---|---|
-| Os 17 Espaços e as permissões | [`spaces.yaml`](spaces.yaml) | `scripts/apply-spaces.py` |
+| Os provedores de IA (Gemini embedding, DeepSeek chat) | `scripts/register-providers.py` | chaves em `GEMINI_API_KEY` e `DEEPSEEK_API_KEY`, só no ambiente |
+| Os 17 Espaços da §2.1, os 5 do MVP e as permissões | [`spaces.yaml`](spaces.yaml) | `scripts/apply-spaces.py` |
 | O seed da auditoria de citações | [`auditoria-citacoes/`](auditoria-citacoes/) | `scripts/ingest.sh <slug> content/auditoria-citacoes/<slug> --label "<o rótulo do spaces.yaml>"` |
+| A legislação primária (Planalto) | [`legislacao/`](legislacao/) | `scripts/fetch-legislacao.py [--only l14905] [--ingest]` |
+| Os modelos de documento | [`modelos/`](modelos/) | `scripts/ingest.sh`, e `scripts/export-templates.py` para o Studio |
 | Os conjuntos de avaliação da onda 1 | [`evaluation/`](evaluation/) | `scripts/load-evaluation.py` |
+
+**Tudo de uma vez:** `scripts/populate-kb.sh` (fase F1 do `planning/00-MVP-PLANO.md`)
+roda provedores → Espaços → auditoria → legislação → modelos → Espaços de novo →
+export dos templates, e para com mensagem clara se faltar uma das duas chaves.
 
 Fonte normativa de tudo aqui: `planning/02-BASE-CONHECIMENTO.md`. Onde este
 README diverge dela, a divergência está dita e justificada.
@@ -26,6 +33,11 @@ uv run -- python ../../scripts/load-evaluation.py
 ---
 
 ## 1. `spaces.yaml` — Espaços e permissões
+
+Os 5 Espaços do MVP (`telecom-essenciais`, `transito-veiculos`, `educacao`,
+`extrajudicial`, `encaminhamento`) vêm do `planning/00-MVP-PLANO.md` §5.4 item 2,
+estão no fim do arquivo com `onda: mvp` e ganham grant só das competências que o
+plano nomeia (16, 21 e 54, 22, 52, 5). O resto desta seção vale para os 17.
 
 Os 17 Espaços da §2.1, com motor de corte (§3.1), representação wiki (§6) e onda
 (§10); as identidades de runtime com o alcance de leitura de cada uma (§2.2); e
@@ -75,7 +87,17 @@ ingerir, no frontmatter da §4 do plano, um diretório por Espaço.
 | §3 verificados e mantidos | 14 | 14 | `verificada-mantida` | `machine-confirmed` |
 | §4 lacuna normativa incorporada | 2 | 2 | `incorporada-sem-conferencia` | `unverified` |
 
-**67 arquivos.** O nível de confiança é derivado, nunca declarado (ADR-0015 e
+**67 arquivos.** Os 9 itens `em-verificacao` levam também `verified: false` e
+`armadilha` com o aviso "Citação EM VERIFICAÇÃO": o nível já sai `unverified`,
+mas o aviso colado chega a quem busca sem `min_trust`, e é ele que a skill
+`verificar_citacao` do Studio lê para bloquear (§5.4 item 5 do plano do MVP).
+
+Os resíduos que a auditoria corrigiu e que ainda estavam no texto da pesquisa
+(Tema 898/STJ, art. 2º da Lei 10.259/2001, art. 44 da Lei 8.245/91 e Lei
+14.870/2024) foram corrigidos em `research/habilidades_juridicas_agentes(1).md`.
+O `.docx` de mesmo nome **não** foi alterado e ainda os contém.
+
+O nível de confiança é derivado, nunca declarado (ADR-0015 e
 ADR-0025): nenhum arquivo aqui escreve o nível, e nenhum nasce `human-reviewed`
 — esse é a assinatura do responsável técnico, etapa 4 do pipeline (§8), e é o
 único nível que abre a zona amarela.
@@ -151,7 +173,26 @@ que é menos do que isso.
 
 ---
 
-## 3. `evaluation/` — os conjuntos da onda 1
+## 3. `legislacao/` e `modelos/` — o texto normativo e os modelos
+
+**`legislacao/<espaço>/`**: gerado pelo `scripts/fetch-legislacao.py` a partir do
+texto compilado do Planalto, sem a redação riscada (revogada), com cada artigo
+como heading para o motor `markdown` cortar por artigo. CC e CPC saem divididos
+por Livro; CDC, CLT, CTN e Lei 8.213 por Título; CTB por Capítulo. Cada arquivo
+leva `verified: machine:planalto` (nível `machine-confirmed`) e a URL de origem.
+Só a Lei 14.905/2024 está versionada; o resto se baixa com o script. Três
+divergências da lista do plano, ditas no próprio script: a Resolução ANAC 400 não
+está no Planalto e fica para coleta manual; o Decreto 6.523/2008 foi revogado, e
+entra o Decreto 11.034/2022 no lugar; a CF entra só com os artigos listados.
+
+**`modelos/<espaço>/`**: os 13 modelos do §5.4 item 6 (reclamação por canal,
+notificações, requerimento ao ente público, checklists dos Agentes 53 e 54), em
+OKF `type: Modelo`, com os campos `{{campo}}` declarados no frontmatter. Nascem
+`unverified`: ninguém assinou ainda. O mesmo modelo em dois Espaços é cópia
+idêntica, e `studio/api/seed/templates.json` é **gerado** deles pelo
+`scripts/export-templates.py` (o teste recusa JSON desatualizado).
+
+## 4. `evaluation/` — os conjuntos da onda 1
 
 Cinco arquivos, 50 perguntas cada, 25 em cada voz.
 
@@ -189,12 +230,11 @@ aparente?" é pergunta; "o art. 26 do CDC dá 90 dias" seria afirmação.
 
 ---
 
-## 4. O que está bloqueado, e por quê
+## 5. O que está bloqueado, e por quê
 
 | O quê | Por quê |
 |---|---|
-| **Ingestão do texto normativo** | Exige o corpus (fonte primária coletada pela curadoria, etapa 1 do pipeline) e um provedor de embedding. Não há provedor cadastrado na KB, e a credencial dele é do operador: não entra em arquivo versionado (ADR-0009) |
-| **Ingestão do próprio seed** | Mesmo motivo. Os 67 arquivos estão prontos e validados contra o parser OKF, mas o upload falha no embedding enquanto não houver provedor |
+| **Ingestão (seed, legislação, modelos)** | Pronta no `scripts/populate-kb.sh`, e depende só das chaves do Gemini e do DeepSeek no ambiente do operador (ADR-0009). Sem elas o upload falha no embedding |
 | **Baseline Ragas** | Exige modelo de chat e conteúdo indexado. Sem os dois, a execução mede o vazio |
 | **Revisão humana** | É do advogado responsável técnico (etapa 4 do pipeline, trilha R). É ela que promove `machine-confirmed` a `human-reviewed` e abre a zona amarela |
 | **Token de serviço por agente** | A KB tem **um** token de serviço estático (`KB_SERVICE_TOKEN` + `KB_SERVICE_TOKEN_GROUPS`), e o token pessoal exige login de pessoa. Os grants por agente já estão aplicados e valem; o que falta é a credencial por agente, que `planning/05-IDENTIDADE-E-DADOS.md` §3 registra como ADR novo a escrever |

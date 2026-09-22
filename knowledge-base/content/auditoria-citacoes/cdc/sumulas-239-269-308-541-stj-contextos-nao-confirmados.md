@@ -8,6 +8,10 @@ auditoria:
   status: em-verificacao
   fonte: "research/auditoria_citacoes.md — §2, item 29"
   conferido_por: "curadoria"
+
+armadilha: "Citação EM VERIFICAÇÃO (auditoria, item 29): não confirmada com o objeto indicado. Vedado usar em parecer ou peça até a conferência (auditoria §5)."
+
+verified: false
 ---
 
 # Súmulas 239, 269, 308 e 541/STJ nos contextos indicados

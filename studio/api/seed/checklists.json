@@ -1,0 +1,199 @@
+{
+  "habilitacao_jec": {
+    "titulo": "Checklist de habilitação para ação no Juizado (pré-atendimento processual — Agente 3)",
+    "especialidades": [3, 32],
+    "documentos": [
+      {"item": "Documento de identidade com foto (RG, CNH ou outro válido)", "obrigatorio": true, "observacao": "Legível e dentro da validade. Foto ilegível = novo envio, nunca preenchimento por suposição."},
+      {"item": "Comprovante de residência recente (até 90 dias) em nome do usuário", "obrigatorio": true, "observacao": "Se estiver em nome de terceiro: declaração de residência, correspondência oficial ou conta de consumo acompanhada de declaração. Comprovante vencido é recusado com orientação de como obter um novo."},
+      {"item": "CPF e dados de qualificação civil (estado civil, profissão)", "obrigatorio": true, "observacao": "Coletados no intake."},
+      {"item": "Documentos probatórios do caso", "obrigatorio": true, "observacao": "Conforme o checklist específico do tipo de caso (contrato, faturas, prints, protocolos, notas fiscais, laudos, fotos, gravações lícitas)."},
+      {"item": "Rol de testemunhas com nome e contato", "obrigatorio": false, "observacao": "Se houver."},
+      {"item": "Razão social ou nome, CNPJ ou CPF e endereço completo da parte contrária", "obrigatorio": true, "observacao": "Essencial para a citação. Pode ser obtido na nota fiscal, no site da empresa ou no cartão CNPJ."}
+    ]
+  },
+  "negativacao_indevida": {
+    "titulo": "Negativação indevida (Serasa, SPC, Boa Vista)",
+    "especialidades": [15, 23],
+    "documentos": [
+      {"item": "Comprovante da negativação (consulta ao Serasa, SPC ou Boa Vista, ou carta de aviso)", "obrigatorio": true, "observacao": "Deve mostrar credor, valor, data de inclusão e contrato apontado."},
+      {"item": "Relatório completo de todas as negativações em nome do usuário", "obrigatorio": true, "observacao": "Necessário para verificar se há inscrição anterior legítima: a Súmula 385/STJ afasta o dano moral quando existe inscrição preexistente legítima."},
+      {"item": "Prova de que a dívida não existe, já foi paga ou não é do usuário", "obrigatorio": true, "observacao": "Comprovante de pagamento, termo de quitação, cancelamento do contrato, ou boletim de ocorrência se houver fraude com os dados do usuário."},
+      {"item": "Protocolos de atendimento e reclamações feitas ao credor", "obrigatorio": false, "observacao": "Números, datas e nomes dos atendentes, se houver."},
+      {"item": "Comunicação prévia recebida antes da inscrição (ou declaração de que não recebeu)", "obrigatorio": false, "observacao": "Ajuda a verificar se houve aviso prévio."},
+      {"item": "Prova de prejuízos concretos (crédito negado, compra recusada)", "obrigatorio": false, "observacao": "Reforça o pedido de indenização."}
+    ]
+  },
+  "fraude_bancaria": {
+    "titulo": "Fraude bancária (PIX, cartão clonado, golpe, empréstimo não contratado)",
+    "especialidades": [15, 23],
+    "documentos": [
+      {"item": "Extratos bancários do período da fraude", "obrigatorio": true, "observacao": "Destacar as operações não reconhecidas (data, hora, valor, destinatário)."},
+      {"item": "Faturas do cartão com os lançamentos contestados", "obrigatorio": false, "observacao": "Se a fraude foi no cartão."},
+      {"item": "Protocolo da contestação feita ao banco e resposta recebida", "obrigatorio": true, "observacao": "Registrar a data em que o banco foi avisado; é peça central da linha do tempo."},
+      {"item": "Boletim de ocorrência", "obrigatorio": true, "observacao": "Pode ser feito pela Delegacia Eletrônica do estado."},
+      {"item": "Prints de mensagens, ligações ou links do golpe", "obrigatorio": false, "observacao": "Com data e hora visíveis. Ajudam a reconstruir a linha do tempo da fraude."},
+      {"item": "Comprovante do PIX ou da transferência e pedido de devolução pelo MED (Mecanismo Especial de Devolução)", "obrigatorio": false, "observacao": "Quando a fraude envolver PIX."},
+      {"item": "Contrato ou tela do empréstimo/consignado não reconhecido e extrato do benefício", "obrigatorio": false, "observacao": "Quando houver empréstimo ou consignado não contratado."}
+    ]
+  },
+  "voo_atrasado_cancelado": {
+    "titulo": "Voo atrasado, cancelado ou overbooking",
+    "especialidades": [17, 23],
+    "documentos": [
+      {"item": "Bilhete, cartão de embarque ou comprovante de compra da passagem", "obrigatorio": true, "observacao": "Com número do voo, data e horário previstos."},
+      {"item": "Comprovação do atraso ou cancelamento (e-mail, SMS, aviso no app, declaração da companhia)", "obrigatorio": true, "observacao": "Registrar quando e como o passageiro foi avisado."},
+      {"item": "Horário real de chegada ao destino (novo cartão de embarque, print do app, declaração)", "obrigatorio": true, "observacao": "Base para medir o tempo total de atraso."},
+      {"item": "Comprovantes de despesas extras (alimentação, hospedagem, transporte, nova passagem)", "obrigatorio": false, "observacao": "Notas fiscais e recibos; base dos danos materiais."},
+      {"item": "Registro da assistência material oferecida ou negada", "obrigatorio": false, "observacao": "Vouchers recebidos ou prints de pedidos negados."},
+      {"item": "Protocolos de reclamação à companhia e à ANAC / consumidor.gov.br", "obrigatorio": false, "observacao": "Se já houver."},
+      {"item": "Prova de compromisso perdido (contrato, convite, atestado)", "obrigatorio": false, "observacao": "Reforça o pedido de dano moral ou material."}
+    ]
+  },
+  "bagagem": {
+    "titulo": "Bagagem extraviada, danificada ou violada",
+    "especialidades": [17, 23],
+    "documentos": [
+      {"item": "Registro de Irregularidade de Bagagem (RIB/PIR) feito no aeroporto", "obrigatorio": true, "observacao": "Se não foi feito no desembarque, informar e registrar a reclamação à companhia o quanto antes."},
+      {"item": "Cartão de embarque e etiqueta (ticket) da bagagem", "obrigatorio": true, "observacao": ""},
+      {"item": "Fotos da mala danificada e dos itens danificados", "obrigatorio": false, "observacao": "Em caso de dano ou violação."},
+      {"item": "Lista dos itens da bagagem com valores e comprovantes (notas fiscais, faturas)", "obrigatorio": true, "observacao": "Em extravio; itens sem comprovante podem ser questionados."},
+      {"item": "Comprovantes de compras emergenciais (roupas, itens de higiene)", "obrigatorio": false, "observacao": "Durante o extravio provisório."},
+      {"item": "Comunicações com a companhia (e-mails, protocolos, prazo informado para devolução)", "obrigatorio": false, "observacao": "Voo internacional ou nacional muda o regime de indenização material (Tema 210/STF)."}
+    ]
+  },
+  "plano_saude_negativa": {
+    "titulo": "Negativa de cobertura de plano de saúde",
+    "especialidades": [18],
+    "documentos": [
+      {"item": "Negativa da operadora por escrito (e-mail, carta, print do app ou protocolo)", "obrigatorio": true, "observacao": "Se a negativa foi verbal, pedir por escrito à operadora — é direito do beneficiário."},
+      {"item": "Pedido médico / relatório médico com justificativa e indicação de urgência", "obrigatorio": true, "observacao": "Documento sensível (dado de saúde): tratar com minimização LGPD."},
+      {"item": "Carteirinha do plano e contrato (ou condições gerais)", "obrigatorio": true, "observacao": "Informar se é plano individual, coletivo ou de autogestão (a Súmula 608/STJ exclui autogestão do CDC)."},
+      {"item": "Comprovantes de pagamento das mensalidades recentes", "obrigatorio": true, "observacao": "Afasta alegação de inadimplência."},
+      {"item": "Exames e laudos relacionados", "obrigatorio": false, "observacao": ""},
+      {"item": "Data de adesão ao plano e declaração de saúde assinada", "obrigatorio": false, "observacao": "Relevante para carência e doença preexistente (Súmula 609/STJ)."},
+      {"item": "Protocolos de reclamação na ouvidoria e na ANS (NIP)", "obrigatorio": false, "observacao": "Se já houver."}
+    ]
+  },
+  "compra_online_nao_entregue": {
+    "titulo": "Compra online não entregue ou golpe em loja virtual",
+    "especialidades": [19],
+    "documentos": [
+      {"item": "Comprovante do pedido (e-mail de confirmação, print da tela do pedido)", "obrigatorio": true, "observacao": "Com número do pedido, data e prazo de entrega prometido."},
+      {"item": "Comprovante de pagamento (fatura do cartão, comprovante de PIX ou boleto)", "obrigatorio": true, "observacao": "Informa o meio de pagamento — cartão permite contestação (chargeback) junto ao emissor."},
+      {"item": "Print do anúncio e da página da loja ou do vendedor", "obrigatorio": true, "observacao": "Identifica o polo correto: loja, marketplace, vendedor terceiro, intermediador."},
+      {"item": "Rastreio da entrega", "obrigatorio": false, "observacao": "Se houver código de rastreio."},
+      {"item": "Conversas e protocolos com a loja, o marketplace ou a transportadora", "obrigatorio": false, "observacao": "Com datas; mostrar se a negociação ficou dentro ou fora da plataforma."},
+      {"item": "CNPJ e endereço da loja", "obrigatorio": false, "observacao": "Nota fiscal, rodapé do site ou cartão CNPJ; essencial para eventual ação."},
+      {"item": "Boletim de ocorrência", "obrigatorio": false, "observacao": "Recomendado em caso de golpe (site falso, anúncio falso)."}
+    ]
+  },
+  "produto_defeituoso": {
+    "titulo": "Produto com defeito (vício ou fato do produto)",
+    "especialidades": [14, 21],
+    "documentos": [
+      {"item": "Nota fiscal ou comprovante de compra", "obrigatorio": true, "observacao": "Data da compra é marco para garantia e prazos do CDC."},
+      {"item": "Termo de garantia do fabricante", "obrigatorio": false, "observacao": "Garantia contratual soma-se à legal."},
+      {"item": "Fotos ou vídeos do defeito", "obrigatorio": true, "observacao": "Com data, se possível."},
+      {"item": "Ordem de serviço da assistência técnica (entrada e saída)", "obrigatorio": false, "observacao": "Registra quando o produto foi entregue para conserto e há quantos dias está lá."},
+      {"item": "Protocolos e conversas com a loja e o fabricante", "obrigatorio": false, "observacao": "Data da primeira reclamação é relevante para o prazo decadencial."},
+      {"item": "Laudo técnico", "obrigatorio": false, "observacao": "Se houver; necessidade de perícia complexa é gatilho de escalonamento."},
+      {"item": "Comprovantes de despesas ou danos causados pelo defeito", "obrigatorio": false, "observacao": "Em acidente de consumo, incluir documentos médicos."}
+    ]
+  },
+  "cobranca_indevida_telecom": {
+    "titulo": "Cobrança indevida de telefonia, internet ou TV",
+    "especialidades": [16],
+    "documentos": [
+      {"item": "Faturas com a cobrança contestada (idealmente a série de meses)", "obrigatorio": true, "observacao": "Permite comparar tarifa contratada × faturada."},
+      {"item": "Contrato, oferta ou print do plano contratado", "obrigatorio": true, "observacao": "Se não tiver, pedir cópia à operadora."},
+      {"item": "Protocolos de atendimento (números, datas) e gravações, se houver", "obrigatorio": true, "observacao": "Prova central nesse tipo de caso."},
+      {"item": "Comprovantes de pagamento das faturas", "obrigatorio": true, "observacao": "Base de eventual restituição."},
+      {"item": "Pedido de cancelamento e resposta da operadora", "obrigatorio": false, "observacao": "Em caso de cancelamento dificultado."},
+      {"item": "Protocolo de reclamação na Anatel ou no consumidor.gov.br", "obrigatorio": false, "observacao": "Se já houver."}
+    ]
+  },
+  "corte_servico_essencial": {
+    "titulo": "Corte de serviço essencial (energia, água, gás)",
+    "especialidades": [16, 23],
+    "documentos": [
+      {"item": "Faturas dos últimos meses e comprovantes de pagamento", "obrigatorio": true, "observacao": "Mostram se havia débito em atraso na data do corte."},
+      {"item": "Aviso de corte recebido (ou declaração de que não houve aviso prévio)", "obrigatorio": true, "observacao": "A ausência de aviso prévio é ponto central."},
+      {"item": "Data e hora do corte e da religação", "obrigatorio": true, "observacao": "Registrar com precisão; corte em curso é urgência."},
+      {"item": "Protocolos de atendimento com a concessionária", "obrigatorio": true, "observacao": "Números e datas dos pedidos de religação."},
+      {"item": "Fotos, vídeos ou testemunhas do corte", "obrigatorio": false, "observacao": ""},
+      {"item": "Comprovantes de prejuízos (alimentos perdidos, hospedagem, equipamento danificado)", "obrigatorio": false, "observacao": "Com notas fiscais."},
+      {"item": "Documento sobre pessoa vulnerável na residência (idoso, doente, uso de equipamento médico)", "obrigatorio": false, "observacao": "Dado sensível; é gatilho de escalonamento humano."}
+    ]
+  },
+  "danos_via_publica": {
+    "titulo": "Danos por buraco ou defeito de via pública (Agente 53)",
+    "especialidades": [53, 52],
+    "documentos": [
+      {"item": "Fotos do buraco ou defeito da via", "obrigatorio": true, "observacao": "O quanto antes após o fato, mostrando extensão, profundidade e contexto da via (referência de rua, ausência de sinalização); se possível, com geolocalização ou metadado de data."},
+      {"item": "Fotos dos danos no veículo (pneu, roda, suspensão, para-choque, chassi etc.)", "obrigatorio": true, "observacao": "Preferencialmente no mesmo dia do fato."},
+      {"item": "No mínimo três orçamentos de oficinas distintas", "obrigatorio": true, "observacao": "Praxe para evitar impugnação por sobrepreço; o pedido costuma se basear no menor valor ou na média dos três."},
+      {"item": "Boletim de ocorrência", "obrigatorio": false, "observacao": "Não obrigatório, mas recomendado; registrar pela Delegacia Eletrônica do estado ou aplicativo de trânsito, o quanto antes."},
+      {"item": "CRLV do veículo e CNH do condutor", "obrigatorio": true, "observacao": ""},
+      {"item": "Localização exata do fato", "obrigatorio": true, "observacao": "Endereço/CEP, cruzamento ou ponto de referência, com print do mapa (Google Maps/Street View) quando disponível. Determina o ente responsável."},
+      {"item": "Registro de reclamação prévia ao órgão (156, ouvidoria municipal, SAC da concessionária)", "obrigatorio": false, "observacao": "Se não existir, registrar antes ou em paralelo — fortalece a prova de ciência do defeito; não é condição da ação."},
+      {"item": "Testemunhas (nome e contato)", "obrigatorio": false, "observacao": "Se houver."},
+      {"item": "Nota fiscal ou recibo da oficina", "obrigatorio": false, "observacao": "Se o reparo já foi feito."}
+    ]
+  },
+  "colisao_veiculos": {
+    "titulo": "Colisão de veículos entre particulares (Agente 54)",
+    "especialidades": [54, 29, 52],
+    "documentos": [
+      {"item": "Boletim de ocorrência", "obrigatorio": true, "observacao": "Mais relevante do que no caso de via pública; registrar o quanto antes, presencialmente ou pela Delegacia Eletrônica."},
+      {"item": "Fotos do local do acidente e dos danos nos veículos", "obrigatorio": true, "observacao": "Posição final dos veículos, marcas de frenagem, sinalização, semáforo; danos em ambos os veículos, se possível."},
+      {"item": "No mínimo três orçamentos de oficinas distintas", "obrigatorio": true, "observacao": "Para o reparo do veículo do usuário; pedido costuma se basear no menor valor ou na média."},
+      {"item": "Dados completos do outro condutor e veículo", "obrigatorio": true, "observacao": "Nome, CPF, CNH, placa, RENAVAM, seguradora (se houver), telefone."},
+      {"item": "CNH do usuário e CRLV do seu veículo", "obrigatorio": true, "observacao": ""},
+      {"item": "Testemunhas (nome e contato)", "obrigatorio": false, "observacao": ""},
+      {"item": "Filmagens e prints de conversas com o outro condutor", "obrigatorio": false, "observacao": "Câmera própria, de terceiros ou do local; conversas sobre o ocorrido ou o reparo."},
+      {"item": "Documentos médicos ou laudo do IML", "obrigatorio": false, "observacao": "Se houve lesão corporal (gatilho de escalonamento se grave)."},
+      {"item": "Comprovante de renda", "obrigatorio": false, "observacao": "Se o pedido incluir lucro cessante por uso profissional do veículo."},
+      {"item": "Apólice de seguro do usuário e/ou do outro condutor", "obrigatorio": false, "observacao": "Para orientar o canal com a seguradora antes ou em paralelo à via judicial. O DPVAT está extinto."}
+    ]
+  },
+  "superendividamento": {
+    "titulo": "Superendividamento (Lei 14.181/2021)",
+    "especialidades": [15],
+    "documentos": [
+      {"item": "Lista de todas as dívidas (credor, valor total, parcela, taxa de juros, vencimento)", "obrigatorio": true, "observacao": "Base para o plano de pagamento."},
+      {"item": "Contratos de empréstimo, cartão e financiamento", "obrigatorio": true, "observacao": "Permite análise de CET e capitalização."},
+      {"item": "Extratos bancários e faturas de cartão recentes", "obrigatorio": true, "observacao": ""},
+      {"item": "Comprovantes de renda (holerite, extrato de benefício, declaração)", "obrigatorio": true, "observacao": "Necessário para avaliar o mínimo existencial."},
+      {"item": "Comprovantes das despesas básicas (moradia, alimentação, saúde, contas de consumo)", "obrigatorio": true, "observacao": "Mínimo existencial."},
+      {"item": "Extrato de consignações (INSS ou folha de pagamento)", "obrigatorio": false, "observacao": "Se houver consignado."},
+      {"item": "Informação sobre garantias reais ou crédito de luxo", "obrigatorio": false, "observacao": "Dívidas com garantia real e crédito para bens de luxo ficam fora do regime."}
+    ]
+  },
+  "distrato_imovel": {
+    "titulo": "Distrato de imóvel na planta / atraso de obra",
+    "especialidades": [20],
+    "documentos": [
+      {"item": "Contrato de promessa de compra e venda", "obrigatorio": true, "observacao": "Cláusulas de prazo de entrega, tolerância, multa e forma de devolução."},
+      {"item": "Comprovantes de todos os pagamentos feitos", "obrigatorio": true, "observacao": "Sinal, parcelas, intermediárias; base do cálculo de devolução."},
+      {"item": "Comprovante de pagamento de corretagem e taxa SATI", "obrigatorio": false, "observacao": "Verificar se o valor foi destacado no preço (Tema 938/STJ)."},
+      {"item": "Memorial de incorporação e cronograma da obra", "obrigatorio": false, "observacao": ""},
+      {"item": "Comunicações com a construtora (pedido de distrato, avisos de atraso, proposta de devolução)", "obrigatorio": true, "observacao": "Quem pediu o distrato e por quê muda o regime de devolução."},
+      {"item": "Fotos da obra ou do imóvel entregue com defeitos", "obrigatorio": false, "observacao": "Em atraso ou vício construtivo."},
+      {"item": "Contrato de financiamento, se houver", "obrigatorio": false, "observacao": ""}
+    ]
+  },
+  "locacao": {
+    "titulo": "Locação (caução, despejo, reajuste, vícios)",
+    "especialidades": [25, 45],
+    "documentos": [
+      {"item": "Contrato de locação", "obrigatorio": true, "observacao": "Garantia prevista (caução, fiador ou seguro-fiança — vedada a cumulação), índice de reajuste, multa."},
+      {"item": "Comprovantes de pagamento dos aluguéis e encargos", "obrigatorio": true, "observacao": ""},
+      {"item": "Laudos de vistoria de entrada e de saída", "obrigatorio": false, "observacao": "Centrais para devolução de caução e vícios."},
+      {"item": "Comprovante do depósito da caução", "obrigatorio": false, "observacao": "Se o caso for de devolução de caução."},
+      {"item": "Termo de entrega das chaves", "obrigatorio": false, "observacao": "Marco do fim da locação."},
+      {"item": "Notificações trocadas com o locador ou a imobiliária", "obrigatorio": false, "observacao": ""},
+      {"item": "Fotos de vícios no imóvel", "obrigatorio": false, "observacao": ""},
+      {"item": "Citação ou mandado da ação de despejo", "obrigatorio": false, "observacao": "Se o usuário já foi citado: urgência e prazo de defesa correndo."}
+    ]
+  }
+}

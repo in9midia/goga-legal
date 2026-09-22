@@ -176,9 +176,10 @@ scripts/e2e.py       ponta a ponta contra a stack, com login real no Identity
 infra/k8s/local/     k3d, no formato do agentic-sdlc
 scripts/             carga em massa, reconstrução do grafo, e os dois
                      aplicadores de `content/` (Espaços e avaliação)
-content/             o repertório do Goga como arquivo versionado: os 17
+content/             o repertório do Goga como arquivo versionado: os 17 + 5
                      Espaços com grants, o seed da auditoria de citações em
-                     OKF, e os conjuntos de avaliação. Ver content/README.md
+                     OKF, a legislação, os modelos de documento e os
+                     conjuntos de avaliação. Ver content/README.md
 ```
 
 `content/` é **configuração e conteúdo, não código**, e é a única pasta cujo

@@ -88,6 +88,29 @@ KC_REALM="$(env_val KB_KEYCLOAK_REALM)"; KC_REALM="${KC_REALM:-goga-interno}"
 KC_CLIENT="$(env_val KB_KEYCLOAK_CLIENT_ID)"; KC_CLIENT="${KC_CLIENT:-kb-ui}"
 KC_ISSUER="${KB_KEYCLOAK_ISSUER:-$KC_BASE/realms/$KC_REALM}"
 
+# ── KB_AUTH: off (padrao do MVP) ou on ─────────────────────────────────────
+#
+# O MVP roda a KB SEM autenticacao (`planning/00-MVP-PLANO.md` §6): o Studio
+# ainda nao fala OIDC, e o Keycloak do Goga nao sobe junto com este cluster.
+# Com o issuer preenchido e o Keycloak fora do ar, o kb-api recusa todo pedido
+# e a kb-ui fica presa no login -- o sintoma e "sessao expirada" sem erro de
+# configuracao nenhum (a primeira das quatro coisas do AGENTS.md).
+#
+# Antes deste bloco nao havia como desligar: o `${KB_KEYCLOAK_ISSUER:-...}`
+# acima troca o vazio pelo padrao, entao o ramo "sem issuer" do fim do arquivo
+# era inalcancavel. `KB_AUTH=off` esvazia o issuer DEPOIS do padrao, e o
+# kb-api cai no modo `auth-desligada` que ele ja suporta.
+#
+# `KB_AUTH=on` e o caminho do Keycloak, intacto. Qualquer outro valor e erro,
+# e nao "desligado": um `KB_AUTH=of` digitado errado desligando a auth em
+# silencio e o pior modo de falha possivel aqui.
+KB_AUTH="$(env_val KB_AUTH)"; KB_AUTH="${KB_AUTH:-off}"
+case "$KB_AUTH" in
+  off) KC_ISSUER="" ;;
+  on)  ;;
+  *)   echo "!! KB_AUTH=$KB_AUTH invalido. Use on ou off."; exit 1 ;;
+esac
+
 # ── o nome do issuer resolvendo DE DENTRO do cluster ───────────────────────
 #
 # Este e o ponto que quebra em silencio. `kc.localtest.me` e um nome publico
@@ -109,7 +132,9 @@ KC_ISSUER="${KB_KEYCLOAK_ISSUER:-$KC_BASE/realms/$KC_REALM}"
 # 00-cluster-up.sh, porque o nome vem do issuer CONFIGURADO: quando o issuer
 # mudar, o alias muda junto, sem ninguem lembrar de editar dois arquivos.
 KC_HOST="$(printf '%s' "$KC_BASE" | sed -E 's#^[a-z]+://##; s#[:/].*$##')"
-if [[ -n "$KC_HOST" && "$KC_HOST" != "localhost" ]]; then
+# Sem issuer o alias nao serve para nada, e mexer no coredns reinicia o DNS do
+# cluster a toa.
+if [[ -n "$KC_ISSUER" && -n "$KC_HOST" && "$KC_HOST" != "localhost" ]]; then
   HOSTS_ATUAL="$(kubectl -n kube-system get cm coredns -o jsonpath='{.data.NodeHosts}' 2>/dev/null || true)"
   # O IP do gateway do Docker sai do proprio NodeHosts: o k3d ja gravou ali o
   # `host.k3d.internal` apontando para ele na criacao do cluster. Descobrir de
@@ -184,7 +209,7 @@ if [[ -n "$KC_ISSUER" ]]; then
     echo "   comeca e morre na validacao do token, sem erro de configuracao."
   fi
 else
-  echo "== identity: sem issuer → auth desligada (dev offline)"
+  echo "== identity: KB_AUTH=off → auth DESLIGADA (MVP local; nao exponha esta KB)"
   kubectl -n "$NS" delete configmap keycloak-config --ignore-not-found >/dev/null 2>&1 || true
   kubectl -n "$NS" delete configmap kb-ui-config --ignore-not-found >/dev/null 2>&1 || true
 fi
@@ -197,6 +222,15 @@ fi
 # So sobe se houver authtoken: sem ele o pod ficaria em CrashLoopBackOff e o
 # ambiente pareceria quebrado por causa de um recurso OPCIONAL.
 NGROK_TOKEN="$(env_val NGROK_AUTHTOKEN)"
+# Tunel publico com a auth desligada publicaria a KB inteira, com escrita, para
+# a internet: o modo `auth-desligada` da acesso irrestrito a qualquer pedido. O
+# token do ngrok no .env e esquecido la com facilidade, entao a recusa e aqui e
+# nao na memoria de quem opera.
+if [[ -n "$NGROK_TOKEN" && -z "$KC_ISSUER" ]]; then
+  echo "!! NGROK_AUTHTOKEN presente, mas KB_AUTH=off: tunel NAO sobe."
+  echo "   Expor a KB sem autenticacao da acesso total a quem tiver a URL."
+  NGROK_TOKEN=""
+fi
 if [[ -n "$NGROK_TOKEN" ]]; then
   echo "== ngrok: tunel publico LIGADO"
   kubectl -n "$NS" create secret generic ngrok-secret \

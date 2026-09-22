@@ -1,0 +1,153 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "@xyflow/react/dist/style.css";
+
+/* Padrao visual do agentic-sdlc: escala grafite `ink-*`, um acento neutro
+   so para acao, cores de status contidas. As variaveis do shadcn apontam para
+   esses tokens, entao os componentes shadcn saem com a cara do agentic-sdlc. */
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  --color-ink-950: #0a0a0b;
+  --color-ink-900: #111113;
+  --color-ink-850: #161618;
+  --color-ink-800: #1c1c1f;
+  --color-ink-700: #232327;
+  --color-ink-600: #2c2c31;
+  --color-ink-500: #383840;
+  --color-line: #232327;
+  --color-line-soft: rgba(255, 255, 255, 0.06);
+  --color-text: #ededee;
+  --color-text-muted: #9a9aa3;
+  --color-text-dim: #62626a;
+  --color-ok: #16a34a;
+  --color-warn: #d97706;
+  --color-bad: #e11d48;
+  --color-info: #2563eb;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+:root {
+  --radius: 0.6rem;
+  --background: #0a0a0b;
+  --foreground: #ededee;
+  --card: #111113;
+  --card-foreground: #ededee;
+  --popover: #161618;
+  --popover-foreground: #ededee;
+  --primary: #f5f5f7;
+  --primary-foreground: #0a0a0b;
+  --secondary: #1c1c1f;
+  --secondary-foreground: #ededee;
+  --muted: #1c1c1f;
+  --muted-foreground: #9a9aa3;
+  --accent: #232327;
+  --accent-foreground: #ededee;
+  --destructive: #e11d48;
+  --border: #232327;
+  --input: #2c2c31;
+  --ring: #62626a;
+  --chart-1: #60a5fa;
+  --chart-2: #34d399;
+  --chart-3: #fbbf24;
+  --chart-4: #f472b6;
+  --chart-5: #a78bfa;
+  --sidebar: #0f0f11;
+  --sidebar-foreground: #ededee;
+  --sidebar-primary: #f5f5f7;
+  --sidebar-primary-foreground: #0a0a0b;
+  --sidebar-accent: #1c1c1f;
+  --sidebar-accent-foreground: #ededee;
+  --sidebar-border: #232327;
+  --sidebar-ring: #62626a;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-feature-settings: "cv11", "ss01", "ss03";
+  }
+  code,
+  pre,
+  .mono {
+    font-family: var(--font-mono);
+  }
+  ::selection {
+    background: rgba(255, 255, 255, 0.18);
+  }
+  ::placeholder {
+    font-style: italic;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+}
+
+.react-flow {
+  --xy-background-color: transparent;
+  --xy-edge-stroke: #3f3f46;
+  --xy-edge-stroke-selected: #d4d4d8;
+  --xy-minimap-background-color: #111113;
+  --xy-controls-button-background-color: #161618;
+  --xy-controls-button-background-color-hover: #232327;
+  --xy-controls-button-color: #ededee;
+  --xy-controls-button-border-color: #232327;
+}
+.react-flow__attribution {
+  display: none;
+}
