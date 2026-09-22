@@ -1,0 +1,6 @@
+# Dependências baixadas em tempo de execução por helpers de skill.
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+.installed

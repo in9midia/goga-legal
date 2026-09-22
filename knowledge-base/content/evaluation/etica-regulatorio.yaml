@@ -1,0 +1,145 @@
+# Conjunto de avaliação do Espaço `etica-regulatorio`.
+#
+# As regras deste arquivo estão em `content/README.md`, seção "Conjuntos de
+# avaliação". Em resumo: voz de leigo → `strategy: dificil` com `kind`; voz de
+# técnico → `strategy: direta`; `reference` vazio em todas (R4).
+#
+# QUEM É O "LEIGO" NUM ESPAÇO DE USO INTERNO
+#
+# Este repertório é operacional, não de mérito: é contra ele que o Guardião de
+# Compliance (competência 8) confere a saída. Ainda assim as duas vozes fazem
+# sentido, e a do leigo é a que mais importa aqui — é literalmente o que o
+# usuário escreve no WhatsApp quando testa a fronteira ("vocês me representam?",
+# "vocês garantem que eu ganho?"). Se a base não recupera a regra a partir dessa
+# frase, a trava não se aplica no momento em que ela é necessária.
+
+space: etica-regulatorio
+questions:
+  # ── voz de leigo (25) ────────────────────────────────────────────────────
+  - question: "vocês são um escritório de advocacia?"
+    strategy: dificil
+    kind: distincao
+  - question: "vocês vão me representar na justiça?"
+    strategy: dificil
+    kind: excecao
+  - question: "eu tenho chance de ganhar esse caso?"
+    strategy: dificil
+    kind: consequencia
+  - question: "vocês garantem que eu recebo o dinheiro?"
+    strategy: dificil
+    kind: excecao
+  - question: "isso que vocês me mandaram já é um parecer de advogado?"
+    strategy: dificil
+    kind: distincao
+  - question: "vocês podem negociar com a empresa no meu lugar?"
+    strategy: dificil
+    kind: excecao
+  - question: "dá para vocês entrarem com o processo por mim?"
+    strategy: dificil
+    kind: excecao
+  - question: "por que vocês não podem falar com a outra parte?"
+    strategy: dificil
+    kind: consequencia
+  - question: "eu preciso de advogado para entrar no juizado?"
+    strategy: dificil
+    kind: limite
+  - question: "meu caso é contra vocês mesmos, vocês analisam assim mesmo?"
+    strategy: dificil
+    kind: excecao
+  - question: "meu vizinho também usa o aplicativo e o processo é contra ele, tem problema?"
+    strategy: dificil
+    kind: excecao
+  - question: "o advogado que vai me atender já trabalha para a empresa que eu quero processar?"
+    strategy: dificil
+    kind: excecao
+  - question: "vocês podem me indicar um advogado?"
+    strategy: dificil
+    kind: distincao
+  - question: "quanto vocês cobram e isso é honorário?"
+    strategy: dificil
+    kind: distincao
+  - question: "vocês podem fazer propaganda dizendo quantos casos ganharam?"
+    strategy: dificil
+    kind: excecao
+  - question: "vocês podem usar meu caso como exemplo nas redes sociais?"
+    strategy: dificil
+    kind: consequencia
+  - question: "por que toda resposta de vocês termina com aquele aviso?"
+    strategy: dificil
+    kind: parafrase
+  - question: "o que vocês fazem com os documentos que eu mando?"
+    strategy: dificil
+    kind: consequencia
+  - question: "vocês guardam meu laudo médico? eu posso pedir para apagar?"
+    strategy: dificil
+    kind: consequencia
+  - question: "vocês vendem meus dados para alguém?"
+    strategy: dificil
+    kind: excecao
+  - question: "o atendente é uma pessoa ou é um robô?"
+    strategy: dificil
+    kind: distincao
+  - question: "uma inteligência artificial pode dizer se eu tenho direito?"
+    strategy: dificil
+    kind: limite
+  - question: "se a informação que vocês me deram estiver errada, quem responde?"
+    strategy: dificil
+    kind: consequencia
+  - question: "quanto tempo vocês guardam meu caso depois que ele acaba?"
+    strategy: dificil
+    kind: limite
+  - question: "eu posso mandar o WhatsApp de um amigo para vocês oferecerem o serviço?"
+    strategy: dificil
+    kind: multi_salto
+
+  # ── voz de técnico (25) ──────────────────────────────────────────────────
+  - question: "O que a Lei 8.906/94 define como atividade privativa de advogado?"
+    strategy: direta
+  - question: "Que atos de postulação a Lei 8.906/94 reserva ao advogado inscrito na OAB?"
+    strategy: direta
+  - question: "Em que hipóteses a Lei 9.099/95 dispensa a assistência de advogado?"
+    strategy: direta
+  - question: "O que a Lei 8.906/94 estabelece sobre exercício ilegal da profissão?"
+    strategy: direta
+  - question: "O que o Código de Ética e Disciplina da OAB dispõe sobre captação de clientela?"
+    strategy: direta
+  - question: "O que o Código de Ética e Disciplina da OAB dispõe sobre promessa de resultado?"
+    strategy: direta
+  - question: "O que o Código de Ética e Disciplina da OAB dispõe sobre sigilo profissional?"
+    strategy: direta
+  - question: "Como o Código de Ética e Disciplina da OAB trata o conflito de interesses?"
+    strategy: direta
+  - question: "O que o Provimento CFOAB 205/2021 estabelece sobre publicidade da advocacia?"
+    strategy: direta
+  - question: "Que formas de divulgação o Provimento CFOAB 205/2021 considera mercantilização?"
+    strategy: direta
+  - question: "O que o Provimento CFOAB 205/2021 dispõe sobre impulsionamento de conteúdo?"
+    strategy: direta
+  - question: "O que caracteriza a captação indevida de causa segundo a regulamentação da OAB?"
+    strategy: direta
+  - question: "Quais são as responsabilidades do advogado responsável técnico perante a OAB?"
+    strategy: direta
+  - question: "Que requisitos a OAB impõe à sociedade de advogados quanto à denominação e ao registro?"
+    strategy: direta
+  - question: "Que bases legais do art. 7º da LGPD sustentam o tratamento de dados em atendimento jurídico?"
+    strategy: direta
+  - question: "O que o art. 11 da LGPD estabelece para o tratamento de dados pessoais sensíveis?"
+    strategy: direta
+  - question: "Que dados de saúde caracterizam dado sensível para efeito da LGPD?"
+    strategy: direta
+  - question: "O que a LGPD exige quanto à finalidade e à minimização no tratamento de dados?"
+    strategy: direta
+  - question: "Quais são os direitos do titular previstos no art. 18 da LGPD?"
+    strategy: direta
+  - question: "Em que hipóteses a LGPD exige relatório de impacto à proteção de dados pessoais?"
+    strategy: direta
+  - question: "O que a LGPD estabelece sobre prazo e critério de eliminação de dados após o fim do tratamento?"
+    strategy: direta
+  - question: "O que a LGPD dispõe sobre decisões automatizadas e o direito de revisão?"
+    strategy: direta
+  - question: "Que obrigações de transparência a LGPD impõe quanto ao uso de sistemas automatizados no atendimento?"
+    strategy: direta
+  - question: "O que a legislação exige em matéria de disclaimer e informação sobre limites do serviço jurídico digital?"
+    strategy: direta
+  - question: "Que vedações a Lei 8.906/94 impõe à sociedade de advogados quanto a sócio não advogado?"
+    strategy: direta

@@ -1,0 +1,30 @@
+-- 0015 — marca quanto do custo do historico foi ESTIMADO.
+--
+-- O PROBLEMA QUE ISTO RESOLVE
+--
+-- O custo e congelado na hora do uso (ver 0014), o que e o comportamento certo:
+-- trocar o preco amanha nao pode reescrever o gasto de ontem. O efeito colateral
+-- e que tudo o que rodou ANTES de alguem cadastrar o preco ficou com zero, e
+-- zero na tela parece "nao gastou" -- quando na verdade sao 2,9 milhoes de
+-- tokens sem preco aplicado.
+--
+-- Da para recalcular. So que nao da para recalcular tudo com a mesma confianca:
+--
+--   * EMBEDDING e exato. A operacao nao tem saida, entao todo token e de
+--     entrada. Nao ha o que supor;
+--   * CHAT nao e. As linhas antigas so guardam o TOTAL: a decomposicao entre
+--     entrada e saida nunca foi gravada, e entrada e saida custam diferente.
+--     Recalcular exige supor a proporcao.
+--
+-- POR QUE UMA COLUNA, E NAO "recalcula e pronto"
+--
+-- Porque numero estimado misturado com numero apurado, sem nada distinguindo os
+-- dois, e pior que numero ausente: os dois somam igual e so um da para levar
+-- para uma conversa de orcamento. Esta coluna guarda QUANTOS tokens daquela
+-- linha tiveram a divisao suposta, e e o que permite a tela dizer "US$ X, dos
+-- quais Y vem de estimativa" em vez de afirmar um total que nao se sustenta.
+--
+-- Zero e o normal: tudo que for gravado daqui para frente tem a decomposicao
+-- vinda do proprio provedor.
+ALTER TABLE ai_usage_daily
+    ADD COLUMN IF NOT EXISTS tokens_estimados BIGINT NOT NULL DEFAULT 0;

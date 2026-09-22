@@ -1,0 +1,144 @@
+# Conjunto de avaliação do Espaço `calculo-monetario`.
+#
+# As regras deste arquivo estão em `content/README.md`, seção "Conjuntos de
+# avaliação". Em resumo: voz de leigo → `strategy: dificil` com `kind`; voz de
+# técnico → `strategy: direta`; `reference` vazio em todas (R4).
+#
+# UMA ADVERTÊNCIA QUE VALE SÓ PARA ESTE ESPAÇO
+#
+# Este repertório não é consultado para CALCULAR. Cálculo de prazo e de valor é
+# código determinístico no `goga-calc` (D-03). O que a busca aqui precisa acertar
+# é a ESCOLHA DO REGIME — qual índice, qual termo inicial, qual prazo — porque é
+# nela que o erro é silencioso e gera dano indenizável. Por isso quase toda
+# pergunta abaixo pergunta "qual regime se aplica", e nenhuma pede uma conta.
+
+space: calculo-monetario
+questions:
+  # ── voz de leigo (25) ────────────────────────────────────────────────────
+  - question: "desde quando conta a correção do dinheiro que a empresa me deve?"
+    strategy: dificil
+    kind: limite
+  - question: "os juros começam a contar da data do problema ou da data em que eu entrei na justiça?"
+    strategy: dificil
+    kind: distincao
+  - question: "qual índice é usado hoje para corrigir um valor atrasado?"
+    strategy: dificil
+    kind: parafrase
+  - question: "o valor que eu paguei em 2019 vale quanto hoje para efeito de devolução?"
+    strategy: dificil
+    kind: parafrase
+  - question: "mudou alguma coisa nos juros de dívida depois de 2024?"
+    strategy: dificil
+    kind: limite
+  - question: "a correção e os juros são a mesma coisa?"
+    strategy: dificil
+    kind: distincao
+  - question: "no dano moral a correção conta desde quando aconteceu ou desde quando o juiz fixou o valor?"
+    strategy: dificil
+    kind: distincao
+  - question: "quanto costumam dar de indenização por nome negativado indevidamente?"
+    strategy: dificil
+    kind: limite
+  - question: "quanto costumam dar de indenização quando o voo atrasa muitas horas?"
+    strategy: dificil
+    kind: limite
+  - question: "quanto costumam dar quando cortam a luz da casa indevidamente?"
+    strategy: dificil
+    kind: limite
+  - question: "quanto costumam dar quando some dinheiro da conta por golpe?"
+    strategy: dificil
+    kind: limite
+  - question: "quanto costumam dar quando vazam meus dados pessoais?"
+    strategy: dificil
+    kind: limite
+  - question: "o valor da indenização muda conforme o tamanho da empresa?"
+    strategy: dificil
+    kind: consequencia
+  - question: "o valor da indenização muda de um estado para o outro?"
+    strategy: dificil
+    kind: distincao
+  - question: "a empresa me devolve só o que eu paguei ou o dobro?"
+    strategy: dificil
+    kind: distincao
+  - question: "se eu pagar uma cobrança errada e depois descobrir, recebo o dobro de volta?"
+    strategy: dificil
+    kind: excecao
+  - question: "somando tudo o que eu quero pedir, cabe no juizado?"
+    strategy: dificil
+    kind: limite
+  - question: "quanto é o teto de valor do juizado especial?"
+    strategy: dificil
+    kind: limite
+  - question: "se eu pedir mais do que o teto, o que acontece?"
+    strategy: dificil
+    kind: consequencia
+  - question: "o dinheiro que eu deixei de ganhar por causa do problema entra na conta?"
+    strategy: dificil
+    kind: distincao
+  - question: "quando a dívida é com o governo os juros são diferentes?"
+    strategy: dificil
+    kind: excecao
+  - question: "o atraso da construtora na entrega do imóvel rende alguma compensação em dinheiro?"
+    strategy: dificil
+    kind: consequencia
+  - question: "se eu desistir do imóvel na planta, quanto a construtora pode ficar?"
+    strategy: dificil
+    kind: limite
+  - question: "o conserto do meu carro depois da batida é corrigido desde quando?"
+    strategy: dificil
+    kind: multi_salto
+  - question: "eu tenho que provar o prejuízo com nota fiscal ou dá para estimar?"
+    strategy: dificil
+    kind: consequencia
+
+  # ── voz de técnico (25) ──────────────────────────────────────────────────
+  - question: "O que a Lei 14.905/2024 alterou no art. 389 do Código Civil?"
+    strategy: direta
+  - question: "O que a Lei 14.905/2024 alterou no art. 406 do Código Civil?"
+    strategy: direta
+  - question: "Qual o índice de correção monetária e qual a taxa de juros no regime da Lei 14.905/2024?"
+    strategy: direta
+  - question: "Como se apura a taxa de juros legal quando a Selic é deduzida do IPCA?"
+    strategy: direta
+  - question: "A partir de que data se aplica o regime da Lei 14.905/2024 a obrigações anteriores?"
+    strategy: direta
+  - question: "Qual o termo inicial da correção monetária no dano moral?"
+    strategy: direta
+  - question: "Qual o termo inicial dos juros de mora na responsabilidade contratual?"
+    strategy: direta
+  - question: "Qual o termo inicial dos juros de mora na responsabilidade extracontratual?"
+    strategy: direta
+  - question: "Qual a diferença entre correção monetária e juros moratórios na liquidação do débito?"
+    strategy: direta
+  - question: "Que série do IPCA é utilizada na atualização de débitos judiciais?"
+    strategy: direta
+  - question: "Como a série Selic é aplicada ao cálculo de juros em débito civil?"
+    strategy: direta
+  - question: "Qual o regime de juros e correção aplicável a débito da Fazenda Pública?"
+    strategy: direta
+  - question: "Qual a diferença entre prescrição quinquenal contra a Fazenda Pública e prescrição trienal contra concessionária?"
+    strategy: direta
+  - question: "Qual a faixa usual de dano moral por negativação indevida no STJ e nos tribunais estaduais?"
+    strategy: direta
+  - question: "Qual a faixa usual de dano moral por cancelamento e atraso de voo?"
+    strategy: direta
+  - question: "Qual a faixa usual de dano moral por corte indevido de serviço essencial?"
+    strategy: direta
+  - question: "Qual a faixa usual de dano moral por fraude bancária com débito indevido?"
+    strategy: direta
+  - question: "Qual a faixa usual de dano moral por vazamento de dados sensíveis?"
+    strategy: direta
+  - question: "Que critérios de razoabilidade e proporcionalidade os tribunais aplicam ao arbitrar dano moral?"
+    strategy: direta
+  - question: "Como o porte econômico do réu é considerado como modulador do valor do dano moral?"
+    strategy: direta
+  - question: "O que o art. 42, parágrafo único, do CDC estabelece sobre a repetição do indébito em dobro?"
+    strategy: direta
+  - question: "Que requisito o STJ exige para a repetição em dobro fora da hipótese de engano justificável?"
+    strategy: direta
+  - question: "Qual o teto de valor de causa do Juizado Especial Cível da Lei 9.099/95?"
+    strategy: direta
+  - question: "Qual o teto de valor do Juizado Especial Federal no art. 3º da Lei 10.259/2001?"
+    strategy: direta
+  - question: "Qual o percentual de retenção admitido no distrato de imóvel na planta segundo o Tema 971/STJ?"
+    strategy: direta

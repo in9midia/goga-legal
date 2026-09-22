@@ -1,0 +1,27 @@
+# TRAVA de recurso do namespace — mesma rede de seguranca do agentic-sdlc.
+#
+# O no do k3d anuncia a RAM inteira da VM do WSL, entao o scheduler aceita pod
+# sem teto — e a ingestao do kb-api (docling + torch) cresce o suficiente para
+# levar o WSL ao swap-thrash, travando a maquina, nao so o cluster. Os pods da
+# stack declaram os proprios limits; este LimitRange cobre o que subir sem
+# declarar nada.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: default-container-limits
+  namespace: stack-knowledge-base
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "2"
+        memory: 2Gi
+      defaultRequest:
+        cpu: 50m
+        memory: 64Mi
+      max:
+        cpu: "4"
+        # 10Gi cobre o kb-api (8Gi) com margem. O LimitRange barra na ADMISSAO
+        # quem pedir mais do que o no suporta, o que e melhor que descobrir por
+        # WSL congelado.
+        memory: 10Gi

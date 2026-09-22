@@ -1,0 +1,94 @@
+# kb-ui — app React/Vite servido por nginx, e o UNICO caminho do navegador ate
+# a stack (mesmo arranjo do agentic-sdlc, onde so o UI tem Ingress).
+#
+# O nginx da imagem encaminha, no MESMO host:
+#   /v1   → kb-api    (REST de gestao e busca)
+#   /mcp  → kb-api    (superficie para os agentes de IA)
+#
+# O login NAO passa por aqui: o issuer e o Keycloak do Goga
+# (kc.localtest.me:8481), alcancado direto pelo navegador. Ele vive no outro
+# cluster k3d, nao nesta stack.
+#
+# UI e API na mesma origem continua importando: o bundle chama /v1 por caminho
+# relativo, entao nao ha CORS nem host de API assado na imagem.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kb-ui
+  namespace: stack-knowledge-base
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: kb-ui }
+  template:
+    metadata:
+      labels: { app: kb-ui }
+    spec:
+      containers:
+        - name: kb-ui
+          image: localhost:5112/ui-knowledge-base:dev
+          # Always com tag mutavel `:dev`: com IfNotPresent o no reaproveita a
+          # camada antiga e uma correcao no bundle fica invisivel -- ja custou
+          # duas rodadas de investigacao neste projeto.
+          imagePullPolicy: Always
+          env:
+            # Alvos do proxy do nginx (o entrypoint completa para FQDN, porque o
+            # resolver do nginx nao aplica a lista `search` do resolv.conf).
+            - { name: API_PROXY_TARGET, value: "http://kb-api.stack-knowledge-base" }
+            # Configuracao de RUNTIME do bundle (env.template.js → env.js). Fica
+            # fora do build de proposito: a mesma imagem sobe em local, dev e
+            # prod apontando para issuers diferentes.
+            - { name: API_BASE_URL, value: "/v1" }
+            - { name: MCP_URL, value: "" }
+          envFrom:
+            # KEYCLOAK_URL/REALM/CLIENT_ID: escrito pelo 20-deploy.sh. Ausente →
+            # a UI sobe sem login, igual ao kb-api sem issuer.
+            - configMapRef: { name: kb-ui-config, optional: true }
+          ports:
+            - { containerPort: 8080, name: http }
+          readinessProbe:
+            httpGet: { path: /index.html, port: 8080 }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /index.html, port: 8080 }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          # nginx servindo bundle estatico e fazendo proxy: consumo irrisorio.
+          # O teto existe so para nenhum pod ficar sem limite (ver limits.yaml).
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits: { cpu: "1", memory: "256Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kb-ui
+  namespace: stack-knowledge-base
+spec:
+  selector: { app: kb-ui }
+  ports:
+    - { name: http, port: 80, targetPort: 8080 }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kb-ui
+  namespace: stack-knowledge-base
+  annotations:
+    # Ingestao de PDF de 18 MB: o default de 1m do nginx recusaria com 413.
+    nginx.ingress.kubernetes.io/proxy-body-size: "128m"
+    # A ingestao de um documento grande (extracao + embedding) passa de 60s.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "1800"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "1800"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kb-ui
+                port: { number: 80 }

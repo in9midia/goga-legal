@@ -1,0 +1,26 @@
+# Fim de linha, fixado em LF.
+#
+# Este repositório é editado do Windows e do WSL, e tudo que ele produz roda em
+# container Linux. Um CRLF que entre num shell script quebra o shebang com o
+# erro mais confuso possível ("bad interpreter: /bin/sh^M"), e num arquivo de
+# migração ou de configuração do nginx passa em silêncio até a hora errada.
+#
+# `eol=lf` faz o checkout ser LF nas duas plataformas, então o problema não
+# depende da configuração local de quem clonou.
+* text=auto eol=lf
+
+# Binário não é normalizado, nunca.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+
+# Lockfiles: são gerados, e diff deles em review só gasta atenção.
+package-lock.json -diff linguist-generated
+uv.lock          -diff linguist-generated

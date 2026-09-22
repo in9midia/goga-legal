@@ -1,0 +1,143 @@
+# Conjunto de avaliação do Espaço `estilo-peca`.
+#
+# As regras deste arquivo estão em `content/README.md`, seção "Conjuntos de
+# avaliação". Em resumo: voz de leigo → `strategy: dificil` com `kind`; voz de
+# técnico → `strategy: direta`; `reference` vazio em todas (R4).
+#
+# AS DUAS VOZES AQUI
+#
+# Repertório operacional: padrão JEC sem citações, regras do Controlador de
+# Narrativa (competência 44) e modelos de reclamação por canal. A voz de leigo é
+# a do usuário que vai protocolar em nome próprio e pergunta o que escrever; a de
+# técnico é a de quem redige e precisa da regra de estilo ou do modelo do canal.
+
+space: estilo-peca
+questions:
+  # ── voz de leigo (25) ────────────────────────────────────────────────────
+  - question: "o que eu escrevo nessa reclamação para a empresa?"
+    strategy: dificil
+    kind: parafrase
+  - question: "preciso citar lei na minha reclamação?"
+    strategy: dificil
+    kind: excecao
+  - question: "onde eu reclamo de uma empresa de telefone?"
+    strategy: dificil
+    kind: distincao
+  - question: "onde eu reclamo de um plano de saúde?"
+    strategy: dificil
+    kind: distincao
+  - question: "onde eu reclamo de um banco?"
+    strategy: dificil
+    kind: distincao
+  - question: "onde eu reclamo de uma companhia aérea?"
+    strategy: dificil
+    kind: distincao
+  - question: "onde eu reclamo da conta de luz?"
+    strategy: dificil
+    kind: distincao
+  - question: "qual a diferença entre reclamar no consumidor.gov e no Procon?"
+    strategy: dificil
+    kind: distincao
+  - question: "que documentos eu preciso anexar na reclamação?"
+    strategy: dificil
+    kind: multi_salto
+  - question: "quanto tempo a empresa tem para responder?"
+    strategy: dificil
+    kind: limite
+  - question: "e se a empresa não responder, para onde eu vou depois?"
+    strategy: dificil
+    kind: consequencia
+  - question: "minha reclamação pode ser bem grande ou é melhor curta?"
+    strategy: dificil
+    kind: limite
+  - question: "eu conto a história toda ou só a parte do problema?"
+    strategy: dificil
+    kind: distincao
+  - question: "eu posso escrever que fiquei muito revoltado com a empresa?"
+    strategy: dificil
+    kind: excecao
+  - question: "eu preciso colocar quanto eu quero receber?"
+    strategy: dificil
+    kind: consequencia
+  - question: "tem que colocar data em tudo que aconteceu?"
+    strategy: dificil
+    kind: parafrase
+  - question: "posso mandar print de conversa de WhatsApp como prova?"
+    strategy: dificil
+    kind: parafrase
+  - question: "eu mesmo entro no juizado ou preciso de alguém?"
+    strategy: dificil
+    kind: limite
+  - question: "o que eu falo na audiência do juizado?"
+    strategy: dificil
+    kind: consequencia
+  - question: "eu tenho que escrever como advogado, com aquelas palavras difíceis?"
+    strategy: dificil
+    kind: excecao
+  - question: "posso mandar a mesma reclamação para vários lugares ao mesmo tempo?"
+    strategy: dificil
+    kind: consequencia
+  - question: "como eu escrevo uma carta para o vizinho antes de brigar na justiça?"
+    strategy: dificil
+    kind: parafrase
+  - question: "como eu aviso o motorista que bateu no meu carro de forma amigável?"
+    strategy: dificil
+    kind: parafrase
+  - question: "onde eu guardo o número de protocolo e para que ele serve depois?"
+    strategy: dificil
+    kind: multi_salto
+  - question: "eu já reclamei e não deu certo, escrevo tudo de novo do zero?"
+    strategy: dificil
+    kind: consequencia
+
+  # ── voz de técnico (25) ──────────────────────────────────────────────────
+  - question: "Qual é o padrão de petição inicial do JEC sem citação de jurisprudência?"
+    strategy: direta
+  - question: "Que elementos a petição inicial do JEC precisa conter segundo o padrão adotado?"
+    strategy: direta
+  - question: "Qual a extensão máxima prevista para cada tipo de peça no checklist de estilo?"
+    strategy: direta
+  - question: "Que regras de estilo mensuráveis o Controlador de Narrativa aplica a cada texto?"
+    strategy: direta
+  - question: "O que caracteriza rodeio introdutório para efeito do enxugamento estrutural?"
+    strategy: direta
+  - question: "Qual a regra de ordenação cronológica da narrativa fática?"
+    strategy: direta
+  - question: "Qual a regra de uma ideia por parágrafo aplicada às peças?"
+    strategy: direta
+  - question: "Em que posição do texto o pedido ou objetivo deve aparecer?"
+    strategy: direta
+  - question: "Que supressões são vedadas ao enxugamento, ainda que o texto fique mais longo?"
+    strategy: direta
+  - question: "Qual o formato do parecer de estilo entre APROVADO e RETORNA PARA ENXUGAMENTO?"
+    strategy: direta
+  - question: "Que regras de concisão falada se aplicam ao roteiro de áudio em formato podcast?"
+    strategy: direta
+  - question: "Em que ponto do fluxo o controle de estilo atua antes e depois da blindagem?"
+    strategy: direta
+  - question: "Qual o modelo de reclamação para o canal consumidor.gov.br?"
+    strategy: direta
+  - question: "Qual o modelo de reclamação para o Procon?"
+    strategy: direta
+  - question: "Qual o modelo de reclamação para ouvidoria de empresa?"
+    strategy: direta
+  - question: "Qual o modelo de reclamação para a Anatel?"
+    strategy: direta
+  - question: "Qual o modelo de reclamação para a ANS?"
+    strategy: direta
+  - question: "Qual o modelo de reclamação para o Bacen?"
+    strategy: direta
+  - question: "Qual o modelo de reclamação para a ANAC?"
+    strategy: direta
+  - question: "Qual o modelo de reclamação para a Aneel e para os reguladores estaduais de energia?"
+    strategy: direta
+  - question: "Qual o checklist de anexos exigido por canal de reclamação?"
+    strategy: direta
+  - question: "Qual a ordem de escalonamento entre reclamação, Procon, regulador e via judicial?"
+    strategy: direta
+  - question: "Qual o modelo de notificação amigável ao causador em colisão de veículos?"
+    strategy: direta
+  - question: "Qual o modelo de reclamação administrativa prévia em dano por defeito de via pública?"
+    strategy: direta
+  - question: "Como o protocolo da reclamação é registrado no case file e para que ele serve depois?"
+    strategy: direta

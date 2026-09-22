@@ -1,0 +1,76 @@
+# Postgres com pgvector — dados PERSISTENTES (PVC local-path do k3d). Sobrevive
+# a restart de pod, re-deploy e `k3d cluster stop/start`; so `down.sh` apaga.
+#
+# Imagem pgvector/pgvector em vez de postgres puro: a extensao `vector` precisa
+# estar instalada no servidor, e o `CREATE EXTENSION` da primeira migracao
+# falharia numa imagem sem ela.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+  namespace: stack-knowledge-base
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 8Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: stack-knowledge-base
+spec:
+  replicas: 1
+  # PVC RWO: o pod novo nao monta enquanto o antigo segura o volume → Recreate.
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: postgres }
+  template:
+    metadata:
+      labels: { app: postgres }
+    spec:
+      containers:
+        - name: postgres
+          # Tag FIXA, e nao `pg16`. A movel resolvia para o que estivesse
+          # publicado no dia, e a partir da migracao 0008 a versao do pgvector
+          # passou a ser requisito e nao detalhe: o indice vetorial precisa do
+          # tipo `halfvec` (>= 0.7) e o scan iterativo, de >= 0.8. Com tag movel,
+          # "funciona na minha maquina" viraria literal -- dois clusters criados
+          # em semanas diferentes teriam desempenho de busca diferente sem nada
+          # no repositorio explicando a diferenca.
+          #
+          # 0.8.6 e o que roda aqui hoje, medido com
+          # `SELECT extversion FROM pg_extension WHERE extname='vector'`.
+          image: pgvector/pgvector:0.8.6-pg16
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: POSTGRES_DB, value: "knowledge_base" }
+            - { name: POSTGRES_USER, value: "knowledge_base" }
+            - { name: POSTGRES_PASSWORD, value: "knowledge_base" }
+            # subPath pgdata evita o lost+found na raiz do volume (initdb exige dir vazio)
+            - { name: PGDATA, value: "/var/lib/postgresql/data/pgdata" }
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "knowledge_base", "-d", "knowledge_base"] }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests: { cpu: "100m", memory: "192Mi" }
+            limits: { cpu: "2", memory: "1Gi" }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: postgres-data }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: stack-knowledge-base
+spec:
+  selector: { app: postgres }
+  ports:
+    - { port: 5432, targetPort: 5432 }

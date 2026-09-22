@@ -1,0 +1,14 @@
+# Mirror de registry do containerd do k3s (ambiente local).
+#
+# Mapeia o ref `localhost:5112/...` -- que o `docker push` do HOST resolve
+# nativamente e trata como inseguro/HTTP -- para o container do registry na rede
+# do k3d. Assim a MESMA tag funciona no push (host) e no pull (cluster), sem
+# mexer em /etc/hosts nem em insecure-registries do daemon.
+#
+# Sem isto, o kubelet tenta `https://localhost:5112` de DENTRO do no, onde
+# localhost e o proprio no, e o pull morre com "connection refused" -- que foi
+# exatamente o modo de falha observado na primeira subida.
+mirrors:
+  "localhost:5112":
+    endpoint:
+      - "http://k3d-registry-kb.localhost:5000"

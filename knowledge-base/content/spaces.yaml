@@ -1,0 +1,541 @@
+# Espaços e permissões do repertório jurídico do Goga — configuração declarativa.
+#
+# Fonte normativa: `planning/02-BASE-CONHECIMENTO.md` §2.1 (os 17 Espaços), §2.2
+# (grants), §3.1 (motor de corte), §6 (onde a wiki é ligada) e §10 (as ondas).
+#
+# POR QUE ISTO É ARQUIVO E NÃO UMA SEQUÊNCIA DE CLIQUES
+#
+# Permissão de leitura de repertório é o que separa "competência exclusiva"
+# escrita em prompt de competência exclusiva que vale. Criada na tela, ela não
+# tem revisão, não tem histórico e não tem como ser conferida: a pergunta "o
+# `triagem` alcança `processual-civil`?" só se responde consultando o banco de
+# produção. Aqui ela se responde lendo o arquivo, e uma mudança aparece no diff.
+#
+# O `scripts/apply-spaces.py` aplica este arquivo contra uma KB de pé, e é
+# idempotente: rodar de novo não duplica nada e não desfaz ajuste feito na tela
+# que este arquivo não descreve.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# DUAS COISAS QUE ESTE ARQUIVO NÃO CONSEGUE DIZER, E QUE PRECISAM SER SABIDAS
+#
+# 1. PROVEDOR DE EMBEDDING. `space.embedding_provider_id` é anulável, então todo
+#    Espaço nasce sem provedor e usa o padrão da instalação. Hoje não há provedor
+#    nenhum cadastrado na KB (`GET /v1/ai/providers` devolve lista vazia), e sem
+#    ele o Espaço é criado mas NÃO INGERE: o upload falha na hora de embedar.
+#    Cadastrar provedor exige credencial do operador, que não entra em arquivo
+#    versionado (ADR-0009). O script diz isso em voz alta em vez de deixar o
+#    Espaço vazio parecer pronto.
+#
+# 2. MOTOR DE CORTE POR CAMADA. A §3.1 pede `markdown` para normativa e
+#    precedentes e `semantic` para doutrinária. O motor, porém, é do ESPAÇO
+#    (`space.chunking`), e as três camadas convivem dentro do mesmo Espaço — não
+#    há como um documento chegar com motor próprio (o upload não aceita esse
+#    parâmetro). Todos os Espaços aqui ficam em `markdown`, que é o certo para o
+#    que a onda 1 ingere (lei e precedente têm estrutura explícita e cortar por
+#    artigo é o corte certo). Manual de doutrina entrando num destes Espaços
+#    seria cortado por heading, que é justamente o que a §3.1 quer evitar — a
+#    decisão de onde a doutrina mora fica em aberto, registrada no README.
+
+version: 1
+
+# ── Identidades de runtime ───────────────────────────────────────────────────
+#
+# §2.2: "um token de serviço por agente de runtime, com grant de leitura apenas
+# nos Espaços da sua competência. Nenhum agente é irrestrito."
+#
+# O mapa competência → runtime é o de `planning/competencias/INDEX.md`; o mapa
+# competência → Espaço é o da §2.1. O cruzamento dos dois é o que está abaixo, e
+# nada aqui foi escolhido: cada linha é derivável dos dois documentos.
+#
+# POR QUE O `especialista` APARECE UMA VEZ POR COMPETÊNCIA, E NÃO UMA SÓ VEZ
+#
+# O `especialista` é UM runtime parametrizado (D-02). Se ele tivesse uma
+# identidade só, ela alcançaria os catorze Espaços de mérito somados — e
+# `planning/05-IDENTIDADE-E-DADOS.md` §3 diz o contrário, com todas as letras:
+# "o `especialista` de aéreo não alcança `bancario`". A instância parametrizada
+# é o agente de runtime para efeito de identidade; o processo é um só, a
+# credencial não.
+#
+# `spaces: []` NÃO É ESQUECIMENTO. É a competência que não consulta repertório
+# jurídico, e está declarada para que "nenhum agente é irrestrito" seja
+# conferível linha a linha em vez de depender de quem lembra.
+agents:
+  - runtime: recepcao
+    group: /goga/agentes/recepcao
+    competencias: [1, 2]
+    spaces: []
+    motivo: >-
+      Recepção e intake não analisam mérito: coletam relato e classificam
+      demanda. Nenhum Espaço da §2.1 lista as competências 1 ou 2.
+
+  - runtime: documental
+    group: /goga/agentes/documental
+    competencias: [3, 49]
+    spaces: []
+    motivo: >-
+      Habilitação documental. Nenhum Espaço da §2.1 lista as competências 3
+      ou 49.
+
+  - runtime: triagem
+    group: /goga/agentes/triagem
+    competencias: [4]
+    spaces: []
+    motivo: >-
+      Classifica a matéria para rotear. Classificar não é analisar, e a §2.1 não
+      dá repertório à competência 4. É o exemplo citado em
+      `planning/05-IDENTIDADE-E-DADOS.md` §3: "o `triagem` não alcança
+      `processual-civil`".
+
+  - runtime: exclusao
+    group: /goga/agentes/exclusao
+    competencias: [5]
+    spaces: []
+    motivo: >-
+      Exclusão e encaminhamento para fora da plataforma. Nenhum Espaço da §2.1
+      lista a competência 5.
+
+  - runtime: orquestrador
+    group: /goga/agentes/orquestrador
+    competencias: [6]
+    spaces: []
+    motivo: >-
+      §2.2, textual: "o `orquestrador` não tem grant nenhum de repertório — ele
+      não analisa mérito". Além disso ele não é LLM: é máquina de estados em
+      código (D-01).
+
+  - runtime: prazos
+    group: /goga/agentes/prazos
+    competencias: [7]
+    spaces: [processual-civil]
+    motivo: >-
+      §2.1 lista a competência 7 em `processual-civil`. O CÁLCULO do prazo não
+      sai daqui: é código determinístico no `goga-calc` (D-03). O repertório
+      serve para saber QUAL regime se aplica, que é onde o erro é silencioso.
+
+  - runtime: compliance
+    group: /goga/agentes/compliance
+    competencias: [8]
+    spaces: [etica-regulatorio]
+    motivo: >-
+      §2.1 lista a competência 8 em `etica-regulatorio` (uso interno). O
+      Guardião não consulta repertório de mérito: ele confere a saída contra a
+      Lei 8.906/94, o CED e a LGPD.
+
+  - runtime: redator
+    group: /goga/agentes/redator
+    competencias: [9, 10, 44]
+    spaces: [estilo-peca]
+    motivo: >-
+      §2.1 lista a competência 44 em `estilo-peca`. As competências 9 e 10 não
+      aparecem em Espaço nenhum: o redator escreve sobre o que o especialista
+      apurou, não sobre repertório que ele mesmo busque.
+
+  - runtime: handoff
+    group: /goga/agentes/handoff
+    competencias: [11]
+    spaces: [processual-civil, etica-regulatorio]
+    motivo: >-
+      §2.1 lista a competência 11 em `processual-civil` e em `etica-regulatorio`
+      (uso interno).
+
+  - runtime: extrajudicial
+    group: /goga/agentes/extrajudicial
+    competencias: [52]
+    spaces: [cdc, estilo-peca]
+    motivo: §2.1 lista a competência 52 em `cdc` e em `estilo-peca`.
+
+  - runtime: registro
+    group: /goga/agentes/registro
+    competencias: [35]
+    spaces: []
+    motivo: >-
+      Registro e autocrítica, fora do caminho de resposta. Nenhum Espaço da §2.1
+      lista a competência 35. Ele realimenta a fila de curadoria (§5.2) pela
+      API do Goga, não lendo repertório.
+
+  - runtime: memoria
+    group: /goga/agentes/memoria
+    competencias: [12]
+    spaces: []
+    motivo: Nenhum Espaço da §2.1 lista a competência 12.
+
+  - runtime: qualidade
+    group: /goga/agentes/qualidade
+    competencias: [13]
+    spaces: []
+    motivo: Nenhum Espaço da §2.1 lista a competência 13.
+
+  - runtime: copiloto-jec
+    group: /goga/agentes/copiloto-jec
+    competencias: [32]
+    spaces: [processual-civil, estilo-peca]
+    motivo: §2.1 lista a competência 32 em `processual-civil` e em `estilo-peca`.
+
+  - runtime: monitor
+    group: /goga/agentes/monitor
+    competencias: [33]
+    spaces: [processual-civil]
+    motivo: §2.1 lista a competência 33 em `processual-civil`.
+
+  - runtime: adversidade
+    group: /goga/agentes/adversidade
+    competencias: [34]
+    spaces: []
+    motivo: >-
+      LACUNA DELIBERADA, e não descuido. Nenhum Espaço da §2.1 lista a
+      competência 34, e o catálogo (`planning/competencias/INDEX.md`, §3 do
+      WP-03) registra que ela pede "todo o repertório" — o que colide de frente
+      com "nenhum agente é irrestrito" da §2.2. Sem grant até a colisão ser
+      decidida: a regra da §2.2 é normativa, o pedido do catálogo não.
+
+  - runtime: processual
+    group: /goga/agentes/processual
+    competencias: [51]
+    spaces: [processual-civil]
+    motivo: §2.1 lista a competência 51 em `processual-civil`.
+
+  - runtime: especialista
+    competencia: 14
+    group: /goga/agentes/especialista-14
+    spaces: [cdc]
+    motivo: §2.1 lista a competência 14 em `cdc`.
+
+  - runtime: especialista
+    competencia: 15
+    group: /goga/agentes/especialista-15
+    spaces: [bancario, calculo-monetario]
+    motivo: §2.1 lista a competência 15 em `bancario` e em `calculo-monetario`.
+
+  - runtime: especialista
+    competencia: 16
+    group: /goga/agentes/especialista-16
+    spaces: [cdc]
+    motivo: §2.1 lista a competência 16 em `cdc`.
+
+  - runtime: especialista
+    competencia: 17
+    group: /goga/agentes/especialista-17
+    spaces: [cdc, aereo]
+    motivo: §2.1 lista a competência 17 em `cdc` e em `aereo`.
+
+  - runtime: especialista
+    competencia: 18
+    group: /goga/agentes/especialista-18
+    spaces: [saude-suplementar]
+    motivo: §2.1 lista a competência 18 em `saude-suplementar`.
+
+  - runtime: especialista
+    competencia: 19
+    group: /goga/agentes/especialista-19
+    spaces: [cdc]
+    motivo: §2.1 lista a competência 19 em `cdc`.
+
+  - runtime: especialista
+    competencia: 20
+    group: /goga/agentes/especialista-20
+    spaces: [cdc, imobiliario, calculo-monetario]
+    motivo: >-
+      §2.1 lista a competência 20 em `cdc`, em `imobiliario` e em
+      `calculo-monetario`.
+
+  - runtime: especialista
+    competencia: 21
+    group: /goga/agentes/especialista-21
+    spaces: [cdc]
+    motivo: §2.1 lista a competência 21 em `cdc`.
+
+  - runtime: especialista
+    competencia: 22
+    group: /goga/agentes/especialista-22
+    spaces: [cdc]
+    motivo: §2.1 lista a competência 22 em `cdc`.
+
+  - runtime: especialista
+    competencia: 23
+    group: /goga/agentes/especialista-23
+    spaces: [cdc, calculo-monetario]
+    motivo: §2.1 lista a competência 23 em `cdc` e em `calculo-monetario`.
+
+  - runtime: especialista
+    competencia: 24
+    group: /goga/agentes/especialista-24
+    spaces: [civil-contratos]
+    motivo: §2.1 lista a competência 24 em `civil-contratos`.
+
+  - runtime: especialista
+    competencia: 25
+    group: /goga/agentes/especialista-25
+    spaces: [imobiliario, condominial]
+    motivo: §2.1 lista a competência 25 em `imobiliario` e em `condominial`.
+
+  - runtime: especialista
+    competencia: 26
+    group: /goga/agentes/especialista-26
+    spaces: [trabalhista]
+    motivo: §2.1 lista a competência 26 em `trabalhista`.
+
+  - runtime: especialista
+    competencia: 27
+    group: /goga/agentes/especialista-27
+    spaces: [previdenciario]
+    motivo: §2.1 lista a competência 27 em `previdenciario`.
+
+  - runtime: especialista
+    competencia: 28
+    group: /goga/agentes/especialista-28
+    spaces: [tributario-pf]
+    motivo: §2.1 lista a competência 28 em `tributario-pf`.
+
+  - runtime: especialista
+    competencia: 29
+    group: /goga/agentes/especialista-29
+    spaces: [seguros]
+    motivo: §2.1 lista a competência 29 em `seguros`.
+
+  - runtime: especialista
+    competencia: 30
+    group: /goga/agentes/especialista-30
+    spaces: [civil-contratos]
+    motivo: §2.1 lista a competência 30 em `civil-contratos`.
+
+  - runtime: especialista
+    competencia: 31
+    group: /goga/agentes/especialista-31
+    spaces: [lgpd-digital]
+    motivo: §2.1 lista a competência 31 em `lgpd-digital`.
+
+  - runtime: especialista
+    competencia: 50
+    group: /goga/agentes/especialista-50
+    spaces: [condominial]
+    motivo: §2.1 lista a competência 50 em `condominial`.
+
+  - runtime: especialista
+    competencia: 53
+    group: /goga/agentes/especialista-53
+    spaces: [calculo-monetario, fazenda-publica]
+    motivo: >-
+      §2.1 lista a competência 53 em `calculo-monetario` e em
+      `fazenda-publica`.
+
+  - runtime: especialista
+    competencia: 54
+    group: /goga/agentes/especialista-54
+    spaces: [civil-contratos, calculo-monetario, seguros]
+    motivo: >-
+      §2.1 lista a competência 54 em `civil-contratos`, em `calculo-monetario`
+      e em `seguros`.
+
+# ── Grupos humanos ───────────────────────────────────────────────────────────
+#
+# Os caminhos vêm do realm `goga-interno` e do ADR-0023 do `knowledge-base`, não
+# da §2.2: onde o plano escreve `curadoria-juridica`, o realm e o ADR-0023 já
+# fixaram `/goga/curadoria`, e o `KB_ADMIN_GROUP` da instalação aponta para ele.
+# Seguir o nome do plano criaria um grupo que não existe em lugar nenhum.
+#
+# O grant de escrita da curadoria é REDUNDANTE hoje: `/goga/curadoria` é o grupo
+# de administração e já alcança tudo sem grant. Está declarado assim mesmo
+# porque a permissão passa a viver no arquivo, e não numa variável de ambiente
+# do cluster — no dia em que o `KB_ADMIN_GROUP` mudar, o acesso da curadoria não
+# some junto.
+groups:
+  - group: /goga/curadoria
+    role: editor
+    spaces: todos
+    motivo: >-
+      §2.2 pede um grupo de curadoria com escrita. ADR-0023 fixa `/goga/curadoria`
+      como quem ingere e corrige o repertório.
+
+  - group: /goga/responsavel-tecnico
+    role: reader
+    spaces: todos
+    motivo: >-
+      ADR-0023: o responsável técnico "entra na KB para revisar e assinar
+      (`human-reviewed`). Precisa LER o que assina, não criar Espaço". Leitura em
+      todos os Espaços porque a etapa 4 do pipeline (§8) é dele em qualquer área,
+      e é a única etapa que abre a zona amarela.
+
+# ── Os 17 Espaços ────────────────────────────────────────────────────────────
+#
+# `chunking.enrichment: conceito` é o que a §3 chama de `enrichment = conceito`:
+# a identidade do conceito é prependada a cada trecho antes do embedding. É o que
+# faz "art. 1.015, II" ser recuperado junto com "recurso contra decisão de
+# mérito". Ligado em todos porque todo Espaço daqui recebe conceito OKF.
+#
+# `okf_types` é o vocabulário da §4. Fechado de propósito: com texto livre,
+# quarenta conceitos rendem trinta rótulos quase iguais e o tipo deixa de agrupar.
+#
+# `engine: markdown` vale para os dezessete, pela razão do cabeçalho deste
+# arquivo: o motor é do Espaço, e o que a onda 1 ingere é norma e precedente.
+# Um Espaço que precise de `semantic` sobrescreve `chunking` na própria entrada.
+defaults:
+  chunking:
+    engine: markdown
+    enrichment: conceito
+    okf_types: [Norma, Precedente, Tese, Procedimento, Modelo]
+
+spaces:
+  - slug: cdc
+    label: CDC e relação de consumo
+    description: >-
+      CDC, Decreto 2.181/97, Decreto 7.962/2013 e precedentes consumeristas.
+      Repertório de mérito do núcleo consumerista.
+    onda: 1
+    camada: merito
+    wiki: true
+    competencias: [14, 16, 17, 19, 20, 21, 22, 23, 52]
+
+  - slug: bancario
+    label: Bancário e financeiro
+    description: >-
+      CDC aplicado às instituições financeiras, Lei 14.181/2021
+      (superendividamento), regulação Bacen, Súmulas 297 e 479 do STJ.
+    onda: 1
+    camada: merito
+    wiki: true
+    competencias: [15, 47]
+
+  - slug: aereo
+    label: Aéreo e turismo
+    description: >-
+      Convenção de Montreal, resoluções da ANAC e o Tema 210/STF (RE 636.331).
+    onda: 2
+    camada: merito
+    wiki: true
+    competencias: [17]
+
+  - slug: saude-suplementar
+    label: Saúde suplementar
+    description: >-
+      Lei 9.656/98, rol da ANS, Lei 14.454/2022, Temas 952 e 1.061, Súmulas 608
+      e 609 do STJ.
+    onda: 3
+    camada: merito
+    wiki: true
+    competencias: [18]
+
+  - slug: imobiliario
+    label: Imobiliário do consumidor
+    description: >-
+      Leis 4.591/64, 8.245/91 e 13.786/18, Temas 938, 971 e 1.099.
+    onda: 3
+    camada: merito
+    wiki: true
+    competencias: [20, 25, 45]
+
+  - slug: civil-contratos
+    label: Civil e contratos
+    description: >-
+      Código Civil: obrigações, contratos e responsabilidade civil.
+    onda: 2
+    camada: merito
+    wiki: false
+    competencias: [24, 30, 46, 48, 54]
+
+  - slug: processual-civil
+    label: Processual civil e juizados
+    description: >-
+      CPC/2015, Lei 9.099/95, Lei 12.153/2009, Lei 11.419/06, Lei 14.195/2021,
+      art. 927 e precedentes vinculantes.
+    onda: 3
+    camada: merito
+    wiki: false
+    competencias: [7, 11, 32, 33, 51]
+
+  - slug: calculo-monetario
+    label: Cálculo monetário
+    description: >-
+      Lei 14.905/2024 (arts. 389 e 406 do CC), séries IPCA e Selic, tabelas de
+      dano moral por tribunal. Repertório do regime aplicável; o cálculo em si é
+      código determinístico no `goga-calc` (D-03).
+    onda: 1
+    camada: merito
+    wiki: false
+    competencias: [15, 20, 23, 47, 53, 54]
+
+  - slug: trabalhista
+    label: Trabalhista do empregado
+    description: CLT com a reforma e súmulas do TST.
+    onda: 4
+    camada: merito
+    wiki: false
+    competencias: [26]
+
+  - slug: previdenciario
+    label: Previdenciário
+    description: Lei 8.213, EC 103 e temas do STJ.
+    onda: 4
+    camada: merito
+    wiki: false
+    competencias: [27]
+
+  - slug: tributario-pf
+    label: Tributário do cidadão
+    description: CTN, isenções e execução fiscal defensiva.
+    onda: 4
+    camada: merito
+    wiki: false
+    competencias: [28]
+
+  - slug: seguros
+    label: Seguros
+    description: >-
+      Código Civil, arts. 757 e seguintes, Súmulas 609, 616 e 617 do STJ e a
+      extinção do DPVAT (LC 211/2024).
+    onda: 4
+    camada: merito
+    wiki: false
+    competencias: [29, 54]
+
+  - slug: lgpd-digital
+    label: Proteção de dados e digital
+    description: >-
+      LGPD, Marco Civil e precedentes de vazamento de dados.
+    onda: 2
+    camada: merito
+    wiki: false
+    competencias: [31, 48]
+
+  - slug: condominial
+    label: Condominial e convivência
+    description: Código Civil, arts. 1.277 e 1.331 a 1.358.
+    onda: 3
+    camada: merito
+    wiki: false
+    competencias: [25, 50]
+
+  - slug: fazenda-publica
+    label: Fazenda pública
+    description: >-
+      Art. 37, §6º, da CF, art. 43 do CC, Decreto 20.910/32, DL 4.597/42, Lei
+      12.153/2009, Tema 553/STJ e Tema 130/STF.
+    onda: 3
+    camada: merito
+    wiki: true
+    competencias: [53]
+
+  # Os dois abaixo não são repertório jurídico de mérito, e sim repertório
+  # OPERACIONAL (§2.1). Ficam na KB pelo mesmo motivo do resto: precisam de
+  # proveniência e de versionamento. A wiki fica desligada nos dois — destilar
+  # regra de conduta ou modelo de peça perde exatamente a literalidade que eles
+  # existem para ter.
+  - slug: etica-regulatorio
+    label: Ética e regulatório (uso interno)
+    description: >-
+      Lei 8.906/94, Código de Ética e Disciplina da OAB, Provimento CFOAB
+      205/2021 e LGPD aplicada ao serviço. Repertório operacional: é contra ele
+      que o Guardião de Compliance confere a saída.
+    onda: 1
+    camada: operacional
+    wiki: false
+    competencias: [8, 11]
+
+  - slug: estilo-peca
+    label: Estilo de peça e modelos
+    description: >-
+      Padrão JEC sem citações, regras do Controlador de Narrativa (competência
+      44) e modelos de reclamação por canal. Repertório operacional.
+    onda: 1
+    camada: operacional
+    wiki: false
+    competencias: [32, 44, 52]

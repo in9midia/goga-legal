@@ -1,0 +1,86 @@
+# OPCIONAL — fora da kustomization base, igual ao do agentic-sdlc.
+#
+# Tunel publico unico apontando para o kb-ui, que ja e a UNICA entrada da stack
+# (ele serve o bundle e encaminha /v1 e /mcp). Com isso a URL do ngrok serve as
+# tres coisas de uma vez: a interface, a API e o MCP.
+#
+# POR QUE ISSO IMPORTA AQUI
+#
+# `http://localhost:8890` so existe na maquina de quem subiu o cluster. Sem
+# tunel, "conectar o editor no MCP" e uma demonstracao de uma pessoa so: nao da
+# para mostrar para o time, nem conectar o Claude no celular, nem deixar alguem
+# testar da propria maquina.
+#
+# Aplicado pelo 20-deploy.sh SE houver NGROK_AUTHTOKEN no ambiente ou no
+# `.env` da raiz deste repositorio (ele cria o Secret antes).
+#
+# ATENCAO ngrok-free = 1 sessao por conta. Se o agentic-sdlc estiver com o tunel
+# de pe, este aqui nao registra (ERR_NGROK_334) -- e o pod fica em
+# CrashLoopBackOff dizendo exatamente isso no log.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ngrok-config
+  namespace: stack-knowledge-base
+data:
+  ngrok.yml: |
+    version: "2"
+    # web_addr em 0.0.0.0 -- o kb-api (outro pod) precisa alcancar a API do
+    # agente em :4040 para descobrir a URL publica e mostra-la na tela.
+    web_addr: 0.0.0.0:4040
+    tunnels:
+      app:
+        proto: http
+        addr: kb-ui:80
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ngrok
+  namespace: stack-knowledge-base
+spec:
+  replicas: 1
+  # Recreate, NAO RollingUpdate. O ngrok-free permite UMA sessao: no rolling
+  # update o pod novo sobe junto com o velho e morre em CrashLoopBackOff
+  # (ERR_NGROK_334) ate o velho sair -- e o deployment nao derruba o velho
+  # enquanto o novo nao fica Ready. Matar antes de subir resolve os dois, e o
+  # tunel nao tem estado a preservar.
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: ngrok }
+  template:
+    metadata:
+      labels: { app: ngrok }
+    spec:
+      # O ngrok nao sai rapido no SIGTERM e nao tem nada a drenar: com os 30s
+      # default o `rollout status` fica quase dois minutos parado em "1 old
+      # replicas are pending termination", parecendo travamento.
+      terminationGracePeriodSeconds: 5
+      containers:
+        - name: ngrok
+          image: ngrok/ngrok:latest
+          args: ["start", "--all", "--config", "/etc/ngrok/ngrok.yml"]
+          env:
+            - name: NGROK_AUTHTOKEN
+              valueFrom:
+                secretKeyRef: { name: ngrok-secret, key: NGROK_AUTHTOKEN }
+          ports:
+            - { containerPort: 4040, name: api }
+          volumeMounts:
+            - { name: cfg, mountPath: /etc/ngrok }
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits: { cpu: "500m", memory: "128Mi" }
+      volumes:
+        - name: cfg
+          configMap: { name: ngrok-config }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ngrok
+  namespace: stack-knowledge-base
+spec:
+  selector: { app: ngrok }
+  ports:
+    - { name: api, port: 4040, targetPort: 4040 }

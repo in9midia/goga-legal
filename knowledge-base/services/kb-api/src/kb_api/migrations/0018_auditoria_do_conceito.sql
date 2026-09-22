@@ -1,0 +1,31 @@
+-- 0018 — o registro da conferencia: contra o que, quando, e por quem.
+--
+-- O QUE FALTAVA
+--
+-- `verified` (campo da propria especificacao OKF) diz QUE alguem validou e
+-- quando. Ele nao diz contra O QUE a validacao foi feita, nem em que estado a
+-- conferencia esta hoje. Na pratica isso vira uma pergunta sem resposta no dia
+-- em que o conteudo e contestado: "isto foi conferido contra qual fonte?".
+--
+-- `auditoria` responde: `status`, `fonte`, `conferido_em`, `conferido_por`. Os
+-- dois campos convivem e nao competem -- `verified` continua exportavel para
+-- qualquer outro consumidor de OKF, e a auditoria e o detalhe operacional de
+-- quem mantem a base.
+--
+-- O STATUS TEM UM VALOR COM COMPORTAMENTO
+--
+-- `em-verificacao` REBAIXA o nivel de confianca para `unverified`, mesmo que
+-- haja um `verified` assinado antes: a conferencia foi reaberta porque ha
+-- duvida sobre aquela assinatura. O rebaixamento so anda para baixo -- nenhum
+-- status faz subir de nivel, senao a escala inteira viraria declaracao de quem
+-- escreve o frontmatter.
+--
+-- O INDICE E PARA A FILA DE CURADORIA, NAO PARA A BUSCA
+--
+-- A busca filtra por `trust` (0017), nunca por status. Quem consulta por status
+-- e o outro lado: "o que esta em verificacao agora", "o que foi conferido antes
+-- de tal data e merece reconferencia". E uma fila de trabalho, e ela varre a
+-- tabela inteira sem isto.
+CREATE INDEX IF NOT EXISTS document_okf_auditoria_status_idx
+    ON document ((okf->'auditoria'->>'status'))
+ WHERE okf ? 'auditoria';

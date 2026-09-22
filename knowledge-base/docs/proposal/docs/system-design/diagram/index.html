@@ -1,0 +1,1596 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>System Design · Base de Conhecimento</title>
+<meta name="description" content="Representação visual do desenho da base de conhecimento corporativa: modelo conceitual, pipelines de ingestão e busca, slots, taxonomia de técnicas e planos transversais.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:ital,wdth,wght@0,62..125,100..900;1,62..125,100..900&family=Spline+Sans+Mono:ital,wght@0,300..700;1,300..700&display=swap" rel="stylesheet">
+<style>
+/* ===================================================================
+   Prancheta de revisão de engenharia — papel branco, tinta escura,
+   redline rosa (ingestão) e índigo (busca).
+   =================================================================== */
+:root {
+  --bg: oklch(1 0 0);
+  --surface: oklch(0.962 0.004 300);
+  --surface-2: oklch(0.936 0.006 300);
+  --ink: oklch(0.2 0.015 300);
+  --muted: oklch(0.44 0.015 300);
+  --line: oklch(0.86 0.008 300);
+  --line-soft: oklch(0.92 0.006 300);
+
+  --ingest: oklch(0.56 0.21 355);
+  --ingest-deep: oklch(0.46 0.19 355);
+  --ingest-tint: oklch(0.965 0.017 355);
+  --ingest-tint-2: oklch(0.925 0.04 355);
+
+  --retrieval: oklch(0.46 0.16 275);
+  --retrieval-deep: oklch(0.38 0.14 275);
+  --retrieval-tint: oklch(0.963 0.016 275);
+  --retrieval-tint-2: oklch(0.925 0.035 275);
+
+  --sans: "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "Spline Sans Mono", ui-monospace, "Cascadia Mono", "JetBrains Mono", monospace;
+
+  --z-topbar: 30;
+  --z-backdrop: 40;
+  --z-inspector: 50;
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection { background: var(--ingest-tint-2); }
+
+h1, h2, h3, h4 { text-wrap: balance; line-height: 1.12; margin: 0; }
+p { margin: 0 0 1em; max-width: 70ch; text-wrap: pretty; }
+a { color: var(--retrieval); text-underline-offset: 3px; }
+a:hover { color: var(--retrieval-deep); }
+code, .mono { font-family: var(--mono); }
+code { font-size: 0.86em; background: var(--surface); padding: 0.1em 0.35em; border-radius: 4px; }
+strong { font-weight: 650; }
+
+/* ---------- topbar ---------- */
+.topbar {
+  position: sticky; top: 0; z-index: var(--z-topbar);
+  display: flex; align-items: center; gap: 16px;
+  padding: 10px clamp(16px, 3vw, 32px);
+  background: color-mix(in oklch, var(--bg) 92%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+}
+.topbar .mark {
+  font-family: var(--mono); font-weight: 600; font-size: 12px;
+  color: #fff; background: var(--ink);
+  padding: 4px 7px; border-radius: 5px; letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.topbar .mark b { color: var(--ingest-tint-2); font-weight: 600; }
+.topbar-title {
+  font-weight: 640; font-size: 15px; letter-spacing: -0.01em;
+  font-variation-settings: "wdth" 110;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.topbar .spacer { flex: 1; }
+
+/* segmented wave control */
+.wave-ctl {
+  display: flex; align-items: center; border: 1px solid var(--line);
+  border-radius: 999px; padding: 2px; background: var(--surface);
+  flex: none;
+}
+.wave-ctl button {
+  appearance: none; border: 0; background: transparent; cursor: pointer;
+  font-family: var(--mono); font-size: 11.5px; font-weight: 500;
+  color: var(--muted); padding: 5px 12px; border-radius: 999px;
+  transition: background 120ms ease-out, color 120ms ease-out;
+  white-space: nowrap;
+}
+.wave-ctl button[aria-pressed="true"] { background: var(--ink); color: #fff; font-weight: 600; }
+.wave-ctl button:not([aria-pressed="true"]):hover { color: var(--ink); }
+
+/* wave dimming */
+[data-wave-el="2"] { transition: opacity 240ms var(--ease-out); }
+body[data-wave="1"] [data-wave-el="2"] { opacity: 0.28; }
+body[data-wave="1"] [data-wave-el="2"] [data-wave-el="2"] { opacity: 1; } /* no double-dim */
+
+/* ---------- shell / layout ---------- */
+.shell {
+  display: grid; grid-template-columns: 216px minmax(0, 1fr);
+  max-width: 1440px; margin: 0 auto;
+}
+.sidenav {
+  position: sticky; top: 53px; align-self: start;
+  height: calc(100vh - 53px); overflow-y: auto;
+  padding: 28px 8px 40px 24px;
+}
+.sidenav ol { list-style: none; margin: 0; padding: 0; }
+.sidenav a {
+  display: block; padding: 6px 10px; border-radius: 6px;
+  font-size: 13px; color: var(--muted); text-decoration: none;
+  line-height: 1.35;
+}
+.sidenav a:hover { color: var(--ink); background: var(--surface); }
+.sidenav a.active { color: var(--ink); font-weight: 620; background: var(--surface); }
+.sidenav a.active::before { content: "● "; font-size: 8px; vertical-align: 2px; }
+.sidenav a.nav-ingest.active::before { color: var(--ingest); }
+.sidenav a.nav-retrieval.active::before { color: var(--retrieval); }
+.sidenav a.nav-plain.active::before { color: var(--ink); }
+.sidenav .nav-legend {
+  margin-top: 28px; padding: 12px 10px 0; border-top: 1px solid var(--line-soft);
+  font-size: 11.5px; color: var(--muted); font-family: var(--mono);
+  display: grid; gap: 6px;
+}
+.nav-legend .sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; vertical-align: -1px; margin-right: 6px; }
+
+main { min-width: 0; padding: 0 clamp(16px, 4vw, 56px) 80px; }
+
+@media (max-width: 1023px) {
+  .shell { grid-template-columns: 1fr; }
+  .sidenav { display: none; }
+}
+
+/* ---------- sections ---------- */
+section { padding-top: clamp(48px, 8vh, 88px); scroll-margin-top: 70px; }
+.sec-head { margin-bottom: clamp(20px, 3vh, 32px); }
+.sec-head h2 {
+  font-size: clamp(26px, 3.4vw, 38px); font-weight: 680;
+  font-variation-settings: "wdth" 118; letter-spacing: -0.015em;
+}
+.sec-head .rule {
+  width: 64px; height: 4px; border-radius: 2px; background: var(--ink);
+  margin-top: 12px;
+}
+.sec-head.ingest .rule { background: var(--ingest); }
+.sec-head.retrieval .rule { background: var(--retrieval); }
+.sec-head .lede { margin-top: 14px; color: var(--muted); font-size: 16.5px; max-width: 68ch; }
+.sec-head .lede strong { color: var(--ink); }
+
+h3.sub {
+  font-size: 19px; font-weight: 660; font-variation-settings: "wdth" 112;
+  margin: 40px 0 14px; letter-spacing: -0.01em;
+}
+h3.sub .h3-id {
+  font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--muted);
+  margin-right: 8px; vertical-align: 2px;
+}
+
+/* ---------- badges & chips ---------- */
+.badge {
+  display: inline-block; font-family: var(--mono); font-size: 10.5px; font-weight: 550;
+  padding: 1.5px 7px; border-radius: 999px; white-space: nowrap;
+  vertical-align: 2px; letter-spacing: 0.01em;
+}
+.badge.wave2 { border: 1px dashed var(--muted); color: var(--muted); background: var(--bg); }
+.badge.ia { background: var(--ingest-tint-2); color: var(--ingest-deep); border: 1px solid transparent; }
+.badge.algo { border: 1px solid var(--line); color: var(--muted); background: var(--bg); }
+.badge.slot { background: var(--surface-2); color: var(--ink); border: 1px solid transparent; }
+.badge.off { border: 1px solid var(--line); color: var(--muted); background: var(--bg); text-decoration: none; }
+.badge.security { background: var(--ink); color: #fff; }
+
+.chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 18px; }
+.chip {
+  appearance: none; cursor: pointer; border: 1px solid var(--line);
+  background: var(--bg); color: var(--ink); border-radius: 999px;
+  font-family: var(--mono); font-size: 12px; padding: 6px 14px;
+  transition: background 120ms ease-out, color 120ms ease-out, border-color 120ms ease-out;
+}
+.chip:hover { border-color: var(--ink); }
+.chip[aria-pressed="true"] { background: var(--ink); color: #fff; border-color: var(--ink); }
+.chip.c-ingest[aria-pressed="true"] { background: var(--ingest); border-color: var(--ingest); }
+.chip.c-retrieval[aria-pressed="true"] { background: var(--retrieval); border-color: var(--retrieval); }
+
+/* ---------- diagram primitives ---------- */
+.board {
+  border: 1px solid var(--line); border-radius: 14px;
+  background:
+    radial-gradient(oklch(0.88 0.006 300) 1px, transparent 1px) 0 0 / 22px 22px,
+    var(--bg);
+  padding: clamp(18px, 3vw, 34px);
+  overflow-x: auto;
+}
+.board + .board { margin-top: 16px; }
+.board-label {
+  font-family: var(--mono); font-size: 11px; color: var(--muted);
+  letter-spacing: 0.04em; margin-bottom: 18px; display: flex; gap: 10px; align-items: center;
+}
+.board-label::after { content: ""; flex: 1; height: 1px; background: var(--line-soft); }
+
+.node {
+  appearance: none; text-align: left; cursor: pointer;
+  border: 1.5px solid var(--ink); border-radius: 10px;
+  background: var(--bg); color: var(--ink);
+  padding: 10px 14px 11px; font-family: var(--sans);
+  display: flex; flex-direction: column; gap: 2px;
+  min-width: 130px;
+  transition: background 120ms ease-out, box-shadow 120ms ease-out, transform 120ms ease-out;
+  position: relative;
+}
+.node .nid { font-family: var(--mono); font-size: 10.5px; font-weight: 550; color: var(--muted); letter-spacing: 0.03em; }
+.node .nname { font-weight: 640; font-size: 14.5px; line-height: 1.25; letter-spacing: -0.005em; }
+.node .nsub { font-size: 12px; color: var(--muted); line-height: 1.35; }
+.node:hover { transform: translateY(-1px); box-shadow: 0 3px 12px oklch(0.2 0.015 300 / 0.1); }
+.node:focus-visible { outline: 2.5px solid var(--ink); outline-offset: 2px; }
+.node[data-active] { box-shadow: 0 0 0 2.5px currentColor; }
+
+.node.ingest { border-color: var(--ingest); }
+.node.ingest .nid { color: var(--ingest); }
+.node.ingest:hover { background: var(--ingest-tint); }
+.node.ingest[data-active] { color: var(--ingest); }
+.node.retrieval { border-color: var(--retrieval); }
+.node.retrieval .nid { color: var(--retrieval); }
+.node.retrieval:hover { background: var(--retrieval-tint); }
+.node.retrieval[data-active] { color: var(--retrieval); }
+.node.plain { border-color: var(--ink); }
+.node.plain[data-active] { color: var(--ink); }
+.node.ghost { border-style: dashed; border-width: 1.5px; }
+.node.filled-ingest { background: var(--ingest); border-color: var(--ingest); color: #fff; }
+.node.filled-ingest .nid, .node.filled-ingest .nsub { color: oklch(0.94 0.03 355); }
+.node.filled-ingest:hover { background: var(--ingest-deep); }
+.node.filled-retrieval { background: var(--retrieval); border-color: var(--retrieval); color: #fff; }
+.node.filled-retrieval .nid, .node.filled-retrieval .nsub { color: oklch(0.92 0.03 275); }
+.node.filled-retrieval:hover { background: var(--retrieval-deep); }
+
+/* horizontal flow rows */
+.flow { display: flex; align-items: stretch; gap: 0; width: max-content; min-width: 100%; }
+.flow > .node { flex: none; }
+.fcon { flex: none; display: flex; align-items: center; padding: 0 2px; }
+.fcon svg { display: block; }
+.fcon .lane { stroke-width: 1.6; fill: none; }
+.fcon.ingest .lane { stroke: var(--ingest); }
+.fcon.retrieval .lane { stroke: var(--retrieval); }
+.fcon.plain .lane { stroke: var(--ink); }
+.fcon .pulse { stroke-width: 1.6; fill: none; stroke-linecap: round; }
+.fcon.ingest .pulse { stroke: var(--ingest); }
+.fcon.retrieval .pulse { stroke: var(--retrieval); }
+.fcon.plain .pulse { stroke: var(--muted); }
+.pulse { stroke-dasharray: 3 43; animation: flowdash 2.6s linear infinite; }
+@keyframes flowdash { to { stroke-dashoffset: -46; } }
+@media (prefers-reduced-motion: reduce) { .pulse { animation: none; stroke-dasharray: none; opacity: 0; } }
+.fcon .cap { font-family: var(--mono); font-size: 10px; color: var(--muted); text-align: center; }
+
+/* vertical flow (search pipeline) */
+.vflow { display: flex; flex-direction: column; align-items: stretch; max-width: 620px; }
+.vflow .node { width: 100%; }
+.vcon { display: flex; justify-content: center; padding: 1px 0; }
+.vcon svg { display: block; }
+svg path.lane, svg path.pulse { fill: none; }
+
+/* stretchy vertical arrows (css, no coordinates) */
+.varr { display: flex; flex-direction: column; align-items: center; min-height: 26px; }
+.varr .vline { flex: 1; width: 0; border-left: 1.7px solid var(--retrieval); }
+.varr.dashed .vline { border-left-style: dashed; }
+.varr::after { content: ""; width: 0; height: 0; border: 5px solid transparent; border-top: 7px solid var(--retrieval); border-bottom: 0; }
+
+/* fixed-height nodes for aligned fan-outs */
+.node.h64 { height: 64px; justify-content: center; }
+.node.h84 { height: 84px; justify-content: center; }
+.node.h96 { height: 96px; justify-content: center; }
+.stack-84 { gap: 10px; }
+.stack-84 .node { height: 84px; justify-content: center; }
+.stack-fixed { gap: 10px; }
+.stack-fixed .node { height: 64px; justify-content: center; }
+
+/* generic columns inside boards */
+.cols { display: flex; gap: clamp(14px, 2vw, 28px); align-items: flex-start; width: max-content; min-width: 100%; }
+.stack { display: flex; flex-direction: column; gap: 10px; }
+
+/* representation panels (conceptual model) */
+.repr {
+  border: 1.5px solid; border-radius: 12px; background: var(--bg);
+  min-width: 290px; max-width: 360px; overflow: hidden;
+}
+.repr.ingest-b { border-color: var(--ingest); }
+.repr.retrieval-b { border-color: var(--retrieval); }
+.repr header {
+  padding: 10px 16px; color: #fff; display: flex; align-items: baseline; gap: 8px;
+}
+.repr.ingest-b header { background: var(--ingest); }
+.repr.retrieval-b header { background: var(--retrieval); }
+.repr header .rtitle { font-weight: 680; font-size: 16px; font-variation-settings: "wdth" 112; letter-spacing: 0.01em; }
+.repr header .rkind { font-family: var(--mono); font-size: 10px; opacity: 0.85; margin-left: auto; }
+.repr .rsec { padding: 10px 16px; border-top: 1px solid var(--line-soft); }
+.repr .rsec:first-of-type { border-top: 0; }
+.repr .rlabel { font-family: var(--mono); font-size: 10px; letter-spacing: 0.05em; color: var(--muted); text-transform: uppercase; margin-bottom: 6px; }
+.repr ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+.repr li { font-size: 13.5px; line-height: 1.4; }
+.repr li button {
+  appearance: none; border: 0; background: none; cursor: pointer; padding: 2px 6px; margin: -2px -6px;
+  font: inherit; color: inherit; border-radius: 6px; text-align: left; width: calc(100% + 12px);
+  display: flex; gap: 7px; align-items: baseline;
+}
+.repr.ingest-b li button:hover { background: var(--ingest-tint); }
+.repr.retrieval-b li button:hover { background: var(--retrieval-tint); }
+.repr li button:focus-visible { outline: 2px solid var(--ink); }
+.repr li .li-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: 0.5; align-self: center; }
+
+/* term chips (vocabulary) */
+.terms { display: flex; flex-wrap: wrap; gap: 8px; }
+.term {
+  appearance: none; cursor: pointer; border: 1px solid var(--line); background: var(--bg);
+  border-radius: 8px; padding: 7px 12px; font: inherit; font-size: 13.5px; font-weight: 560;
+  transition: border-color 120ms ease-out, background 120ms ease-out;
+}
+.term:hover { border-color: var(--ink); background: var(--surface); }
+.term:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.term .t-kind { font-family: var(--mono); font-size: 9.5px; color: var(--muted); display: block; letter-spacing: 0.04em; }
+
+/* ---------- tables ---------- */
+.twrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
+table { border-collapse: collapse; width: 100%; font-size: 13.8px; }
+thead th {
+  font-family: var(--mono); font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--muted); text-align: left;
+  padding: 10px 14px; border-bottom: 1.5px solid var(--ink); background: var(--surface);
+  white-space: nowrap;
+}
+tbody td { padding: 10px 14px; border-bottom: 1px solid var(--line-soft); vertical-align: top; line-height: 1.45; }
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr:hover td { background: var(--surface); }
+td .mono, th .mono { font-size: 0.92em; }
+.tnum { font-family: var(--mono); color: var(--muted); font-size: 12px; }
+
+/* ---------- callouts ---------- */
+.callout {
+  border: 1.5px solid var(--ink); border-radius: 12px; padding: 18px 22px;
+  background: var(--bg); margin: 22px 0;
+}
+.callout.ink { background: var(--ink); color: oklch(0.96 0.005 300); border-color: var(--ink); }
+.callout.ink .co-title { color: #fff; }
+.callout.ink p { color: oklch(0.9 0.008 300); }
+.callout.ink code { background: oklch(0.3 0.02 300); color: oklch(0.95 0.01 300); }
+.callout .co-title { font-weight: 680; font-size: 15.5px; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+.callout p:last-child { margin-bottom: 0; }
+
+/* ---------- code block ---------- */
+pre.codeblock {
+  font-family: var(--mono); font-size: 12.8px; line-height: 1.55;
+  background: var(--ink); color: oklch(0.93 0.008 300);
+  border-radius: 12px; padding: 18px 22px; overflow-x: auto; margin: 0;
+}
+pre.codeblock .ck { color: oklch(0.78 0.1 355); }
+pre.codeblock .cc { color: oklch(0.62 0.02 300); }
+pre.codeblock .cv { color: oklch(0.82 0.09 275); }
+
+/* ---------- inspector ---------- */
+.backdrop {
+  position: fixed; inset: 0; z-index: var(--z-backdrop);
+  background: oklch(0.2 0.015 300 / 0.28);
+  opacity: 0; pointer-events: none; transition: opacity 240ms var(--ease-out);
+}
+.backdrop.open { opacity: 1; pointer-events: auto; }
+.inspector {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: var(--z-inspector);
+  width: min(460px, 94vw); background: var(--bg);
+  border-left: 1px solid var(--line);
+  box-shadow: -12px 0 40px oklch(0.2 0.015 300 / 0.14);
+  transform: translateX(calc(100% + 40px));
+  transition: transform 260ms var(--ease-out);
+  display: flex; flex-direction: column;
+  visibility: hidden;
+}
+.inspector.open { transform: translateX(0); visibility: visible; }
+@media (prefers-reduced-motion: reduce) {
+  .inspector { transition: none; }
+  .backdrop { transition: none; }
+}
+.inspector .i-head {
+  padding: 20px 24px 14px; border-bottom: 1px solid var(--line);
+  display: flex; align-items: flex-start; gap: 12px; flex: none;
+}
+.inspector .i-head .i-kicker { font-family: var(--mono); font-size: 11px; letter-spacing: 0.05em; margin-bottom: 4px; }
+.inspector .i-head h3 { font-size: 21px; font-weight: 680; font-variation-settings: "wdth" 112; letter-spacing: -0.01em; }
+.inspector .i-close {
+  appearance: none; border: 1px solid var(--line); background: var(--bg); cursor: pointer;
+  border-radius: 8px; width: 32px; height: 32px; flex: none; margin-left: auto;
+  font-size: 16px; line-height: 1; color: var(--muted);
+  transition: border-color 120ms ease-out, color 120ms ease-out;
+}
+.inspector .i-close:hover { border-color: var(--ink); color: var(--ink); }
+.inspector .i-body { padding: 18px 24px 40px; overflow-y: auto; font-size: 14.5px; }
+.inspector .i-body p { margin-bottom: 0.85em; max-width: none; }
+.inspector .i-body ul { padding-left: 18px; margin: 0 0 0.85em; }
+.inspector .i-body li { margin-bottom: 5px; }
+.inspector .i-body table { font-size: 12.8px; }
+.inspector .i-body thead th { padding: 7px 10px; }
+.inspector .i-body tbody td { padding: 7px 10px; }
+.inspector .i-body .twrap { margin: 0 0 14px; }
+.inspector .i-body h4 { font-size: 13px; font-family: var(--mono); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 18px 0 8px; }
+.inspector .i-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.i-kicker.k-ingest { color: var(--ingest); }
+.i-kicker.k-retrieval { color: var(--retrieval); }
+.i-kicker.k-plain { color: var(--muted); }
+
+/* ---------- hero ---------- */
+.hero { padding-top: clamp(44px, 7vh, 76px); }
+.hero .kicker-line {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 22px;
+  font-family: var(--mono); font-size: 12px; color: var(--muted);
+}
+.hero .kicker-line .doc-id { color: var(--ink); font-weight: 600; }
+.hero .kicker-line::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.hero h1 {
+  font-size: clamp(34px, 5.6vw, 68px); font-weight: 700;
+  font-variation-settings: "wdth" 122; letter-spacing: -0.022em;
+  max-width: 18ch;
+}
+.hero h1 .redline {
+  color: var(--ingest); position: relative; white-space: nowrap;
+}
+.hero h1 .redline svg {
+  position: absolute; left: -2%; bottom: -0.18em; width: 104%; height: 0.34em;
+  overflow: visible;
+}
+.hero h1 .redline svg path {
+  fill: none; stroke: var(--ingest); stroke-width: 3.2; stroke-linecap: round;
+  opacity: 0.75;
+}
+.hero .hero-sub {
+  margin-top: 20px; font-size: clamp(16px, 1.6vw, 18.5px); color: var(--muted); max-width: 62ch;
+}
+.hero .hero-sub strong { color: var(--ink); }
+.hero-map { margin-top: clamp(30px, 5vh, 48px); }
+
+/* legend under minimap */
+.map-legend { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 14px; font-size: 12.5px; color: var(--muted); font-family: var(--mono); }
+.map-legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; vertical-align: -1px; margin-right: 6px; }
+.sw.ingest { background: var(--ingest); }
+.sw.retrieval { background: var(--retrieval); }
+.sw.plain { background: var(--ink); }
+.sw.wave2 { background: var(--bg); border: 1.5px dashed var(--muted); }
+
+/* ---------- transversal planes ---------- */
+.planes { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; }
+.plane {
+  border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; background: var(--bg);
+}
+.plane .p-when { font-family: var(--mono); font-size: 10.5px; color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; }
+.plane h4 { font-size: 16px; font-weight: 660; margin: 4px 0 6px; }
+.plane p { font-size: 13.5px; color: var(--muted); margin: 0; }
+.plane p strong { color: var(--ink); }
+
+/* convergence cycle */
+.cycle-wrap { display: flex; gap: clamp(20px, 4vw, 48px); align-items: center; flex-wrap: wrap; margin-top: 28px; }
+.cycle-svg { flex: none; max-width: 100%; height: auto; }
+.cycle-notes { flex: 1; min-width: 260px; font-size: 14px; }
+
+/* ---------- taxonomy ---------- */
+.tax-group { margin-bottom: 26px; }
+.tax-group .tg-head {
+  display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px;
+  border-bottom: 1.5px solid var(--ink); padding-bottom: 6px;
+}
+.tax-group .tg-head h4 { font-size: 16.5px; font-weight: 670; font-variation-settings: "wdth" 110; }
+.tax-group .tg-head .tg-count { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-left: auto; }
+.tax-item { border-bottom: 1px solid var(--line-soft); }
+.tax-item summary {
+  list-style: none; cursor: pointer; display: flex; align-items: baseline; gap: 10px;
+  padding: 9px 6px; border-radius: 6px;
+}
+.tax-item summary::-webkit-details-marker { display: none; }
+.tax-item summary:hover { background: var(--surface); }
+.tax-item summary:focus-visible { outline: 2px solid var(--ink); }
+.tax-item .tx-name { font-weight: 620; font-size: 14.5px; }
+.tax-item .tx-badges { margin-left: auto; display: flex; gap: 6px; flex: none; align-items: center; }
+.tax-item .tx-caret { font-family: var(--mono); color: var(--muted); font-size: 11px; transition: transform 160ms var(--ease-out); }
+.tax-item[open] .tx-caret { transform: rotate(90deg); }
+.tax-item .tx-body { padding: 2px 6px 14px; font-size: 13.8px; color: var(--ink); max-width: 75ch; }
+.tax-item .tx-body p { margin-bottom: 6px; max-width: none; }
+.tax-item .tx-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.tax-item .tx-meta .badge { vertical-align: baseline; }
+.tax-item.hidden { display: none; }
+.tax-group.hidden { display: none; }
+.tax-empty { color: var(--muted); font-size: 14px; padding: 18px 0; display: none; }
+
+/* ---------- footer ---------- */
+footer {
+  border-top: 1px solid var(--line); margin-top: 80px; padding: 28px 0 8px;
+  font-size: 13px; color: var(--muted);
+}
+footer .src-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 0; padding: 0; list-style: none; }
+footer .src-list code { background: var(--surface); }
+
+/* small screens */
+@media (max-width: 640px) {
+  .topbar-title { display: none; }
+  .planes { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body data-wave="2">
+
+<header class="topbar">
+  <span class="mark">KB<b>·</b>SD</span>
+  <span class="topbar-title">System Design — Base de Conhecimento</span>
+  <span class="spacer"></span>
+  <div class="wave-ctl" role="group" aria-label="Escopo de onda exibido">
+    <button type="button" data-wave-btn="1" aria-pressed="false">Onda 1</button>
+    <button type="button" data-wave-btn="2" aria-pressed="true">Onda 1 + 2+</button>
+  </div>
+</header>
+
+<div class="shell">
+
+<nav class="sidenav" aria-label="Seções">
+  <ol>
+    <li><a href="#visao-geral" class="nav-plain">Visão geral</a></li>
+    <li><a href="#modelo-conceitual" class="nav-plain">Modelo conceitual</a></li>
+    <li><a href="#ingestao" class="nav-ingest">Pipeline de ingestão</a></li>
+    <li><a href="#busca" class="nav-retrieval">Pipeline de busca</a></li>
+    <li><a href="#slots" class="nav-plain">Slots &amp; variantes</a></li>
+    <li><a href="#taxonomia" class="nav-plain">Taxonomia de técnicas</a></li>
+    <li><a href="#planos" class="nav-plain">Planos transversais</a></li>
+    <li><a href="#persistencia" class="nav-plain">Persistência &amp; segurança</a></li>
+    <li><a href="#ondas" class="nav-plain">Ondas de implementação</a></li>
+    <li><a href="#interface" class="nav-plain">Interface web</a></li>
+    <li><a href="#pontos-abertos" class="nav-plain">Pontos abertos</a></li>
+  </ol>
+  <div class="nav-legend">
+    <span><span class="sw" style="background: var(--ingest)"></span>ingestão</span>
+    <span><span class="sw" style="background: var(--retrieval)"></span>busca</span>
+    <span><span class="sw sw2" style="background: var(--bg); border: 1.5px dashed var(--muted)"></span>onda 2+</span>
+  </div>
+</nav>
+
+<main>
+<!-- ============================== VISÃO GERAL ============================== -->
+<section id="visao-geral" class="hero">
+  <div class="kicker-line">
+    <span class="doc-id">docs/system-design</span>
+    <span>representação visual · fonte de verdade nos documentos Markdown</span>
+  </div>
+  <h1>Ligar tudo, medir tudo, <span class="redline">desligar<svg viewBox="0 0 100 12" preserveAspectRatio="none" aria-hidden="true"><path d="M2 8 C 20 4, 45 10, 62 6 S 92 5, 98 7"/></svg></span> o que não performa.</h1>
+  <p class="hero-sub">Conteúdos de áreas diferentes da empresa, com tipos e volumes diferentes, pedem <strong>técnicas diferentes</strong> de ingestão e busca. A base permite que várias técnicas coexistam, que cada Espaço use as que lhe servem e que sejam comparadas com evidência. O esqueleto abaixo é o caminho para isso: o documento canônico é a fonte de verdade, as representações derivam dele, e cada etapa dos pipelines é um slot com contrato estável onde variantes competem, medidas por telemetria e avaliação offline até sobrar só o que funciona.</p>
+  <p style="font-size: 14px; color: var(--muted); max-width: 70ch;">Esta página descreve a implementação de referência. O mínimo que qualquer solução precisa atender, agnóstico de implementação, está em <code>requirements.md</code>, que diz <em>etapa</em> e <em>técnica</em> onde esta página diz <em>slot</em> e <em>variante</em>, e <em>configuração de técnicas por Espaço</em> onde esta página diz <em>plano de ativação</em>.</p>
+
+  <div class="hero-map board">
+    <div class="board-label">mapa do sistema — do documento bruto ao consumidor</div>
+    <div class="flow" style="align-items: center;">
+      <button type="button" class="node plain h64" data-inspect="t-bruto"><span class="nid">ENTRADA</span><span class="nname">Documento bruto</span></button>
+      <span class="fcon ingest" aria-hidden="true"><svg width="36" height="16" viewBox="0 0 36 16"><path class="lane" d="M0 8 H27"/><path class="lane" d="M26 3.5 L33 8 L26 12.5"/><path class="pulse" d="M0 8 H27"/></svg></span>
+      <button type="button" class="node filled-ingest h64" data-inspect="map-ingestao"><span class="nid">PIPELINE · E1–E4</span><span class="nname">Ingestão</span></button>
+      <span class="fcon ingest" aria-hidden="true"><svg width="36" height="16" viewBox="0 0 36 16"><path class="lane" d="M0 8 H27"/><path class="lane" d="M26 3.5 L33 8 L26 12.5"/><path class="pulse" d="M0 8 H27"/></svg></span>
+      <button type="button" class="node plain h64" data-inspect="t-canonico"><span class="nid">FONTE DE VERDADE</span><span class="nname">Documento canônico</span></button>
+      <span class="fcon plain" aria-hidden="true"><svg width="44" height="138" viewBox="0 0 44 138"><path class="lane" d="M0 69 C 18 69, 18 32, 36 32"/><path class="lane" d="M0 69 C 18 69, 18 106, 36 106"/><path class="lane" d="M35 27.5 L42 32 L35 36.5"/><path class="lane" d="M35 101.5 L42 106 L35 110.5"/></svg></span>
+      <span class="stack stack-fixed">
+        <button type="button" class="node ingest h64" data-inspect="c-indice"><span class="nid">REPRESENTAÇÃO</span><span class="nname">Índice</span></button>
+        <button type="button" class="node retrieval h64" data-inspect="c-wiki"><span class="nid">REPRESENTAÇÃO</span><span class="nname">Wiki</span></button>
+      </span>
+      <span class="fcon retrieval" aria-hidden="true"><svg width="44" height="138" viewBox="0 0 44 138"><path class="lane" d="M0 32 C 18 32, 18 69, 36 69"/><path class="lane" d="M0 106 C 18 106, 18 69, 36 69"/><path class="lane" d="M35 64.5 L42 69 L35 73.5"/></svg></span>
+      <button type="button" class="node filled-retrieval h64" data-inspect="map-busca"><span class="nid">PIPELINE · F0–F6</span><span class="nname">Busca</span></button>
+      <span class="fcon retrieval" aria-hidden="true"><svg width="36" height="16" viewBox="0 0 36 16"><path class="lane" d="M0 8 H27"/><path class="lane" d="M26 3.5 L33 8 L26 12.5"/><path class="pulse" d="M0 8 H27"/></svg></span>
+      <button type="button" class="node plain h64" data-inspect="t-consumidor"><span class="nid">API · MCP</span><span class="nname">Consumidores</span></button>
+    </div>
+    <div class="map-legend">
+      <span><span class="sw ingest"></span>pipeline de ingestão</span>
+      <span><span class="sw retrieval"></span>pipeline de busca</span>
+      <span><span class="sw wave2"></span>onda 2+ (alterne no topo)</span>
+      <span>clique em qualquer nó para o detalhe</span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== MODELO CONCEITUAL ============================== -->
+<section id="modelo-conceitual">
+  <div class="sec-head">
+    <h2>Modelo conceitual</h2>
+    <div class="rule"></div>
+    <p class="lede">O esqueleto separa a <strong>estrutura fixa</strong> (etapas e contratos) das <strong>técnicas trocáveis</strong> que preenchem cada etapa. O canônico é único; as representações são deriváveis dele a qualquer momento: o índice (representação de base, presente em todo Espaço) é reconstruível de forma determinística, a wiki (ligável por Espaço) é regenerável (equivalente, não idêntica).</p>
+  </div>
+
+  <div class="board">
+    <div class="board-label">documento canônico e suas representações</div>
+    <div class="cols" style="align-items: center; gap: 0;">
+      <button type="button" class="node plain" data-inspect="t-bruto" style="max-width: 160px; flex: none;"><span class="nid">COMO CHEGOU</span><span class="nname">Documento bruto</span><span class="nsub">PDF · Word · Excel · Markdown, preservado intacto</span></button>
+      <span class="fcon ingest" aria-hidden="true"><svg width="30" height="16" viewBox="0 0 30 16"><path class="lane" d="M0 8 H21"/><path class="lane" d="M20 3.5 L27 8 L20 12.5"/><path class="pulse" d="M0 8 H21"/></svg></span>
+      <button type="button" class="node ingest" data-inspect="c-canonicalizacao" style="max-width: 158px; flex: none;"><span class="nid">EXTRAI SEM REESCREVER</span><span class="nname">Canonicalização</span></button>
+      <span class="fcon ingest" aria-hidden="true"><svg width="30" height="16" viewBox="0 0 30 16"><path class="lane" d="M0 8 H21"/><path class="lane" d="M20 3.5 L27 8 L20 12.5"/><path class="pulse" d="M0 8 H21"/></svg></span>
+      <button type="button" class="node plain" data-inspect="t-canonico" style="max-width: 178px; flex: none; border-width: 2.5px;"><span class="nid">FONTE DE VERDADE</span><span class="nname">Documento canônico</span><span class="nsub">Markdown limpo · pertence a um Espaço</span></button>
+      <span class="fcon plain" aria-hidden="true"><svg width="56" height="290" viewBox="0 0 56 290"><path class="lane" d="M0 145 C 24 145, 24 22, 48 22" style="stroke: var(--ingest)"/><path class="lane" d="M47 17.5 L54 22 L47 26.5" style="stroke: var(--ingest)"/><path class="lane" d="M0 145 C 24 145, 24 268, 48 268" style="stroke: var(--retrieval)"/><path class="lane" d="M47 263.5 L54 268 L47 272.5" style="stroke: var(--retrieval)"/><path class="pulse" d="M0 145 C 24 145, 24 22, 48 22" style="stroke: var(--ingest)"/><path class="pulse" d="M0 145 C 24 145, 24 268, 48 268" style="stroke: var(--retrieval)"/></svg></span>
+      <div class="stack" style="gap: 18px;">
+        <div class="repr ingest-b">
+          <header><span class="rtitle">ÍNDICE</span><span class="rkind">representação</span></header>
+          <div class="rsec">
+            <div class="rlabel">Estrutura</div>
+            <ul>
+              <li><button type="button" data-inspect="s-chunks"><span class="li-dot"></span>Chunks pai/filho + vetores + BM25</button></li>
+              <li data-wave-el="2"><button type="button" data-inspect="s-grafo-aux"><span class="li-dot"></span>Grafo de entidades <span class="badge wave2">onda 2</span></button></li>
+            </ul>
+          </div>
+          <div class="rsec">
+            <div class="rlabel">Métodos de acesso</div>
+            <ul>
+              <li><button type="button" data-inspect="m-semantica"><span class="li-dot"></span>Busca semântica <span class="badge ia">✦ IA</span></button></li>
+              <li><button type="button" data-inspect="m-bm25"><span class="li-dot"></span>Full-text (BM25) <span class="badge algo">algorítmica</span></button></li>
+              <li data-wave-el="2"><button type="button" data-inspect="m-grafo"><span class="li-dot"></span>Travessia de grafo <span class="badge wave2">onda 2</span></button></li>
+            </ul>
+          </div>
+        </div>
+        <div class="repr retrieval-b">
+          <header><span class="rtitle">WIKI</span><span class="rkind">representação · ligável por Espaço</span></header>
+          <div class="rsec">
+            <div class="rlabel">Estrutura</div>
+            <ul>
+              <li><button type="button" data-inspect="s-okf"><span class="li-dot"></span>Páginas OKF atômicas (~200–800 palavras)</button></li>
+              <li><button type="button" data-inspect="s-indice-paginas"><span class="li-dot"></span>Índice de páginas (multi-vetor + BM25)</button></li>
+            </ul>
+          </div>
+          <div class="rsec">
+            <div class="rlabel">Métodos de acesso</div>
+            <ul>
+              <li><button type="button" data-inspect="m-paginas"><span class="li-dot"></span>Busca de páginas <span class="badge algo">ponto de entrada</span></button></li>
+              <li><button type="button" data-inspect="m-navegacao"><span class="li-dot"></span>Navegação por referências <span class="badge algo">via fetch · entrega: página inteira</span></button></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout ink">
+    <div class="co-title">Conteúdo não é editável — por ninguém</div>
+    <p>Nem brutos, nem canônicos, nem páginas da wiki aceitam edição direta. Toda mudança entra como <strong>inclusão ou remoção de documento bruto</strong> e cascateia: novo canônico, rebuild do índice, reprocessamento da destilação. Atualizar = remover a versão antiga e incluir a nova. A única escrita sobre as representações é a das LLMs do próprio pipeline (destilação e lint).</p>
+  </div>
+
+  <h3 class="sub">Vocabulário</h3>
+  <p style="color: var(--muted); font-size: 14px;">Os termos que os documentos normativos usam com significado preciso. Clique para a definição completa.</p>
+  <div class="terms">
+    <button type="button" class="term" data-inspect="t-bruto">Documento bruto</button>
+    <button type="button" class="term" data-inspect="t-canonico">Documento canônico</button>
+    <button type="button" class="term" data-inspect="t-espaco">Espaço</button>
+    <button type="button" class="term" data-inspect="t-representacao">Representação</button>
+    <button type="button" class="term" data-inspect="t-auxiliar">Estrutura auxiliar</button>
+    <button type="button" class="term" data-inspect="t-metodo">Método de acesso</button>
+    <button type="button" class="term" data-inspect="t-slot">Slot</button>
+    <button type="button" class="term" data-inspect="t-variante">Variante</button>
+    <button type="button" class="term" data-inspect="t-passagem">Passagem candidata</button>
+    <button type="button" class="term" data-inspect="t-consumidor">Consumidor</button>
+    <button type="button" class="term" data-inspect="t-matching">Unidade de matching / de entrega</button>
+  </div>
+</section>
+<!-- ============================== INGESTÃO ============================== -->
+<section id="ingestao">
+  <div class="sec-head ingest">
+    <h2>Pipeline de ingestão</h2>
+    <div class="rule"></div>
+    <p class="lede">Transforma um documento bruto qualquer em conteúdo pronto para retrieval. <strong>Assíncrono em todos os estágios</strong>, com estado rastreável por documento e por representação. Quatro estágios fixos; dentro de cada um, as técnicas são variantes de slots. <strong>Não existe roteamento por LLM no meio do pipeline</strong> — a única decisão de destino é o Espaço, tomada em E2; dali em diante tudo é determinístico.</p>
+  </div>
+
+  <div class="board">
+    <div class="board-label">estágios E1–E4 · clique para canais, slots e contratos</div>
+    <div class="flow" style="align-items: center;">
+      <button type="button" class="node ingest h96" data-inspect="e1" style="min-width: 132px;"><span class="nid">E1</span><span class="nname">Recepção</span><span class="nsub">bruto armazenado</span></button>
+      <span class="fcon ingest" aria-hidden="true"><svg width="34" height="16" viewBox="0 0 34 16"><path class="lane" d="M0 8 H25"/><path class="lane" d="M24 3.5 L31 8 L24 12.5"/><path class="pulse" d="M0 8 H25"/></svg></span>
+      <button type="button" class="node ingest h96" data-inspect="e2" style="min-width: 132px;"><span class="nid">E2</span><span class="nname">Escopo</span><span class="nsub">Espaço + tags</span></button>
+      <span class="fcon ingest" aria-hidden="true"><svg width="34" height="16" viewBox="0 0 34 16"><path class="lane" d="M0 8 H25"/><path class="lane" d="M24 3.5 L31 8 L24 12.5"/><path class="pulse" d="M0 8 H25"/></svg></span>
+      <button type="button" class="node ingest h96" data-inspect="e3" style="min-width: 150px;"><span class="nid">E3</span><span class="nname">Canonicalização</span><span class="nsub">bruto → canônico</span></button>
+      <span class="fcon ingest" aria-hidden="true"><svg width="34" height="16" viewBox="0 0 34 16"><path class="lane" d="M0 8 H25"/><path class="lane" d="M24 3.5 L31 8 L24 12.5"/><path class="pulse" d="M0 8 H25"/></svg></span>
+      <button type="button" class="node filled-ingest h96" data-inspect="e4" style="min-width: 180px; max-width: 210px;"><span class="nid">E4</span><span class="nname">Construção de representações</span><span class="nsub">fan-out assíncrono</span></button>
+      <span class="fcon ingest" aria-hidden="true"><svg width="44" height="272" viewBox="0 0 44 272"><path class="lane" d="M0 136 C 20 136, 20 42, 36 42"/><path class="lane" d="M35 37.5 L42 42 L35 46.5"/><path class="lane" d="M0 136 H36"/><path class="lane" d="M35 131.5 L42 136 L35 140.5"/><path class="lane" d="M0 136 C 20 136, 20 230, 36 230" style="stroke-dasharray: 4 4;"/><path class="lane" d="M35 225.5 L42 230 L35 234.5"/><path class="pulse" d="M0 136 C 20 136, 20 42, 36 42"/><path class="pulse" d="M0 136 H36"/></svg></span>
+      <span class="stack stack-84">
+        <button type="button" class="node ingest" data-inspect="e4a" style="width: 216px;"><span class="nid">E4a</span><span class="nname">Build do índice</span><span class="nsub">4 slots: do chunking à indexação</span></button>
+        <button type="button" class="node retrieval" data-inspect="e4b" style="width: 216px;"><span class="nid">E4b</span><span class="nname">Build da wiki</span><span class="nsub">destilação ✦ + índice de páginas</span></button>
+        <button type="button" class="node ingest ghost" data-inspect="e4c" data-wave-el="2" style="width: 216px;"><span class="nid">E4c</span><span class="nname">Build do grafo <span class="badge wave2">onda 2</span></span><span class="nsub">entidades sobre chunks pais</span></button>
+      </span>
+    </div>
+  </div>
+
+  <div class="board" style="margin-top: 16px;">
+    <div class="board-label">sequência interna do build do índice (E4a) · cada passo é um slot</div>
+    <div class="flow" style="align-items: center;">
+      <button type="button" class="node ingest h84" data-inspect="ing-chunking"><span class="nid">SLOT 1</span><span class="nname">Chunking</span><span class="nsub">hierárquico semântico ✦</span></button>
+      <span class="fcon ingest" aria-hidden="true"><svg width="38" height="16" viewBox="0 0 38 16"><path class="lane" d="M0 8 H29"/><path class="lane" d="M28 3.5 L35 8 L28 12.5"/></svg></span>
+      <button type="button" class="node ingest h84" data-inspect="ing-enrich"><span class="nid">SLOT 2 · COMPONÍVEL</span><span class="nname">Enriquecimento</span><span class="nsub">contextual headers ✦</span></button>
+      <span class="fcon ingest" aria-hidden="true"><svg width="38" height="16" viewBox="0 0 38 16"><path class="lane" d="M0 8 H29"/><path class="lane" d="M28 3.5 L35 8 L28 12.5"/></svg></span>
+      <button type="button" class="node ingest h84" data-inspect="ing-embed"><span class="nid">SLOT 3</span><span class="nname">Embedding</span><span class="nsub">modelo configurável · override por Espaço</span></button>
+      <span class="fcon ingest" aria-hidden="true"><svg width="38" height="16" viewBox="0 0 38 16"><path class="lane" d="M0 8 H29"/><path class="lane" d="M28 3.5 L35 8 L28 12.5"/></svg></span>
+      <button type="button" class="node ingest h84" data-inspect="ing-index"><span class="nid">SLOT 4</span><span class="nname">Indexação</span><span class="nsub">pgvector + BM25 (filhos)</span></button>
+    </div>
+    <p style="margin: 14px 0 0; font-size: 13px; color: var(--muted); font-family: var(--mono);">regra estrutural: busca no filho, retorno do pai · metadados de Espaço e tags gravados em cada chunk, independentes dos vetores</p>
+  </div>
+
+  <h3 class="sub">Estados e reprocessamento</h3>
+  <div class="board">
+    <div class="board-label">máquina de estados em dois níveis</div>
+    <div class="stack" style="gap: 22px;">
+      <div>
+        <div style="font-family: var(--mono); font-size: 11px; color: var(--muted); margin-bottom: 10px;">POR DOCUMENTO</div>
+        <div class="flow" style="align-items: center;">
+          <span class="node plain h64" style="cursor: default; min-width: 118px;"><span class="nname mono" style="font-size: 13px;">RECEBIDO</span></span>
+          <span class="fcon plain" aria-hidden="true"><svg width="34" height="16" viewBox="0 0 34 16"><path class="lane" d="M0 8 H25"/><path class="lane" d="M24 3.5 L31 8 L24 12.5"/></svg></span>
+          <span class="node plain h64" style="cursor: default; min-width: 118px;"><span class="nname mono" style="font-size: 13px;">ESCOPADO</span></span>
+          <span class="fcon plain" aria-hidden="true"><svg width="34" height="16" viewBox="0 0 34 16"><path class="lane" d="M0 8 H25"/><path class="lane" d="M24 3.5 L31 8 L24 12.5"/></svg></span>
+          <span class="node plain h64" style="cursor: default; min-width: 128px;"><span class="nname mono" style="font-size: 13px;">CANONIZADO</span></span>
+          <span class="fcon plain" aria-hidden="true"><svg width="34" height="16" viewBox="0 0 34 16"><path class="lane" d="M0 8 H25"/><path class="lane" d="M24 3.5 L31 8 L24 12.5"/></svg></span>
+          <span class="node plain h64" style="cursor: default; min-width: 130px; border-width: 2.5px;"><span class="nname mono" style="font-size: 13px;">CONCLUÍDO</span><span class="nsub">entra na busca</span></span>
+          <span class="fcon plain" aria-hidden="true"><svg width="30" height="16" viewBox="0 0 30 16"></svg></span>
+          <span class="node ghost h84" style="cursor: default; min-width: 110px; border-color: var(--ingest); color: var(--ingest);"><span class="nname mono" style="font-size: 13px;">FALHA</span><span class="nsub" style="color: inherit; opacity: .75;">reprocessável por estágio</span></span>
+        </div>
+      </div>
+      <div>
+        <div style="font-family: var(--mono); font-size: 11px; color: var(--muted); margin-bottom: 10px;">POR (DOCUMENTO, REPRESENTAÇÃO)</div>
+        <div class="flow" style="align-items: center;">
+          <span class="node plain h64" style="cursor: default; min-width: 118px;"><span class="nname mono" style="font-size: 13px;">PENDENTE</span></span>
+          <span class="fcon plain" aria-hidden="true"><svg width="34" height="16" viewBox="0 0 34 16"><path class="lane" d="M0 8 H25"/><path class="lane" d="M24 3.5 L31 8 L24 12.5"/></svg></span>
+          <span class="node plain h64" style="cursor: default; min-width: 138px;"><span class="nname mono" style="font-size: 13px;">CONSTRUINDO</span></span>
+          <span class="fcon plain" aria-hidden="true"><svg width="44" height="138" viewBox="0 0 44 138"><path class="lane" d="M0 69 C 18 69, 18 32, 36 32"/><path class="lane" d="M35 27.5 L42 32 L35 36.5"/><path class="lane" d="M0 69 C 18 69, 18 106, 36 106"/><path class="lane" d="M35 101.5 L42 106 L35 110.5"/></svg></span>
+          <span class="stack stack-fixed">
+            <span class="node plain h64" style="cursor: default; min-width: 96px; border-width: 2.5px;"><span class="nname mono" style="font-size: 13px;">OK</span></span>
+            <span class="node ghost h64" style="cursor: default; min-width: 96px; border-color: var(--ingest); color: var(--ingest);"><span class="nname mono" style="font-size: 13px;">FALHA</span></span>
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout">
+    <div class="co-title">O portão de disponibilidade é conjunto</div>
+    <p>Na <strong>primeira ingestão</strong>, falha em qualquer build retém o documento em <code>CANONIZADO</code>, fora da busca em todas as representações (inclusive as que construíram com sucesso): consistência entre representações prevalece sobre disponibilidade parcial. Em <strong>rebuild de documento já disponível</strong>, a versão anterior continua servindo a busca até o novo build concluir; a troca é atômica por (documento, representação) e um rebuild que falha mantém a versão antiga no ar.</p>
+  </div>
+
+  <div class="twrap">
+    <table>
+      <caption class="visually-hidden" style="display:none;">Semântica de reprocessamento</caption>
+      <thead><tr><th>Gatilho</th><th>O que reprocessa</th></tr></thead>
+      <tbody>
+        <tr><td>Falha em um build</td><td>Só aquele (documento, representação)</td></tr>
+        <tr><td>Nova variante de chunking / enriquecimento / embedding</td><td>Rebuild da representação-índice a partir do canônico</td></tr>
+        <tr><td>Novo parser de canonicalização</td><td>Nova versão do canônico + rebuild de todas as representações</td></tr>
+        <tr><td>Reclassificação de tags</td><td>Só metadados (sem rebuild)</td></tr>
+        <tr><td>Troca de Espaço</td><td>Não é reclassificação: remoção no Espaço de origem + nova inclusão no destino, cada uma com sua cascata normal</td></tr>
+        <tr><td>Documento removido</td><td>Remove chunks do índice; reprocessa a destilação das páginas que derivavam dele</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3 class="sub">Manutenção contínua</h3>
+  <div class="planes" style="grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));">
+    <div class="plane">
+      <div class="p-when">por Espaço · periódico · ✦ IA</div>
+      <h4>Lint da wiki</h4>
+      <p>LLM varre em busca de <strong>contradições, páginas órfãs, páginas fora do contrato de tamanho</strong> e degradações. Não é rollback; perda por edição é risco assumido do modelo.</p>
+    </div>
+    <div class="plane">
+      <div class="p-when">por estágio · toda execução</div>
+      <h4>Telemetria de ingestão</h4>
+      <p>Cada estágio grava no trace a <strong>variante usada, duração, tokens e custo</strong>, alimentando o comparativo entre variantes do plano de telemetria. O trace é recuperável por identificador do documento ou da execução, acessível a partir da chamada de ingestão e visível no estado por documento na interface web.</p>
+    </div>
+  </div>
+</section>
+<!-- ============================== BUSCA ============================== -->
+<section id="busca">
+  <div class="sec-head retrieval">
+    <h2>Pipeline de busca</h2>
+    <div class="rule"></div>
+    <p class="lede">Duas superfícies em camadas: <strong><code>search</code></strong> (onda 1), a tool stateless que roda o fluxo <strong>uma única vez por chamada</strong> (o loop é de quem chama), acompanhada da tool <strong><code>fetch</code></strong>, que devolve por id um documento canônico ou uma página da wiki inteiros, com suas referências; e <strong><code>consult</code></strong> (onda 2), o produto agêntico construído sobre elas, que conduz ciclos internos e devolve evidência consolidada, não resposta. <strong>As tools são funções puras; o agente é o while loop.</strong></p>
+  </div>
+
+  <div class="board">
+    <div class="board-label">superfícies, fluxo F0–F6 e tool fetch · clique para o detalhe de cada etapa</div>
+    <div class="cols" style="align-items: stretch;">
+
+      <div class="stack" style="width: 680px; flex: none; gap: 0;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; align-items: stretch;">
+          <button type="button" class="node plain" data-inspect="cons-agentico" style="grid-column: 1; grid-row: 1;"><span class="nid">CONSUMIDOR AGÊNTICO · SIMULADOR</span><span class="nname">Conduz o próprio loop</span><span class="nsub">chama a tool direto, com query + parâmetros</span></button>
+          <button type="button" class="node plain" data-inspect="cons-nao-agentico" data-wave-el="2" style="grid-column: 2; grid-row: 1;"><span class="nid">CONSUMIDOR NÃO-AGÊNTICO</span><span class="nname">Delega o loop</span><span class="nsub">uma chamada, evidência consolidada</span></button>
+          <div class="varr" style="grid-column: 1; grid-row: 2 / span 3;" aria-hidden="true"><span class="vline"></span></div>
+          <div class="varr dashed" data-wave-el="2" style="grid-column: 2; grid-row: 2;" aria-hidden="true"><span class="vline"></span></div>
+          <button type="button" class="node retrieval ghost" data-inspect="consult" data-wave-el="2" style="grid-column: 2; grid-row: 3;"><span class="nid">CONSULT · ONDA 2</span><span class="nname">Agente de retrieval interno</span><span class="nsub">planeja → busca → avalia → repete · devolve evidência + flag de suficiência, não resposta · orçamento explícito por chamada</span></button>
+          <div class="varr dashed" data-wave-el="2" style="grid-column: 2; grid-row: 4;" aria-hidden="true"><span class="vline"></span></div>
+        </div>
+
+        <div class="vflow" style="max-width: none; border: 1.5px solid var(--retrieval); border-radius: 14px; padding: 16px 18px; background: color-mix(in oklch, var(--retrieval-tint) 55%, white);">
+          <div style="display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px;">
+            <span style="font-family: var(--mono); font-weight: 600; font-size: 13px; color: var(--retrieval);">SEARCH</span>
+            <span style="font-size: 12.5px; color: var(--muted);">tool stateless · 1 passada por chamada · sem retry interno</span>
+          </div>
+          <button type="button" class="node retrieval" data-inspect="f0" style="border-width: 2.5px;"><span class="nid">F0 · INEGOCIÁVEL</span><span class="nname">Hard filter de segurança</span><span class="nsub">interseção com os Espaços permitidos do chamador, antes de tudo · mesma regra em fetch, consult, interface web e API</span></button>
+          <span class="vcon" aria-hidden="true"><svg width="16" height="26" viewBox="0 0 16 26"><path class="lane" d="M8 0 V17" style="stroke: var(--retrieval)"/><path class="lane" d="M3.5 16 L8 23 L12.5 16" style="stroke: var(--retrieval)"/><path class="pulse" d="M8 0 V17" style="stroke: var(--retrieval)"/></svg></span>
+          <button type="button" class="node retrieval" data-inspect="f1"><span class="nid">F1 · SLOT, DEFAULT OFF</span><span class="nname">Melhoria de query</span><span class="nsub">reescrita single-shot: rewrite | step-back ✦</span></button>
+          <span class="vcon" aria-hidden="true"><svg width="16" height="26" viewBox="0 0 16 26"><path class="lane" d="M8 0 V17" style="stroke: var(--retrieval)"/><path class="lane" d="M3.5 16 L8 23 L12.5 16" style="stroke: var(--retrieval)"/><path class="pulse" d="M8 0 V17" style="stroke: var(--retrieval)"/></svg></span>
+          <button type="button" class="node retrieval" data-inspect="f2"><span class="nid">F2</span><span class="nname">Filtro de escopo</span><span class="nsub">Espaço, tags, facetas · metadados, sem re-embedding</span></button>
+          <span class="vcon" aria-hidden="true"><svg width="16" height="26" viewBox="0 0 16 26"><path class="lane" d="M8 0 V17" style="stroke: var(--retrieval)"/><path class="lane" d="M3.5 16 L8 23 L12.5 16" style="stroke: var(--retrieval)"/><path class="pulse" d="M8 0 V17" style="stroke: var(--retrieval)"/></svg></span>
+          <button type="button" class="node retrieval" data-inspect="f3"><span class="nid">F3 · EM PARALELO</span><span class="nname">Métodos de acesso</span></button>
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 8px 0 0 22px;">
+            <button type="button" class="node ingest" data-inspect="m-semantica" style="min-width: 0;"><span class="nid">ÍNDICE</span><span class="nname" style="font-size: 13px;">Semântica</span><span class="nsub">query crua | HyDE (onda 2)</span></button>
+            <button type="button" class="node ingest" data-inspect="m-bm25" style="min-width: 0;"><span class="nid">ÍNDICE</span><span class="nname" style="font-size: 13px;">Full-text BM25</span><span class="nsub">keywords exatas</span></button>
+            <button type="button" class="node ingest ghost" data-inspect="m-grafo" data-wave-el="2" style="min-width: 0;"><span class="nid">ÍNDICE · ONDA 2</span><span class="nname" style="font-size: 13px;">Travessia de grafo</span><span class="nsub">relacional, por saltos</span></button>
+            <button type="button" class="node retrieval" data-inspect="m-paginas" style="min-width: 0;"><span class="nid">WIKI</span><span class="nname" style="font-size: 13px;">Busca de páginas</span><span class="nsub">multi-vetor + BM25</span></button>
+          </div>
+          <span class="vcon" aria-hidden="true"><svg width="16" height="26" viewBox="0 0 16 26"><path class="lane" d="M8 0 V17" style="stroke: var(--retrieval)"/><path class="lane" d="M3.5 16 L8 23 L12.5 16" style="stroke: var(--retrieval)"/><path class="pulse" d="M8 0 V17" style="stroke: var(--retrieval)"/></svg></span>
+          <button type="button" class="node retrieval" data-inspect="f4"><span class="nid">F4</span><span class="nname">Normalização → passagens candidatas</span><span class="nsub">expansão de contexto (filho → pai) · threshold por método · fusão RRF + dedup</span></button>
+          <span class="vcon" aria-hidden="true"><svg width="16" height="26" viewBox="0 0 16 26"><path class="lane" d="M8 0 V17" style="stroke: var(--retrieval)"/><path class="lane" d="M3.5 16 L8 23 L12.5 16" style="stroke: var(--retrieval)"/><path class="pulse" d="M8 0 V17" style="stroke: var(--retrieval)"/></svg></span>
+          <button type="button" class="node retrieval" data-inspect="f5"><span class="nid">F5 · SLOT</span><span class="nname">Reranking ✦</span><span class="nsub">pool mesclado, cego à origem: tudo que é passagem é rerankeado</span></button>
+          <span class="vcon" aria-hidden="true"><svg width="16" height="26" viewBox="0 0 16 26"><path class="lane" d="M8 0 V17" style="stroke: var(--retrieval)"/><path class="lane" d="M3.5 16 L8 23 L12.5 16" style="stroke: var(--retrieval)"/><path class="pulse" d="M8 0 V17" style="stroke: var(--retrieval)"/></svg></span>
+          <button type="button" class="node retrieval" data-inspect="f6"><span class="nid">F6</span><span class="nname">Retorno</span><span class="nsub">top-k de passagens rankeadas + trace (variantes, tempos, tokens, custo, scores), devolvido na chamada e recuperável por id de execução</span></button>
+        </div>
+      </div>
+
+      <div class="stack" style="width: 290px; flex: none; align-self: center;">
+        <div style="border: 1.5px solid var(--retrieval); border-radius: 14px; padding: 16px 18px; background: var(--bg);">
+          <div style="font-family: var(--mono); font-weight: 600; font-size: 13px; color: var(--retrieval); margin-bottom: 4px;">TOOL FETCH</div>
+          <p style="font-size: 12.5px; color: var(--muted); margin-bottom: 12px;">completa a superfície <code>search</code> · devolve o item inteiro por id · mesmo hard filter da busca</p>
+          <div class="stack">
+            <button type="button" class="node retrieval" data-inspect="w-ler" style="min-width: 0;"><span class="nid">TOOL</span><span class="nname" style="font-size: 13.5px;">fetch(id)</span><span class="nsub">documento canônico ou página da wiki, inteiros</span></button>
+            <button type="button" class="node retrieval" data-inspect="w-refs" style="min-width: 0;"><span class="nid">NO RETORNO</span><span class="nname" style="font-size: 13.5px;">Referências do item</span><span class="nsub">links cruzados da página · páginas derivadas do canônico</span></button>
+            <button type="button" class="node retrieval" data-inspect="nav-direta" style="min-width: 0;"><span class="nid">NAVEGAÇÃO · DEFAULT</span><span class="nname" style="font-size: 13.5px;">Leitura direta</span><span class="nsub">o próprio agente navega com fetch, passo a passo no trace</span></button>
+            <button type="button" class="node retrieval ghost" data-inspect="nav-subllm" style="min-width: 0;"><span class="nid">VARIANTE LIGÁVEL</span><span class="nname" style="font-size: 13.5px;">Navegador sub-LLM ✦</span><span class="nsub">devolve contexto sintetizado; pula o rerank</span></button>
+          </div>
+        </div>
+        <div style="border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; background: var(--bg);">
+          <div style="font-family: var(--mono); font-weight: 600; font-size: 12px; color: var(--muted); margin-bottom: 8px;">LOOP AGÊNTICO (quem chama)</div>
+          <ol style="margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.5; color: var(--ink);">
+            <li><strong>Planejar</strong> escopo, representações, parâmetros; decompor em sub-queries</li>
+            <li><strong>Avaliar</strong> relevância, grounding e cobertura (Self-RAG / CRAG)</li>
+            <li><strong>Decidir</strong>: parar · reformular · mudar escopo · navegar wiki · declarar insuficiência</li>
+            <li><strong>Consolidar</strong> evidência + flag de suficiência</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h3 class="sub">O contrato comum: passagem candidata</h3>
+  <div style="display: flex; gap: 24px; flex-wrap: wrap; align-items: flex-start;">
+    <pre class="codeblock" style="flex: 1; min-width: 300px;"><span class="ck">passagem_candidata</span>:
+  <span class="ck">texto</span>: string            <span class="cc"># chunk pai (índice) ou página inteira (wiki)</span>
+  <span class="ck">origem</span>:
+    <span class="ck">representacao</span>: <span class="cv">indice | wiki</span>
+    <span class="ck">documento_canonico</span>: id   <span class="cc"># e página OKF, quando wiki</span>
+    <span class="ck">espaco</span>: id
+  <span class="ck">scores</span>: { <span class="ck">semantica</span>: float?, <span class="ck">bm25</span>: float?, <span class="ck">rerank</span>: float? }
+  <span class="ck">metadados</span>: { <span class="ck">tags</span>: [], <span class="ck">variantes_usadas</span>: {} }</pre>
+    <div style="flex: 1; min-width: 280px; font-size: 14.5px;">
+      <p>É o contrato que <strong>permite unificar a tool de busca</strong>: qualquer método de acesso, de qualquer representação, converge para este formato em F4 — e por isso o reranking em F5 pontua pares (query, passagem) sem saber a origem.</p>
+      <p>Toda passagem carrega o <strong>Espaço de origem</strong> nos metadados, o que permite auditar que nenhum resultado vazou de escopo.</p>
+      <p style="margin-bottom: 0;">O que <strong>não</strong> passa por rerank é saída sintetizada por LLM (caso do navegador sub-LLM), porque não é passagem comparável.</p>
+    </div>
+  </div>
+
+  <div class="callout">
+    <div class="co-title"><code>search</code> + <code>fetch</code> é o padrão de mercado</div>
+    <p>Pesquisa de 2026-09-03: o contrato de conectores de conhecimento do ChatGPT exige exatamente uma tool <code>search</code> (query → lista de ids, títulos e URLs) e uma tool <code>fetch</code> (id → texto completo). Os servidores MCP para OKF, o plugin MCP do Obsidian e o padrão LLM Wiki seguem o mesmo desenho de <strong>buscar, depois ler, o agente navega</strong>. O <code>consult</code> corresponde ao padrão <code>ask_question</code> (uma chamada, loop de recuperação interno), com a diferença deliberada de devolver evidência e flag de suficiência em vez de resposta gerada.</p>
+  </div>
+
+  <div class="callout ink" data-wave-el="2">
+    <div class="co-title">As três amarras do <code>consult</code> <span class="badge wave2" style="border-color: oklch(0.6 0.02 300); color: oklch(0.8 0.01 300);">onda 2</span></div>
+    <p>Para domar a agência aninhada quando o chamador também é um agente: <strong>orçamento explícito por chamada</strong> (máximo de ciclos, teto de tokens, timeout como parâmetros); <strong>retorno estruturado, não prosa</strong> (contexto consolidado + passagens com origem + flag de suficiência + trace de custo); <strong>evidência, não resposta final</strong> (a geração fica com o chamador, que tem o contexto da conversa). Esgotado o orçamento sem suficiência, devolve o melhor contexto acumulado <em>sinalizado como insuficiente</em> — nunca confiança fabricada.</p>
+  </div>
+</section>
+<!-- ============================== SLOTS ============================== -->
+<section id="slots">
+  <div class="sec-head">
+    <h2>Slots &amp; variantes</h2>
+    <div class="rule"></div>
+    <p class="lede">O mecanismo para a essência do projeto: várias técnicas coexistindo, escolhidas por Espaço e comparadas com evidência. Cada etapa dos pipelines é um <strong>slot com contrato estável</strong>: o que entra e o que sai é fixo, a implementação é livre. É isso que permite trocar Docling por Unstructured, ou testar duas estratégias de chunking, sem tocar no resto.</p>
+  </div>
+
+  <div class="planes" style="margin-bottom: 26px;">
+    <div class="plane">
+      <div class="p-when">regra 1</div>
+      <h4>Contrato primeiro</h4>
+      <p>Entrada e saída fixas por slot; <strong>a implementação é livre</strong>.</p>
+    </div>
+    <div class="plane">
+      <div class="p-when">regra 2</div>
+      <h4>Variantes coexistem</h4>
+      <p>Y variantes registradas; a configuração define a ativa (ou as ativas, quando o slot aceita <strong>composição</strong>, como os enriquecimentos).</p>
+    </div>
+    <div class="plane">
+      <div class="p-when">regra 3</div>
+      <h4>Ativação por Espaço</h4>
+      <p>Resolução <strong>padrão global → override por Espaço</strong>. O override por Espaço (representações e variantes principais) entra na v1 e é exposto na interface web: é assim que conteúdos diferentes recebem técnicas diferentes.</p>
+    </div>
+    <div class="plane">
+      <div class="p-when">regra 4</div>
+      <h4>Toda variante no trace</h4>
+      <p>Cada execução registra qual variante rodou em cada slot. <strong>Sem isso, não há como comparar e desligar depois.</strong></p>
+    </div>
+  </div>
+
+  <div class="chip-row" role="group" aria-label="Escolher pipeline dos slots">
+    <button type="button" class="chip c-ingest" data-slot-filter="ingest" aria-pressed="true">Ingestão</button>
+    <button type="button" class="chip c-retrieval" data-slot-filter="retrieval" aria-pressed="false">Busca</button>
+  </div>
+
+  <div class="twrap">
+    <table id="slots-table">
+      <thead><tr><th>Slot</th><th>Onde</th><th>Default (onda 1)</th><th>Variantes registradas</th></tr></thead>
+      <tbody>
+        <tr data-pipe="ingest"><td><strong>Classificação de Espaço</strong> (fallback)</td><td class="mono tnum">E2</td><td>Humano na entrada decide</td><td>Classificação via IA quando o humano não informa</td></tr>
+        <tr data-pipe="ingest"><td><strong>Extração de tags</strong> (fallback)</td><td class="mono tnum">E2</td><td>Humano na entrada decide</td><td>Extração via IA quando o humano não informa</td></tr>
+        <tr data-pipe="ingest"><td><strong>Canonicalização</strong> (parser)</td><td class="mono tnum">E3</td><td>A definir entre as candidatas</td><td>Docling · Unstructured.io · LlamaParse</td></tr>
+        <tr data-pipe="ingest"><td><strong>Chunking</strong></td><td class="mono tnum">E4a·1</td><td>Hierárquico semântico (pai/filho) ✦</td><td>Chunking mecânico (janela fixa + parágrafos, sem LLM) · proposition chunking (condicional)</td></tr>
+        <tr data-pipe="ingest"><td><strong>Enriquecimento de chunk</strong> <span class="badge slot">componível</span></td><td class="mono tnum">E4a·2</td><td>Contextual headers ✦</td><td>Doc augmentation / perguntas hipotéticas <span class="badge wave2">onda 2</span> · HyPE (A/B futuro)</td></tr>
+        <tr data-pipe="ingest"><td><strong>Embedding</strong></td><td class="mono tnum">E4a·3</td><td>Modelo configurável (padrão global, override por Espaço); multilíngue, pois o conteúdo é em pt-BR</td><td>Troca de modelo = re-embedding da representação</td></tr>
+        <tr data-pipe="ingest"><td><strong>Indexação</strong></td><td class="mono tnum">E4a·4</td><td>pgvector (filhos) + BM25 (filhos)</td><td>—</td></tr>
+        <tr data-pipe="retrieval"><td><strong>Melhoria de query</strong></td><td class="mono tnum">F1</td><td><span class="badge off">off</span></td><td>rewrite · step-back ✦</td></tr>
+        <tr data-pipe="retrieval"><td><strong>Dedução de tags da query</strong></td><td class="mono tnum">F2</td><td><span class="badge off">off</span></td><td>Metadata tagging via LLM ✦</td></tr>
+        <tr data-pipe="retrieval"><td><strong>Embedding de query</strong></td><td class="mono tnum">F3</td><td>Query crua</td><td>HyDE <span class="badge wave2">onda 2</span></td></tr>
+        <tr data-pipe="retrieval" data-wave-el="2"><td><strong>Travessia de grafo</strong></td><td class="mono tnum">F3</td><td><span class="badge off">off</span> <span class="badge wave2">onda 2</span></td><td>Grafo em memória, entidades via LLM ✦</td></tr>
+        <tr data-pipe="retrieval"><td><strong>Expansão de contexto</strong></td><td class="mono tnum">F4</td><td>Filho → pai</td><td>RSE — Relevant Segment Extraction (condicional)</td></tr>
+        <tr data-pipe="retrieval"><td><strong>Threshold de similaridade</strong></td><td class="mono tnum">F4</td><td>Ativo, valor por método de acesso</td><td>—</td></tr>
+        <tr data-pipe="retrieval"><td><strong>Fusão de rankings</strong></td><td class="mono tnum">F4</td><td>RRF — Reciprocal Rank Fusion</td><td>—</td></tr>
+        <tr data-pipe="retrieval" data-wave-el="2"><td><strong>Filtragem por diversidade</strong></td><td class="mono tnum">F4</td><td><span class="badge off">off</span></td><td>Dartboard <span class="badge wave2">onda 2</span>, quando o corpus ficar denso</td></tr>
+        <tr data-pipe="retrieval"><td><strong>Reranker</strong></td><td class="mono tnum">F5</td><td>Modelo único configurável ✦</td><td>Troca de modelo</td></tr>
+        <tr data-pipe="retrieval"><td><strong>Navegação da wiki</strong></td><td class="mono tnum">fetch</td><td>Leitura direta pelo agente, via <code>fetch</code></td><td>Navegador sub-LLM ✦ (protege o contexto do orquestrador; pula o rerank)</td></tr>
+        <tr data-pipe="retrieval" data-wave-el="2"><td><strong>Superfície <code>consult</code></strong></td><td class="mono tnum">API</td><td><span class="badge off">off</span> <span class="badge wave2">onda 2</span></td><td>Agente de retrieval interno sobre o <code>search</code> ✦</td></tr>
+        <tr data-pipe="retrieval" data-wave-el="2"><td><strong>Compressão contextual</strong></td><td class="mono tnum">pós</td><td><span class="badge off">off</span></td><td><span class="badge wave2">onda 2</span>, quando o volume justificar o custo ✦</td></tr>
+        <tr data-pipe="retrieval" data-wave-el="2"><td><strong>Fallback corretivo</strong> (agente)</td><td class="mono tnum">loop</td><td><span class="badge off">off</span></td><td>Busca web (onda futura)</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="margin-top: 12px; font-size: 13px; color: var(--muted); font-family: var(--mono);">✦ = envolve IA · linhas esmaecidas no modo “Onda 1” são slots que só existem na onda 2+</p>
+</section>
+
+<!-- ============================== TAXONOMIA ============================== -->
+<section id="taxonomia">
+  <div class="sec-head">
+    <h2>Taxonomia de técnicas</h2>
+    <div class="rule"></div>
+    <p class="lede">A nomenclatura adotada para as técnicas da arquitetura — precisão terminológica é essencial entre times. Cada técnica indica se envolve <span class="badge ia">✦ IA</span> ou é <span class="badge algo">algorítmica</span>, e em que parte do sistema vive. O padrão arquitetural de fundo é o <strong>RAG</strong>: recuperar conteúdo relevante primeiro, gerar com ele como contexto depois — e é no “R” que mora a maior variação de técnicas.</p>
+  </div>
+
+  <div class="chip-row" role="group" aria-label="Filtrar técnicas por natureza">
+    <button type="button" class="chip" data-tax-kind="all" aria-pressed="true">Todas</button>
+    <button type="button" class="chip c-ingest" data-tax-kind="ia" aria-pressed="false">✦ envolve IA</button>
+    <button type="button" class="chip" data-tax-kind="algo" aria-pressed="false">Algorítmicas</button>
+  </div>
+  <div id="tax-root">
+
+  <div class="tax-group" data-cat="prep">
+    <div class="tg-head"><h4>1 · Preparação de conteúdo (ingestão)</h4><span class="tg-count"></span></div>
+    <details class="tax-item" data-kind="algo"><summary><span class="tx-caret">▶</span><span class="tx-name">Document Parsing / Canonicalização</span><span class="tx-badges"><span class="badge algo">algorítmica*</span></span></summary><div class="tx-body"><p>Normalização executada antes de qualquer indexação: converte PDF, Word, Excel e Markdown num documento canônico em Markdown limpo — extração de essência <strong>sem reescrever</strong>, removendo capas, cabeçalhos, rodapés, índices e sumários. *Pode envolver ✦ IA para conteúdo visual (OCR e captioning).</p><div class="tx-meta"><span class="badge slot">vive em: E3</span><span class="badge off">Docling</span><span class="badge off">Unstructured.io</span><span class="badge off">LlamaParse</span></div></div></details>
+    <details class="tax-item" data-kind="ia"><summary><span class="tx-caret">▶</span><span class="tx-name">Captioning de imagens</span><span class="tx-badges"><span class="badge ia">✦ IA</span></span></summary><div class="tx-body"><p>Gera descrição textual de imagens e a indexa no lugar delas dentro do documento canônico. Alternativa futura registrada: <strong>ColPali</strong> (retrieval multimodal direto sobre imagens de páginas), só a considerar com evidência de perda relevante no captioning.</p><div class="tx-meta"><span class="badge slot">vive em: E3</span><span class="badge off">ColPali (registrada)</span></div></div></details>
+    <details class="tax-item" data-kind="ia"><summary><span class="tx-caret">▶</span><span class="tx-name">Destilação</span><span class="tx-badges"><span class="badge ia">✦ IA</span></span></summary><div class="tx-body"><p>Reescrita de conhecimento pela LLM: lê canônicos e mantém uma wiki de páginas atômicas em formato OKF. É o contraste deliberado com a canonicalização: a destilação <strong>reescreve e sintetiza</strong>; a canonicalização preserva. O custo de IA é pago na ingestão, tornando a consulta barata. É a resposta do sistema ao que técnicas como RAPTOR perseguem (síntese abstrativa para perguntas de alto nível).</p><div class="tx-meta"><span class="badge slot">vive em: E4b</span><span class="badge off">RAPTOR (candidato alternativo, não adotado)</span></div></div></details>
+    <details class="tax-item" data-kind="ia"><summary><span class="tx-caret">▶</span><span class="tx-name">Semantic Chunking</span><span class="tx-badges"><span class="badge ia">✦ IA</span></span></summary><div class="tx-body"><p>Recorte do documento em pedaços logicamente autocontidos, respeitando fronteiras semânticas em vez de corte cego por tamanho fixo.</p><div class="tx-meta"><span class="badge slot">vive em: E4a · slot de chunking</span></div></div></details>
+    <details class="tax-item" data-kind="algo"><summary><span class="tx-caret">▶</span><span class="tx-name">Chunking mecânico</span><span class="tx-badges"><span class="badge algo">algorítmica</span></span></summary><div class="tx-body"><p>Recorte por janela de tamanho fixo respeitando fronteiras de parágrafo, sem LLM (custo zero de IA na preparação). Variante registrada para comparação com o chunking semântico via telemetria e avaliação offline.</p><div class="tx-meta"><span class="badge slot">vive em: E4a · slot de chunking</span></div></div></details>
+    <details class="tax-item" data-kind="ia"><summary><span class="tx-caret">▶</span><span class="tx-name">Proposition Chunking</span><span class="tx-badges"><span class="badge ia">✦ IA</span></span></summary><div class="tx-body"><p>Decomposição do texto em proposições atômicas via LLM (afirmações mínimas, autocontidas e factuais) usadas como unidades de matching. Variante condicional do slot de chunking.</p><div class="tx-meta"><span class="badge slot">vive em: E4a · slot de chunking</span><span class="badge off">ref: Dense X Retrieval</span></div></div></details>
+    <details class="tax-item" data-kind="algo"><summary><span class="tx-caret">▶</span><span class="tx-name">Padrão “casar no pequeno, entregar o inteiro”</span><span class="tx-badges"><span class="badge algo">padrão</span></span></summary><div class="tx-body"><p>N vetores de matching apontam para 1 bloco devolvido inteiro. A <strong>unidade de matching</strong> casa com a query; a <strong>unidade de entrega</strong> é o bloco completo retornado. Duas instanciações: parent-child no índice (filho → pai) e multi-vetor por página na wiki (seção → página). A diferença é <strong>quem fabrica a unidade de entrega</strong>: no índice o chunking a fabrica; na wiki ela nasce pronta do contrato de destilação.</p><div class="tx-meta"><span class="badge slot">atravessa índice e wiki</span></div></div></details>
+    <details class="tax-item" data-kind="algo"><summary><span class="tx-caret">▶</span><span class="tx-name">Hierarchical Chunking (Parent-Child)</span><span class="tx-badges"><span class="badge algo">algorítmica</span></span></summary><div class="tx-body"><p>Divisão em dois níveis: <strong>chunks filhos</strong> (unidades de matching, indexadas para casamento fino) e <strong>chunks pais</strong> (unidades de entrega, blocos maiores de contexto). A regra: <strong>busca no filho, retorno do pai</strong>.</p><div class="tx-meta"><span class="badge slot">vive em: índice</span></div></div></details>
+    <details class="tax-item" data-kind="ia"><summary><span class="tx-caret">▶</span><span class="tx-name">Contextual Chunk Headers</span><span class="tx-badges"><span class="badge ia">✦ IA</span></span></summary><div class="tx-body"><p>Cabeçalho de contexto (documento/seção) gerado via LLM e prependado a cada chunk antes do embedding, tornando cada chunk mais autocontido para o matching.</p><div class="tx-meta"><span class="badge slot">vive em: E4a · enriquecimento</span></div></div></details>
+    <details class="tax-item" data-kind="ia" data-wave-el="2"><summary><span class="tx-caret">▶</span><span class="tx-name">Document Augmentation (perguntas hipotéticas)</span><span class="tx-badges"><span class="badge ia">✦ IA</span><span class="badge wave2">onda 2</span></span></summary><div class="tx-body"><p>Geração de perguntas associadas a cada chunk na indexação, aumentando a superfície de matching. Variante alternativa registrada: <strong>HyPE</strong> (embeddings das perguntas substituem o do chunk em vez de complementá-lo).</p><div class="tx-meta"><span class="badge slot">vive em: E4a · enriquecimento</span><span class="badge off">HyPE (A/B futuro)</span></div></div></details>
+    <details class="tax-item" data-kind="algo"><summary><span class="tx-caret">▶</span><span class="tx-name">Embedding multi-vetor por página</span><span class="tx-badges"><span class="badge algo">algorítmica</span></span></summary><div class="tx-body"><p>Aplicado às páginas da wiki: um vetor por seção (unidades de matching), todos resolvendo para a página inteira (unidade de entrega). Não é chunking — não há hierarquia nem entrega de fragmento; são múltiplos pontos de matching para a mesma unidade de entrega.</p><div class="tx-meta"><span class="badge slot">vive em: E4b · índice de páginas</span></div></div></details>
+  </div>
+
+  <div class="tax-group" data-cat="escopo">
+    <div class="tg-head"><h4>2 · Filtros de escopo (pré-retrieval)</h4><span class="tg-count"></span></div>
+    <details class="tax-item" data-kind="algo"><summary><span class="tx-caret">▶</span><span class="tx-name">Filtro por Espaço</span><span class="tx-badges"><span class="badge algo">algorítmica</span><span class="badge security">segurança</span></span></summary><div class="tx-body"><p>Restringe o retrieval a um subconjunto do corpus a partir do catálogo flat de Espaços. É o filtro de escopo primário e também a <strong>fronteira de segurança</strong>: o filtro por Espaços permitidos do chamador é inegociável e precede tudo.</p><div class="tx-meta"><span class="badge slot">vive em: F0 / F2</span></div></div></details>
+    <details class="tax-item" data-kind="algo"><summary><span class="tx-caret">▶</span><span class="tx-name">Faceted Search</span><span class="tx-badges"><span class="badge algo">algorítmica</span></span></summary><div class="tx-body"><p>Filtragem por dimensões ortogonais: data, autor, tipo de documento, área de negócio. Os atributos são metadados independentes dos vetores — atualizáveis a qualquer momento sem re-embedding.</p><div class="tx-meta"><span class="badge slot">vive em: F2</span></div></div></details>
+    <details class="tax-item" data-kind="ia"><summary><span class="tx-caret">▶</span><span class="tx-name">Metadata Tagging</span><span class="tx-badges"><span class="badge ia">✦ IA</span></span></summary><div class="tx-body"><p>A LLM deduz tags relevantes a partir da query e filtra o corpus para documentos que as possuam. Variante ligável do slot de filtro de escopo.</p><div class="tx-meta"><span class="badge slot">vive em: F2 · default off</span></div></div></details>
+  </div>
+
+  <div class="tax-group" data-cat="query">
+    <div class="tg-head"><h4>3 · Melhoria de query</h4><span class="tg-count"></span></div>
+    <details class="tax-item" data-kind="ia"><summary><span class="tx-caret">▶</span><span class="tx-name">Query Rewriting / Step-back</span><span class="tx-badges"><span class="badge ia">✦ IA</span></span></summary><div class="tx-body"><p>Reescrita single-shot da query (versão mais clara, ou mais ampla/abstrata no step-back) antes do retrieval. Vive como slot ligável dentro da tool de busca.</p><div class="tx-meta"><span class="badge slot">vive em: F1 · default off</span></div></div></details>
+    <details class="tax-item" data-kind="ia"><summary><span class="tx-caret">▶</span><span class="tx-name">Decomposição em sub-queries</span><span class="tx-badges"><span class="badge ia">✦ IA</span></span></summary><div class="tx-body"><p>Quebra de uma pergunta composta em sub-perguntas, cada uma gerando uma chamada de retrieval. <strong>É orquestração, não pré-processamento: papel do agente</strong> — por isso não vive dentro da tool.</p><div class="tx-meta"><span class="badge slot">vive em: loop do agente</span></div></div></details>
+    <details class="tax-item" data-kind="ia" data-wave-el="2"><summary><span class="tx-caret">▶</span><span class="tx-name">HyDE — Hypothetical Document Embeddings</span><span class="tx-badges"><span class="badge ia">✦ IA</span><span class="badge wave2">onda 2</span></span></summary><div class="tx-body"><p>Gera uma resposta hipotética via LLM e usa o embedding dela na busca, no lugar do embedding da query crua. Classificada como <strong>estratégia de embedding de query</strong> dentro do método semântico, não como etapa de fluxo.</p><div class="tx-meta"><span class="badge slot">vive em: F3 · método semântico</span></div></div></details>
+  </div>
+
+  <div class="tax-group" data-cat="acesso">
+    <div class="tg-head"><h4>4 · Métodos de acesso (retrieval)</h4><span class="tg-count"></span></div>
+    <details class="tax-item" data-kind="ia"><summary><span class="tx-caret">▶</span><span class="tx-name">Semantic Search</span><span class="tx-badges"><span class="badge ia">✦ IA (embedding da query)</span></span></summary><div class="tx-body"><p>Busca vetorial por similaridade sobre os chunks filhos do índice. Captura significado e contexto, não apenas termos exatos.</p><div class="tx-meta"><span class="badge slot">vive em: F3 · índice</span></div></div></details>
+    <details class="tax-item" data-kind="algo"><summary><span class="tx-caret">▶</span><span class="tx-name">Full-Text Search (BM25)</span><span class="tx-badges"><span class="badge algo">algorítmica</span></span></summary><div class="tx-body"><p>Busca lexical sobre frequência e raridade de termos. Precisa para keywords exatas e complementar à semântica.</p><div class="tx-meta"><span class="badge slot">vive em: F3 · índice e wiki</span></div></div></details>
+    <details class="tax-item" data-kind="algo"><summary><span class="tx-caret">▶</span><span class="tx-name">Busca Híbrida (Hybrid Search)</span><span class="tx-badges"><span class="badge algo">propriedade da busca</span></span></summary><div class="tx-body"><p>Combinação de busca densa (semântica) com esparsa (lexical/BM25), com fusão dos rankings. É <strong>propriedade da etapa de busca</strong>, não o nome de uma representação: ocorre tanto sobre o índice quanto sobre a wiki, já que ambos combinam vetores e BM25. O sistema como um todo é um <strong>Agentic RAG com retrieval híbrido dentro</strong>.</p><div class="tx-meta"><span class="badge slot">vive em: F3+F4</span></div></div></details>
+    <details class="tax-item" data-kind="algo"><summary><span class="tx-caret">▶</span><span class="tx-name">Busca de páginas</span><span class="tx-badges"><span class="badge algo">algorítmica</span></span></summary><div class="tx-body"><p>Busca híbrida (multi-vetor + BM25) sobre as páginas inteiras da wiki. Serve para encontrar <strong>pontos de entrada</strong>; a unidade de retorno é sempre a página completa.</p><div class="tx-meta"><span class="badge slot">vive em: F3 · wiki</span></div></div></details>
+    <details class="tax-item" data-kind="algo"><summary><span class="tx-caret">▶</span><span class="tx-name">Navegação por referências</span><span class="tx-badges"><span class="badge algo">algorítmica*</span></span></summary><div class="tx-body"><p>Leitura de páginas da wiki seguindo as referências cruzadas a partir de um ponto de entrada, feita pela tool <code>fetch</code>. Na variante default o próprio agente navega (leitura direta); na alternativa, uma sub-LLM ✦ encapsulada navega e devolve contexto sintetizado.</p><div class="tx-meta"><span class="badge slot">vive em: tool fetch</span></div></div></details>
+    <details class="tax-item" data-kind="ia" data-wave-el="2"><summary><span class="tx-caret">▶</span><span class="tx-name">Graph Traversal (Graph RAG)</span><span class="tx-badges"><span class="badge ia">✦ IA na construção</span><span class="badge wave2">onda 2</span></span></summary><div class="tx-body"><p>Navegação por um grafo de entidades e relações extraídas dos chunks pais do índice. Estrutura auxiliar que abre um caminho relacional até conteúdo existente; a travessia em si é algorítmica, limitada por saltos ou suficiência.</p><div class="tx-meta"><span class="badge slot">vive em: F3 · índice</span></div></div></details>
+  </div>
+
+  <div class="tax-group" data-cat="pos">
+    <div class="tg-head"><h4>5 · Pós-retrieval</h4><span class="tg-count"></span></div>
+    <details class="tax-item" data-kind="algo"><summary><span class="tx-caret">▶</span><span class="tx-name">Context Expansion (filho → pai)</span><span class="tx-badges"><span class="badge algo">algorítmica</span></span></summary><div class="tx-body"><p>Após o matching num chunk filho, o pipeline sobe para o chunk pai correspondente. Variante alternativa registrada: <strong>RSE</strong> (Relevant Segment Extraction), que reconstrói segmentos contínuos a partir de chunks adjacentes relevantes em vez de subir para um pai fixo.</p><div class="tx-meta"><span class="badge slot">vive em: F4</span><span class="badge off">RSE (condicional)</span></div></div></details>
+    <details class="tax-item" data-kind="algo"><summary><span class="tx-caret">▶</span><span class="tx-name">Threshold de similaridade</span><span class="tx-badges"><span class="badge algo">algorítmica</span></span></summary><div class="tx-body"><p>Descarte de resultados abaixo de um score mínimo antes de etapas caras, aplicado <strong>por método de acesso</strong>: cada método tem escala e corte próprios, já que os scores não são comparáveis entre métodos.</p><div class="tx-meta"><span class="badge slot">vive em: F4</span></div></div></details>
+    <details class="tax-item" data-kind="algo"><summary><span class="tx-caret">▶</span><span class="tx-name">Fusão de rankings (RRF)</span><span class="tx-badges"><span class="badge algo">algorítmica</span></span></summary><div class="tx-body"><p>Combinação dos rankings dos diferentes métodos de acesso num pool único via <strong>Reciprocal Rank Fusion</strong> (usa posições de ranking, não scores — pela mesma razão do threshold por método), seguida de deduplicação.</p><div class="tx-meta"><span class="badge slot">vive em: F4</span></div></div></details>
+    <details class="tax-item" data-kind="ia"><summary><span class="tx-caret">▶</span><span class="tx-name">Reranking</span><span class="tx-badges"><span class="badge ia">✦ IA</span></span></summary><div class="tx-body"><p>Modelo especializado reordena o pool mesclado de passagens candidatas por relevância à query, independentemente da representação de origem.</p><div class="tx-meta"><span class="badge slot">vive em: F5</span></div></div></details>
+    <details class="tax-item" data-kind="ia" data-wave-el="2"><summary><span class="tx-caret">▶</span><span class="tx-name">Contextual Compression</span><span class="tx-badges"><span class="badge ia">✦ IA</span><span class="badge wave2">onda 2</span></span></summary><div class="tx-body"><p>Compressão dos resultados via LLM antes da geração, mantendo só o relevante à query. Otimização de custo de tokens, para quando o volume de uso justificar.</p><div class="tx-meta"><span class="badge slot">vive em: pós-retrieval</span></div></div></details>
+    <details class="tax-item" data-kind="algo" data-wave-el="2"><summary><span class="tx-caret">▶</span><span class="tx-name">Filtragem por diversidade (Dartboard)</span><span class="tx-badges"><span class="badge algo">algorítmica</span><span class="badge wave2">onda 2</span></span></summary><div class="tx-body"><p>Score que combina relevância e diversidade para remover quase-duplicatas do resultado. Relevante quando o corpus fica denso.</p><div class="tx-meta"><span class="badge slot">vive em: F4</span></div></div></details>
+  </div>
+
+  <div class="tax-group" data-cat="orq">
+    <div class="tg-head"><h4>6 · Orquestração</h4><span class="tg-count"></span></div>
+    <details class="tax-item" data-kind="ia"><summary><span class="tx-caret">▶</span><span class="tx-name">Agentic RAG</span><span class="tx-badges"><span class="badge ia">✦ IA</span></span></summary><div class="tx-body"><p>Um agente LLM orquestra múltiplos ciclos de retrieval, avalia resultados parciais e decide quando o contexto acumulado é suficiente. As tools são stateless e executam uma vez por chamada; loop, retry e reformulação são responsabilidade exclusiva do agente. <strong>Analogia: as tools são funções puras; o agente é o while loop.</strong></p><div class="tx-meta"><span class="badge slot">vive em: consumidor (onda 1) · consult (onda 2)</span></div></div></details>
+    <details class="tax-item" data-kind="ia"><summary><span class="tx-caret">▶</span><span class="tx-name">Critérios de avaliação por ciclo (Self-RAG / CRAG)</span><span class="tx-badges"><span class="badge ia">✦ IA</span></span></summary><div class="tx-body"><p>Vocabulário para a decisão de suficiência do agente: relevância das passagens, grau de suporte (grounding) e cobertura da pergunta. O fallback corretivo (buscar fonte alternativa quando a confiança é baixa) vem da mesma linhagem.</p><div class="tx-meta"><span class="badge slot">vive em: loop do agente</span><span class="badge off">Self-RAG</span><span class="badge off">CRAG</span></div></div></details>
+    <details class="tax-item" data-kind="algo"><summary><span class="tx-caret">▶</span><span class="tx-name">Padrão search + fetch</span><span class="tx-badges"><span class="badge algo">padrão</span></span></summary><div class="tx-body"><p>A busca devolve candidatos identificados (passagens com id, origem e scores); a leitura devolve o item inteiro por id, com suas referências; <strong>o agente conduz a navegação</strong> em várias chamadas. É o padrão dominante para bases de conhecimento consumidas por agentes: o contrato de conectores do ChatGPT exige exatamente <code>search</code> e <code>fetch</code>, e servidores MCP para OKF, Obsidian e o padrão LLM Wiki seguem o mesmo desenho. O endpoint único que responde direto (<code>ask_question</code>) existe como camada adicional; aqui é o <code>consult</code>, que devolve evidência em vez de resposta.</p><div class="tx-meta"><span class="badge slot">vive em: search + fetch</span><span class="badge off">conectores do ChatGPT</span><span class="badge off">okf-mcp</span><span class="badge off">DeepWiki</span></div></div></details>
+  </div>
+
+  <div class="tax-group" data-cat="aval">
+    <div class="tg-head"><h4>7 · Avaliação</h4><span class="tg-count"></span></div>
+    <details class="tax-item" data-kind="algo"><summary><span class="tx-caret">▶</span><span class="tx-name">Ragas</span><span class="tx-badges"><span class="badge algo">framework</span></span></summary><div class="tx-body"><p>Framework primário de avaliação offline. Métricas: <code>faithfulness</code>, <code>answer_relevancy</code>, <code>context_precision</code>, <code>context_recall</code>, <code>answer_correctness</code> — separando diagnóstico do retriever (precision/recall de contexto) do diagnóstico do gerador. Agregação por <strong>média harmônica</strong>, penalizando qualquer métrica individual baixa.</p><div class="tx-meta"><span class="badge slot">plano de avaliação offline</span><span class="badge off">DeepEval</span><span class="badge off">GroUSE</span><span class="badge off">Open-RAG-Eval</span></div></div></details>
+    <details class="tax-item" data-kind="algo"><summary><span class="tx-caret">▶</span><span class="tx-name">Dataset golden</span><span class="tx-badges"><span class="badge algo">curadoria</span></span></summary><div class="tx-body"><p>Conjunto curado de perguntas com respostas de referência, extraído de documentos reais da base — geração assistida por LLM, seleção humana. Pré-requisito da avaliação offline.</p><div class="tx-meta"><span class="badge slot">plano de avaliação offline</span></div></div></details>
+    <details class="tax-item" data-kind="ia" data-wave-el="2"><summary><span class="tx-caret">▶</span><span class="tx-name">Grid-search de hiperparâmetros com LLM-judge</span><span class="tx-badges"><span class="badge ia">✦ IA</span><span class="badge wave2">onda 2</span></span></summary><div class="tx-body"><p>Varredura offline de combinações (chunk size, overlap, top-k, variantes de slot) avaliada por juiz LLM sobre o dataset golden. Ferramenta de tuning, não mecanismo de produção.</p><div class="tx-meta"><span class="badge slot">plano de avaliação offline</span></div></div></details>
+  </div>
+
+  <p class="tax-empty" id="tax-empty">Nenhuma técnica corresponde ao filtro.</p>
+  </div>
+</section>
+<!-- ============================== PLANOS TRANSVERSAIS ============================== -->
+<section id="planos">
+  <div class="sec-head">
+    <h2>Planos transversais</h2>
+    <div class="rule"></div>
+    <p class="lede">Quatro planos independentes atravessam os dois pipelines — a separação resolve a ambiguidade entre “escolher o melhor caminho em runtime” e “medir para desligar caminhos depois”.</p>
+  </div>
+
+  <div class="planes">
+    <div class="plane" style="border-color: var(--ink); border-width: 1.5px;">
+      <div class="p-when">design time · admin</div>
+      <h4>Configuração de ativação</h4>
+      <p><strong>O que existe e está ligado?</strong> O admin liga e desliga variantes e representações, com padrão global e override por Espaço.</p>
+    </div>
+    <div class="plane">
+      <div class="p-when">por consulta</div>
+      <h4>Roteamento em runtime</h4>
+      <p><strong>Qual caminho esta consulta usou?</strong> O agente e os parâmetros da chamada escolhem entre o que está ligado.</p>
+    </div>
+    <div class="plane">
+      <div class="p-when">por execução</div>
+      <h4>Telemetria</h4>
+      <p><strong>Quanto custou e demorou?</strong> Latência, tokens e custo por slot/variante, gravados no trace e acessíveis a partir da chamada (no retorno ou por identificador de execução).</p>
+    </div>
+    <div class="plane">
+      <div class="p-when">periódico</div>
+      <h4>Avaliação offline</h4>
+      <p><strong>Quão boa é a resposta?</strong> Harness com dataset golden + métricas Ragas, já na onda 1, capaz de comparar técnicas entre si; alimenta a decisão de desligar.</p>
+    </div>
+  </div>
+
+  <div class="cycle-wrap">
+    <svg class="cycle-svg" width="480" height="340" viewBox="0 0 480 340" role="img" aria-label="Ciclo de convergência: ativação define o cardápio, roteamento usa o cardápio, telemetria e avaliação medem, o administrador enxuga o cardápio">
+      <defs>
+        <marker id="arrow-ink" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--ink)"/></marker>
+      </defs>
+      <g fill="none" stroke="var(--ink)" stroke-width="1.6">
+        <path d="M 262.9 40 A 132 132 0 0 1 370 147.1" marker-end="url(#arrow-ink)"/>
+        <path d="M 370 192.9 A 132 132 0 0 1 262.9 300" marker-end="url(#arrow-ink)"/>
+        <path d="M 217.1 300 A 132 132 0 0 1 110 192.9" marker-end="url(#arrow-ink)"/>
+        <path d="M 110 147.1 A 132 132 0 0 1 217.1 40" marker-end="url(#arrow-ink)"/>
+      </g>
+      <g font-family="Archivo, sans-serif" font-size="13.5" font-weight="640" fill="var(--ink)">
+        <text x="240" y="26" text-anchor="middle">ativação</text>
+        <text x="380" y="175" text-anchor="start">roteamento</text>
+        <text x="240" y="330" text-anchor="middle">telemetria + avaliação</text>
+        <text x="100" y="175" text-anchor="end">admin enxuga</text>
+      </g>
+      <g font-family="'Spline Sans Mono', monospace" font-size="10.5" fill="var(--muted)" text-anchor="middle">
+        <text x="240" y="150">o ciclo de</text>
+        <text x="240" y="166" font-size="14" font-weight="600" fill="var(--ingest)" font-family="Archivo, sans-serif">convergência</text>
+        <text x="240" y="184">define → usa →</text>
+        <text x="240" y="198">mede → enxuga</text>
+      </g>
+    </svg>
+    <div class="cycle-notes">
+      <p><strong>Ativação define o cardápio, roteamento usa o cardápio, telemetria e avaliação medem, e o administrador enxuga o cardápio</strong> com base nas medições.</p>
+      <p>As comparações de alto nível vêm primeiro (<strong>índice vs. wiki</strong>), antes de qualquer tuning fino de variante: a escolha de representação tende a dominar o resultado, e otimizar detalhes internos antes dessa decisão é esforço mal alocado.</p>
+      <p style="margin-bottom: 8px;"><strong>Métricas Ragas adotadas</strong> (agregação por média harmônica):</p>
+      <div class="chip-row" style="margin-bottom: 0;">
+        <span class="badge slot">faithfulness</span>
+        <span class="badge slot">answer_relevancy</span>
+        <span class="badge slot">context_precision</span>
+        <span class="badge slot">context_recall</span>
+        <span class="badge slot">answer_correctness</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== PERSISTÊNCIA & SEGURANÇA ============================== -->
+<section id="persistencia">
+  <div class="sec-head">
+    <h2>Persistência &amp; segurança</h2>
+    <div class="rule"></div>
+    <p class="lede">Quatro stores lógicos, cada um atrás de uma interface própria, com backend concreto substituível. A organização física dos arquivos é independente dos atributos de escopo: <strong>a classificação vive nos metadados</strong>, o que permite reclassificar sem mover arquivos.</p>
+  </div>
+
+  <div class="twrap">
+    <table>
+      <thead><tr><th>Store lógico</th><th>Conteúdo</th><th>Backend inicial</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Object store</strong></td><td>Documentos brutos, documentos canônicos, arquivos OKF da wiki</td><td class="mono" style="font-size: 12.5px;">Oracle Object Storage</td></tr>
+        <tr><td><strong>Metadados e estado</strong></td><td>Catálogo de Espaços, registro de documentos, estados do pipeline, configuração, traces</td><td class="mono" style="font-size: 12.5px;">PostgreSQL</td></tr>
+        <tr><td><strong>Índices de retrieval</strong></td><td>Vetores (índice e páginas da wiki) e índice lexical BM25</td><td class="mono" style="font-size: 12.5px;">PostgreSQL + pgvector</td></tr>
+        <tr data-wave-el="2"><td><strong>Grafo</strong> <span class="badge wave2">onda 2</span></td><td>Entidades e relações sobre chunks pais</td><td class="mono" style="font-size: 12.5px;">grafo em memória (candidato), a confirmar quando ativado</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout ink" style="margin-top: 28px;">
+    <div class="co-title"><span class="badge security" style="background: var(--ingest);">F0</span> O Espaço é a fronteira de segurança</div>
+    <p>Todo consumidor carrega um conjunto de <strong>Espaços permitidos</strong>, derivado dos grupos no Keycloak. O filtro por Espaços permitidos é um <strong>hard filter aplicado antes de qualquer método de acesso</strong>, em toda superfície de acesso a conteúdo (<code>search</code>, <code>fetch</code>, <code>consult</code>, interface web e API), sem exceção. É aplicado no servidor, não é rankeável nem contornável por parâmetro. A tool <code>fetch</code> obedece ao mesmo filtro: item fora de escopo não é lido nem aparece como referência navegável. E como toda passagem candidata carrega o Espaço de origem, dá para auditar que nenhum resultado vazou.</p>
+  </div>
+
+  <h3 class="sub">Perfis de acesso</h3>
+  <p style="font-size: 14.5px; color: var(--muted); max-width: 70ch;">O mínimo exigido pelo projeto é um administrador global e, por Espaço, a separação entre quem só lê e quem edita. A implementação de referência adota o modelo completo abaixo, com quatro perfis.</p>
+  <div class="twrap">
+    <table>
+      <thead><tr><th>Perfil</th><th>Escopo</th><th>Capacidades</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Administrador</strong></td><td class="mono tnum">global</td><td>Gerencia usuários, grupos e permissões; acessa Logs e Analytics; acesso irrestrito a todos os Espaços</td></tr>
+        <tr><td><strong>Dono</strong></td><td class="mono tnum">por Espaço</td><td>Controle total sobre um Espaço específico, incluindo gestão de quem tem acesso a ele</td></tr>
+        <tr><td><strong>Editor</strong></td><td class="mono tnum">por Espaço</td><td>Inclui e remove documentos no(s) Espaço(s) associado(s) e reclassifica tags dentro deles</td></tr>
+        <tr><td><strong>Consulta</strong></td><td class="mono tnum">por Espaço</td><td>Acessa conteúdo em modo somente leitura no(s) Espaço(s) associado(s)</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="margin-top: 12px; font-size: 13.5px; color: var(--muted);">Espaços são associados a <strong>grupos</strong>, não diretamente a usuários; usuários herdam as associações do grupo. Mover um documento entre Espaços não é capacidade direta de nenhum perfil: é remoção na origem + inclusão no destino, cada uma exigindo Editor no Espaço correspondente.</p>
+</section>
+
+<!-- ============================== ONDAS ============================== -->
+<section id="ondas">
+  <div class="sec-head">
+    <h2>Ondas de implementação</h2>
+    <div class="rule"></div>
+    <p class="lede">O que entra primeiro e o que espera evidência. <strong>O critério para promover algo da onda 2 é sempre uma evidência medida na onda 1, nunca antecipação.</strong> Use o seletor no topo da página para ver os diagramas em cada onda.</p>
+  </div>
+  <div class="twrap">
+    <table>
+      <thead><tr><th></th><th>Onda 1</th><th>Onda 2+</th></tr></thead>
+      <tbody>
+        <tr><td class="mono tnum">Representações</td><td>índice · wiki</td><td>—</td></tr>
+        <tr><td class="mono tnum">Superfícies de consulta</td><td><code>search</code> + <code>fetch</code></td><td><code>consult</code> (agêntica)</td></tr>
+        <tr><td class="mono tnum">Métodos de acesso</td><td>semântica · BM25 · busca de páginas · navegação</td><td>travessia de grafo · HyDE como variante de embedding de query</td></tr>
+        <tr><td class="mono tnum">Enriquecimento de chunks</td><td>contextual headers</td><td>doc augmentation (perguntas hipotéticas)</td></tr>
+        <tr><td class="mono tnum">Melhoria de query</td><td>reformulação pelo agente · slot de reescrita na tool (default off)</td><td>—</td></tr>
+        <tr><td class="mono tnum">Pós-retrieval</td><td>expansão de contexto · threshold · fusão · rerank</td><td>compressão contextual · filtragem por diversidade</td></tr>
+        <tr><td class="mono tnum">Avaliação</td><td>telemetria completa + logs · harness golden + Ragas</td><td>grid-search de hiperparâmetros com LLM-judge</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================== INTERFACE WEB ============================== -->
+<section id="interface">
+  <div class="sec-head">
+    <h2>Interface web de gestão</h2>
+    <div class="rule"></div>
+    <p class="lede">O painel de administração e operação da base. Além das APIs que servem as telas, o backend expõe duas famílias de endpoints para integrações externas e servidores MCP: <strong>ingestão</strong> (REST) e <strong>consulta</strong> (<code>search</code>, <code>fetch</code> e, na onda 2, <code>consult</code>). O MCP expõe só consulta; ingestão externa é via REST.</p>
+  </div>
+
+  <div style="display: flex; gap: clamp(20px, 3vw, 40px); flex-wrap: wrap; align-items: flex-start;">
+    <div style="flex: 3; min-width: 320px;">
+      <div class="twrap">
+        <table>
+          <thead><tr><th>Área</th><th>O que faz</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Espaços e documentos</strong></td><td>Criação e gestão do catálogo: criar com nome e descrição, editar, desativar. Dentro do Espaço, envio e remoção de documentos, com o estado do pipeline visível por documento e representação; sem edição de conteúdo</td></tr>
+            <tr><td><strong>Navegação de conteúdo</strong></td><td>Browsing por Espaço: documentos (bruto e canônico, com estado por representação) e, quando ativa no Espaço, a wiki. Somente leitura, com árvore de navegação, modo apresentação e <strong>visualização de grafo interativa</strong> das páginas (estilo Obsidian, prevista para o fim da v1)</td></tr>
+            <tr><td><strong>Simulador de Recuperação</strong></td><td>Debug do pipeline de busca: pergunta + escopo + parâmetros da tool, resultado bruto com scores, origem, variantes usadas e custo. O trace é a matéria-prima da tela. Cobre <code>search</code> e, na onda 2, <code>consult</code></td></tr>
+            <tr><td><strong>Logs</strong></td><td>Histórico de consultas simuladas e de produção; base para auditoria</td></tr>
+            <tr><td><strong>Analytics</strong></td><td>Tempo e custo médios por método de acesso e variante; comparativo índice vs. wiki — os dados da decisão de desligar</td></tr>
+            <tr><td><strong>Configuração</strong></td><td>Liga/desliga representações, métodos de acesso e variantes (o plano de ativação), com padrão global e override por Espaço já na v1</td></tr>
+            <tr><td><strong>Permissionamento</strong></td><td>Mínimo: leitura vs. edição por Espaço + administrador global; modelo completo de perfis e grupos na seção de segurança</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div style="flex: 2; min-width: 280px;">
+      <div class="board-label" style="margin-bottom: 10px;">stack técnica</div>
+      <div class="twrap">
+        <table>
+          <tbody>
+            <tr><td class="mono tnum">frontend</td><td>React</td></tr>
+            <tr><td class="mono tnum">backend</td><td>Python · candidato a framework: LlamaIndex (a validar)</td></tr>
+            <tr><td class="mono tnum">banco</td><td>PostgreSQL + pgvector</td></tr>
+            <tr><td class="mono tnum">auth</td><td>OAuth/OIDC com Keycloak</td></tr>
+            <tr><td class="mono tnum">storage</td><td>Oracle Object Storage</td></tr>
+            <tr><td class="mono tnum">idioma</td><td>pt-BR · interface localizável, modelos multilíngues</td></tr>
+            <tr><td class="mono tnum">ci/cd</td><td>Azure DevOps</td></tr>
+            <tr><td class="mono tnum">runtime</td><td>Kubernetes (Oracle OKE), containers separados front/back</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== PONTOS ABERTOS ============================== -->
+<section id="pontos-abertos">
+  <div class="sec-head">
+    <h2>Pontos abertos</h2>
+    <div class="rule"></div>
+    <p class="lede">Discussões de arquitetura que atravessam sessões. Pontos fechados permanecem registrados com a decisão e o documento de destino.</p>
+  </div>
+  <div class="planes" style="grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));">
+    <div class="plane">
+      <div class="p-when">em discussão · 2026-07-11</div>
+      <h4>Parent-child e multi-vetor: duas técnicas ou um mecanismo único?</h4>
+      <p>A equivalência é real — ambas seguem “casar no pequeno, entregar o inteiro”. A diferença é <strong>quem fabrica a unidade de entrega</strong> (chunking no índice; destilação na wiki). Encaminhamento provisório: manter o híbrido com técnicas nomeadas; a inclinação é unificar o vocabulário futuramente. A competição real e mensurável é entre variantes de fabricação (chunking semântico vs. mecânico vs. proposition).</p>
+    </div>
+    <div class="plane">
+      <div class="p-when">fechado · 2026-09-03</div>
+      <h4>Onde vive o loop agêntico: na base ou no chamador?</h4>
+      <p>Loop interno cria agência aninhada (latência opaca, custo invisível, perda de contexto, loop duplo); tool pura transfere a qualidade para cada consumidor. Decisão: <strong>não escolher, expor as duas superfícies como camadas</strong> (<code>search</code> + <code>fetch</code> na onda 1, <code>consult</code> na onda 2). A pesquisa de 2026-09-03 confirmou o modelo (search + fetch é o contrato dos conectores do ChatGPT e dos MCPs de OKF), o <code>fetch</code> foi generalizado para documento canônico e página da wiki, e o <code>consult</code> segue registrado como dispensável até haver demanda. Detalhe em <code>retrieval-pipeline.md</code> §2 e §4.</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div><strong style="color: var(--ink);">Fontes normativas</strong> — esta página é uma representação visual; a fonte de verdade são os documentos em <code>docs/system-design/</code>:</div>
+  <ul class="src-list">
+    <li><code>requirements.md</code></li>
+    <li><code>conceptual-model.md</code></li>
+    <li><code>ingestion-pipeline.md</code></li>
+    <li><code>retrieval-pipeline.md</code></li>
+    <li><code>taxonomy.md</code></li>
+    <li><code>web-management-ui.md</code></li>
+    <li><code>open-topics.md</code></li>
+  </ul>
+</footer>
+</main>
+</div>
+
+
+
+<div class="backdrop" data-backdrop hidden></div>
+<aside class="inspector" data-inspector aria-label="Detalhe" role="dialog" aria-modal="false">
+  <div class="i-head">
+    <div>
+      <div class="i-kicker" data-i-kicker></div>
+      <h3 data-i-title></h3>
+    </div>
+    <button type="button" class="i-close" data-i-close aria-label="Fechar painel">✕</button>
+  </div>
+  <div class="i-body" data-i-body></div>
+</aside>
+
+<script>
+/* =====================================================================
+   Conteúdo do inspector — derivado dos documentos normativos.
+   kicker: rótulo pequeno; k: cor (ingest|retrieval|plain); html: corpo.
+   ===================================================================== */
+const T = (rows, head) => {
+  const th = head ? `<thead><tr>${head.map(h => `<th>${h}</th>`).join("")}</tr></thead>` : "";
+  return `<div class="twrap"><table>${th}<tbody>${rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+};
+
+const DATA = {
+  /* ---------- vocabulário ---------- */
+  "t-bruto": { kicker: "VOCABULÁRIO", k: "plain", title: "Documento bruto", html: `
+    <p>Arquivo como chegou (PDF, Word, Excel, Markdown). <strong>Preservado intacto</strong> para auditoria e reprocessamento — gravado no object store exatamente como foi recebido.</p>
+    <p>Formato novo = variante nova no slot de canonicalização, sem mudança no esqueleto.</p>` },
+  "t-canonico": { kicker: "VOCABULÁRIO · FONTE DE VERDADE", k: "plain", title: "Documento canônico", html: `
+    <p>Versão em <strong>Markdown limpo</strong> do documento bruto. Extração de essência <strong>sem reescrever</strong>: remove ruído (capas, cabeçalhos, índices), converte tabelas, descreve imagens. É a <strong>fonte de verdade</strong> de todo o resto.</p>
+    <p>É único; as representações são deriváveis dele a qualquer momento. Gravado no object store ao lado do bruto e <strong>versionado</strong>: reprocessar com um parser melhor gera nova versão e dispara reconstrução das representações.</p>` },
+  "t-espaco": { kicker: "VOCABULÁRIO", k: "plain", title: "Espaço", html: `
+    <p>Agrupamento de domínio (RH, Produto X, Projeto Y). Catálogo <strong>flat</strong> gerenciado por humanos. Cada documento pertence a exatamente um Espaço. É também a <strong>fronteira de segurança</strong>.</p>
+    <h4>Por que o nome “Espaço”</h4>
+    <p>O agrupamento atravessa todas as técnicas (filtro do índice, roteamento da destilação, escopo do grafo, fronteira de segurança, unidade de configuração), então o nome precisa ser agnóstico a técnica. “Bundle” nomeia o diretório físico OKF, “coleção” colide com as collections dos vector stores, “domínio” é sobrecarregado (DNS, DDD). “Espaço” é neutro, cobre os três tipos de agrupamento e tem precedente nos spaces do Confluence.</p>` },
+  "t-representacao": { kicker: "VOCABULÁRIO", k: "plain", title: "Representação", html: `
+    <p>Estrutura derivada do documento canônico, construída na ingestão para facilitar retrieval. Na v1 existem duas: o <strong>índice</strong> (chunks + vetores + BM25), que é a representação de base, presente em todo Espaço, e a <strong>wiki</strong> (páginas destiladas OKF), representação prevista e ligável por Espaço.</p>
+    <p>Um grafo estilo GraphRAG com sumários de comunidade, ou uma árvore de sumarização recursiva estilo RAPTOR, seriam candidatas a uma terceira, por criarem conteúdo derivado próprio.</p>
+    <p>Representações são <strong>plugáveis</strong>: adicionar uma nova (ou desligar uma existente) não afeta as demais.</p>` },
+  "t-auxiliar": { kicker: "VOCABULÁRIO", k: "plain", title: "Estrutura auxiliar", html: `
+    <p>Dado adicional <strong>dentro</strong> de uma representação que abre um novo caminho até o mesmo conteúdo, sem criar conteúdo novo.</p>
+    <p>Exemplo: o grafo de entidades sobre os chunks pais do índice (onda 2) — seus nós apontam para chunks pais existentes.</p>` },
+  "t-metodo": { kicker: "VOCABULÁRIO", k: "plain", title: "Método de acesso", html: `
+    <p>Motor de consulta que opera sobre uma representação em tempo de busca: busca semântica, full-text (BM25), busca de páginas, navegação por referências, travessia de grafo.</p>` },
+  "t-slot": { kicker: "VOCABULÁRIO", k: "plain", title: "Slot", html: `
+    <p>Ponto do pipeline com contrato definido (entrada/saída) que aceita implementações alternativas.</p>
+    <p>O contrato é fixo; a implementação é livre. É isso que permite trocar Docling por Unstructured, ou testar duas estratégias de chunking, sem tocar no resto.</p>` },
+  "t-variante": { kicker: "VOCABULÁRIO", k: "plain", title: "Variante", html: `
+    <p>Uma implementação concreta de um slot. Variantes podem <strong>coexistir, ser ligadas/desligadas e comparadas</strong>.</p>
+    <p>Toda variante é identificada no trace de cada execução — sem isso, não há como comparar e desligar depois.</p>` },
+  "t-passagem": { kicker: "VOCABULÁRIO", k: "plain", title: "Passagem candidata", html: `
+    <p>Contrato comum de resultado de retrieval: <strong>trecho de texto + origem + scores + metadados</strong>.</p>
+    <p>O texto é o chunk pai (índice) ou a página inteira (wiki); a origem identifica representação, documento canônico e Espaço. É o que permite unificar a tool de busca e rerankear tudo junto.</p>` },
+  "t-consumidor": { kicker: "VOCABULÁRIO", k: "plain", title: "Consumidor", html: `
+    <p>Quem consulta a base: sistemas externos e assistentes via API/MCP (agênticos ou não) e o Simulador de Recuperação da interface web.</p>
+    <p>A consulta tem duas superfícies: <code>search</code> + <code>fetch</code> (uma passada por chamada e leitura por id; o loop é do chamador) e <code>consult</code> (agêntica, o loop é interno; onda 2).</p>` },
+  "t-matching": { kicker: "VOCABULÁRIO · PADRÃO", k: "plain", title: "Unidade de matching / unidade de entrega", html: `
+    <p>O padrão “casar no pequeno, entregar o inteiro”: N vetores de matching apontam para 1 bloco devolvido inteiro. A <strong>unidade de matching</strong> é o texto pequeno que casa com a query; a <strong>unidade de entrega</strong> é o bloco completo retornado ao consumidor.</p>
+    ${T([["Índice", "chunk filho", "chunk pai", "fabricada pelo chunking"], ["Wiki", "seção da página", "página inteira", "nasce pronta do contrato de destilação"]], ["Onde", "Matching", "Entrega", "Quem fabrica a entrega"])}
+    <p>A diferença entre as instanciações não está no mecanismo de busca, e sim em <strong>quem fabrica a unidade de entrega</strong>.</p>` },
+
+  /* ---------- mapa / conceitual ---------- */
+  "map-ingestao": { kicker: "PIPELINE · E1–E4", k: "ingest", title: "Pipeline de ingestão", html: `
+    <p>Transforma um documento bruto em conteúdo pronto para retrieval. Assíncrono em todos os estágios, com estado rastreável por documento e por representação.</p>
+    <p><a href="#ingestao">Ver o diagrama completo ↓</a></p>` },
+  "map-busca": { kicker: "PIPELINE · F0–F6", k: "retrieval", title: "Pipeline de busca", html: `
+    <p>Duas superfícies em camadas: <code>search</code> + <code>fetch</code> (tool de busca stateless, 1 passada, mais leitura do item inteiro por id) e <code>consult</code> (agêntica, onda 2), sobre uma tool de busca unificada que devolve passagens candidatas de qualquer representação.</p>
+    <p><a href="#busca">Ver o diagrama completo ↓</a></p>` },
+  "c-canonicalizacao": { kicker: "INGESTÃO · E3", k: "ingest", title: "Canonicalização", html: `
+    <p>Converte o bruto em documento canônico: Markdown limpo, essência extraída <strong>sem reescrever</strong>. Este é o contraste fundamental com a destilação: a canonicalização preserva o texto original e só remove ruído; a destilação reescreve.</p>
+    <h4>Operações internas (mesmo estágio)</h4>
+    <ul>
+      <li>Extração de estrutura: headings, listas, tabelas → Markdown</li>
+      <li>Remoção de ruído: capas, cabeçalhos, rodapés, índices, sumários</li>
+      <li>Imagens → descrição textual (captioning ✦) no lugar da imagem</li>
+      <li>Tabelas → Markdown; planilhas → uma seção por aba</li>
+    </ul>
+    <h4>Slot de canonicalização</h4>
+    <p>Variantes candidatas: <strong>Docling, Unstructured.io, LlamaParse</strong>. A escolha do parser é por variante, comparável via telemetria; o contrato de saída (canônico + metadados de parsing) é o mesmo para todas.</p>` },
+  "c-indice": { kicker: "REPRESENTAÇÃO", k: "ingest", title: "Índice", html: `
+    <p>Chunks pai/filho + vetores + BM25 sobre os canônicos. <strong>Reconstruível de forma determinística</strong> a partir do canônico.</p>
+    <ul>
+      <li><strong>Estrutura:</strong> chunking hierárquico (busca no filho, retorno do pai)</li>
+      <li><strong>Auxiliar (onda 2):</strong> grafo de entidades sobre os chunks pais</li>
+      <li><strong>Métodos de acesso:</strong> busca semântica, full-text BM25, travessia de grafo (onda 2)</li>
+    </ul>
+    <p>As “N técnicas de preparação” (chunking, enriquecimento, embedding) são <strong>internas</strong> a esta representação — não competem com a destilação da wiki.</p>` },
+  "c-wiki": { kicker: "REPRESENTAÇÃO", k: "retrieval", title: "Wiki", html: `
+    <p>Páginas destiladas em formato OKF: atômicas (um conceito por página, ~200–800 palavras), com frontmatter YAML e referências cruzadas como links Markdown.</p>
+    <p><strong>Regenerável, não idêntica:</strong> redestilar os canônicos de um Espaço produz uma wiki válida equivalente, mas não uma cópia — a destilação é incremental e autônoma.</p>
+    <p>A wiki <strong>não passa por chunking</strong>. O controle de tamanho vem do contrato de destilação; a rede de segurança para páginas grandes é o embedding multi-vetor por seção, onde qualquer vetor que casar devolve a página inteira. Os arquivos permanecem OKF puros; o índice de páginas é estrutura externa a eles.</p>` },
+  "s-chunks": { kicker: "ÍNDICE · ESTRUTURA", k: "ingest", title: "Chunks pai/filho + vetores + BM25", html: `
+    <p>Divisão em dois níveis: <strong>chunks filhos</strong> como unidades de matching (indexadas em pgvector + BM25 para casamento fino) e <strong>chunks pais</strong> como unidades de entrega (blocos maiores de contexto).</p>
+    <p>Regra estrutural: <strong>busca no filho, retorno do pai</strong>. Os metadados de Espaço e tags são gravados em cada chunk como campos independentes dos vetores — reclassificar não exige re-embedding.</p>` },
+  "s-grafo-aux": { kicker: "ÍNDICE · ESTRUTURA AUXILIAR · ONDA 2", k: "ingest", title: "Grafo de entidades", html: `
+    <p>Entidades e relações extraídas via LLM ✦ sobre os <strong>chunks pais</strong> do índice. Estrutura auxiliar: abre um caminho relacional até conteúdo existente, sem criar conteúdo novo — seus nós apontam para chunks pais.</p>
+    <p>Só é construído quando o método de travessia estiver ativado. Backend candidato: grafo em memória, a confirmar quando ativado.</p>` },
+  "s-okf": { kicker: "WIKI · ESTRUTURA", k: "retrieval", title: "Páginas OKF atômicas", html: `
+    <p>Formato OKF puro, alinhado à especificação v0.2 (retrocompatível com v0.1): frontmatter YAML (<code>type</code> obrigatório; <code>title</code>, <code>description</code>, <code>tags</code> por convenção; <code>generated: { by, at }</code> registrando a LLM de destilação e o momento da geração) e referências cruzadas como links Markdown.</p>
+    <p>Contrato de atomicidade: <strong>um conceito por página, alvo de ~200 a 800 palavras</strong>. Toda página nova ou alterada registra de quais canônicos deriva: nos metadados (rastreabilidade operacional, fora do arquivo OKF, usada para reprocessamento e remoção) e também no frontmatter, no campo <code>sources</code> do padrão v0.2 (<code>resource</code> aponta para o id do canônico de origem, nunca o bruto ou fonte externa) — mantendo a página autodescritiva fora do sistema.</p>` },
+  "s-indice-paginas": { kicker: "WIKI · ESTRUTURA", k: "retrieval", title: "Índice de páginas", html: `
+    <p>Embedding <strong>multi-vetor por página</strong>: um vetor por seção (unidades de matching), todos resolvendo para a página inteira (unidade de entrega), mais BM25 por página.</p>
+    <p>Sem chunking, sem hierarquia pai/filho: são múltiplos pontos de matching para a mesma unidade de entrega. Estrutura externa aos arquivos OKF.</p>` },
+
+  /* ---------- métodos de acesso ---------- */
+  "m-semantica": { kicker: "MÉTODO DE ACESSO · ÍNDICE", k: "ingest", title: "Busca semântica ✦", html: `
+    <p>Busca vetorial por similaridade sobre os <strong>chunks filhos</strong> do índice. Captura significado e contexto, não apenas termos exatos.</p>
+    <p>A estratégia de embedding da query é um <strong>slot interno</strong>: query crua na onda 1; <strong>HyDE</strong> (resposta hipotética gerada por LLM, embedding dela no lugar da query) como variante A/B na onda 2.</p>` },
+  "m-bm25": { kicker: "MÉTODO DE ACESSO · ÍNDICE", k: "ingest", title: "Full-text (BM25)", html: `
+    <p>Busca lexical sobre frequência e raridade de termos, sobre os chunks filhos. Precisa para keywords exatas e complementar à semântica.</p>
+    <p>A combinação das duas (densa + esparsa, com fusão de rankings) é a <strong>busca híbrida</strong> — uma propriedade da etapa de busca que ocorre tanto sobre o índice quanto sobre a wiki.</p>` },
+  "m-grafo": { kicker: "MÉTODO DE ACESSO · ÍNDICE · ONDA 2", k: "ingest", title: "Travessia de grafo (Graph RAG)", html: `
+    <p>Navegação pelo grafo de entidades e relações (✦ IA na construção) dos chunks pais. A travessia em si é <strong>algorítmica</strong>, limitada por saltos ou suficiência.</p>
+    <p>Abre um caminho relacional até conteúdo existente — perguntas que dependem de conexões entre documentos, não de similaridade textual.</p>` },
+  "m-paginas": { kicker: "MÉTODO DE ACESSO · WIKI", k: "retrieval", title: "Busca de páginas", html: `
+    <p>Busca híbrida (multi-vetor + BM25) sobre as páginas inteiras da wiki. Resolve o problema do <strong>ponto de entrada</strong>; a unidade de retorno é sempre a página completa — qualquer vetor de seção que casar devolve a página toda, como passagem candidata.</p>` },
+  "m-navegacao": { kicker: "MÉTODO DE ACESSO · WIKI", k: "retrieval", title: "Navegação por referências", html: `
+    <p>Leitura de páginas seguindo as referências cruzadas a partir de um ponto de entrada (encontrado pela busca de páginas).</p>
+    ${T([["Leitura direta (default onda 1)", "O próprio agente navega com <code>fetch</code>, página por página, seguindo as referências devolvidas.", "Simples, sem segunda LLM, cada passo visível no trace. Consome contexto do orquestrador."], ["Navegador sub-LLM ✦ (variante ligável)", "Sub-LLM encapsulada recebe a página de entrada, navega e devolve contexto sintetizado.", "Protege o contexto do orquestrador em navegações longas. Custo extra e saída que pula o rerank."]], ["Variante", "Como funciona", "Trade-off"])}
+    <p>A leitura direta é o default porque as páginas são atômicas (garantia do contrato de destilação) e a busca de páginas entrega o ponto de entrada. As duas variantes são mensuráveis pelo mesmo trace.</p>` },
+
+  /* ---------- ingestão ---------- */
+  "e1": { kicker: "INGESTÃO · ESTÁGIO E1", k: "ingest", title: "Recepção", html: `
+    <p>O documento bruto é gravado no object store <strong>exatamente como chegou</strong> e um registro é criado no store de metadados, iniciando a máquina de estados.</p>
+    <h4>Canais de entrada</h4>
+    ${T([["Upload via interface web", "confirmado"], ["REST API (sistemas externos)", "confirmado"], ["Monitoramento de pastas (SharePoint etc.)", "opcional, não descartado"]], ["Canal", "Status"])}
+    <p>MCP é superfície de consulta (<code>search</code>, <code>fetch</code> e, na onda 2, <code>consult</code>), não de ingestão.</p>
+    <p>Formatos aceitos: PDF, Markdown, Word (.docx), Excel (.xlsx). Formato novo = variante nova no slot de canonicalização, sem mudança no esqueleto.</p>` },
+  "e2": { kicker: "INGESTÃO · ESTÁGIO E2", k: "ingest", title: "Escopo", html: `
+    <p>Coleta dos dois atributos de escopo, com <strong>prioridade absoluta para o humano</strong>. É a única decisão de destino do pipeline — dali em diante tudo é determinístico.</p>
+    ${T([["<strong>Espaço</strong>", "humano na entrada", "IA decide (variante de classificação)"], ["<strong>Tags de tipo</strong>", "humano na entrada", "IA decide (variante de extração)"]], ["Atributo", "Quem define", "Fallback"])}
+    <p>Na ausência do humano, a IA decide sozinha e o pipeline segue: <strong>não existe estado de espera por confirmação humana</strong>. Os atributos vivem nos metadados, nunca nos embeddings nem na estrutura de diretórios.</p>
+    <p><strong>Reclassificar</strong> tags é operação de metadados que se propaga aos chunks sem reprocessamento. Trocar de Espaço não é reclassificação: é remoção na origem + nova inclusão no destino, cada uma com sua cascata normal.</p>` },
+  "e3": { kicker: "INGESTÃO · ESTÁGIO E3", k: "ingest", title: "Canonicalização", html: "" }, /* preenchido abaixo */
+  "e4": { kicker: "INGESTÃO · ESTÁGIO E4", k: "ingest", title: "Construção de representações", html: `
+    <p><strong>Fan-out assíncrono:</strong> para cada representação ativa no Espaço do documento (via configuração de ativação), dispara o build correspondente. Os builds são independentes na execução: a falha de um não impede o andamento dos outros.</p>
+    <p>A escolha de representações e de variantes por Espaço é o mecanismo pelo qual conteúdos de tipos e volumes diferentes recebem técnicas diferentes.</p>
+    <p>A disponibilidade para busca, porém, é um <strong>portão conjunto</strong>: na primeira ingestão, o documento só entra na busca quando todas as representações ativas constroem com sucesso (estado CONCLUÍDO).</p>
+    <p>Cada build tem estado próprio por (documento, representação): PENDENTE → CONSTRUINDO → OK | FALHA.</p>` },
+  "e4a": { kicker: "INGESTÃO · BUILD E4a", k: "ingest", title: "Build do índice", html: `
+    <p>Sequência interna, cada passo um slot:</p>
+    ${T([["1", "Chunking", "Hierárquico semântico (pai/filho) ✦", "Chunking mecânico (janela fixa, sem LLM); proposition chunking (condicional)"], ["2", "Enriquecimento", "Contextual headers ✦", "Doc augmentation / perguntas hipotéticas (onda 2); HyPE (A/B futuro)"], ["3", "Embedding", "Modelo configurável (padrão global, override por Espaço); multilíngue", "Troca de modelo = re-embedding"], ["4", "Indexação", "pgvector (filhos) + BM25 (filhos)", "—"]], ["#", "Slot", "Default (onda 1)", "Outras variantes"])}
+    <p>Regra estrutural preservada: <strong>busca no filho, retorno do pai</strong>. O slot de enriquecimento aceita <strong>composição</strong> (mais de uma variante ativa), porque enriquecimentos são aditivos, não excludentes.</p>` },
+  "e4b": { kicker: "INGESTÃO · BUILD E4b", k: "retrieval", title: "Build da wiki (destilação ✦)", html: `
+    <p>A LLM de destilação recebe o documento canônico e opera <strong>com autonomia</strong> sobre a wiki do Espaço: criar, editar, mesclar, reorganizar páginas. O roteamento é determinístico a partir do Espaço.</p>
+    <h4>Contrato de destilação (fixo, independente do modelo)</h4>
+    <ul>
+      <li>Páginas atômicas: um conceito por página, ~200–800 palavras</li>
+      <li>Formato OKF puro: frontmatter YAML + referências cruzadas como links Markdown</li>
+      <li>Toda página nova/alterada registra de quais canônicos deriva: nos metadados (rastreabilidade operacional) e também no frontmatter, no campo <code>sources</code> da OKF v0.2</li>
+    </ul>
+    <p>Após a escrita, o build atualiza o <strong>índice de páginas</strong>: multi-vetor por seção + BM25 por página. Sem chunking, sem hierarquia pai/filho.</p>
+    <p>A destilação <strong>reescreve e sintetiza</strong> — o contraste deliberado com a canonicalização, que preserva. O custo de IA é pago na ingestão, tornando a consulta barata.</p>` },
+  "e4c": { kicker: "INGESTÃO · BUILD E4c · ONDA 2", k: "ingest", title: "Build do grafo", html: `
+    <p>Extração de entidades e relações via LLM ✦ sobre os <strong>chunks pais</strong> do índice. O grafo é estrutura auxiliar da representação-índice: seus nós apontam para chunks pais existentes, não criam conteúdo novo.</p>
+    <p>Só é construído quando o método de acesso de travessia estiver ativado.</p>` },
+  "ing-chunking": { kicker: "SLOT · E4a·1", k: "ingest", title: "Chunking", html: `
+    <p><strong>Default (onda 1):</strong> hierárquico semântico ✦ — pai/filho com fronteiras semânticas, em vez de corte cego por tamanho.</p>
+    <h4>Variantes registradas</h4>
+    <ul>
+      <li><strong>Chunking mecânico:</strong> janela de tamanho fixo respeitando parágrafos, sem LLM (custo zero de IA). Registrada para comparação via telemetria e avaliação offline.</li>
+      <li><strong>Proposition chunking ✦ (condicional):</strong> decomposição em proposições atômicas via LLM. Referência: Dense X Retrieval.</li>
+    </ul>
+    <p>É aqui que o índice <strong>fabrica sua unidade de entrega</strong>: um PDF de 100 páginas não é entregável, então o chunk pai precisa ser fabricado.</p>` },
+  "ing-enrich": { kicker: "SLOT · E4a·2 · COMPONÍVEL", k: "ingest", title: "Enriquecimento de chunk", html: `
+    <p><strong>Default (onda 1):</strong> contextual headers ✦ — cabeçalho de contexto (documento/seção) gerado via LLM e prependado a cada chunk antes do embedding, tornando cada chunk mais autocontido para o matching.</p>
+    <h4>Variantes registradas</h4>
+    <ul>
+      <li><strong>Doc augmentation (onda 2) ✦:</strong> perguntas hipotéticas associadas a cada chunk, aumentando a superfície de matching.</li>
+      <li><strong>HyPE (A/B futuro):</strong> embeddings das perguntas substituem o do chunk em vez de complementá-lo.</li>
+    </ul>
+    <p>O slot aceita <strong>composição</strong>: enriquecimentos são aditivos, não excludentes — mais de uma variante pode estar ativa ao mesmo tempo.</p>` },
+  "ing-embed": { kicker: "SLOT · E4a·3", k: "ingest", title: "Embedding", html: `
+    <p>Modelo configurável, com padrão global e override por Espaço; modelos multilíngues, pois o conteúdo é em pt-BR. Troca de modelo implica <strong>re-embedding da representação</strong> (rebuild do índice a partir do canônico).</p>` },
+  "ing-index": { kicker: "SLOT · E4a·4", k: "ingest", title: "Indexação", html: `
+    <p>pgvector para os vetores dos chunks filhos + índice lexical BM25, na mesma instância PostgreSQL dos metadados.</p>
+    <p>Espaço e tags são gravados em cada chunk como campos independentes dos vetores — o filtro de escopo funciona sobre metadados, atualizáveis sem re-embedding.</p>` },
+
+  /* ---------- busca ---------- */
+  "cons-agentico": { kicker: "CONSUMIDOR", k: "plain", title: "Consumidor agêntico / Simulador", html: `
+    <p>Agentes externos (via MCP) e o Simulador de Recuperação. Têm o contexto da conversa com o usuário e <strong>conduzem o próprio loop</strong> de tentativas: decompõem a pergunta, reformulam informados pelo que falhou, mudam escopo ou representação.</p>
+    <p>Para eles, a superfície recomendada é <code>search</code> + <code>fetch</code>: chamada stateless com query + parâmetros (escopo, representações, enhance on/off, top_k), seguida da leitura do item inteiro por id quando precisarem do contexto completo.</p>` },
+  "cons-nao-agentico": { kicker: "CONSUMIDOR · ONDA 2", k: "plain", title: "Consumidor não-agêntico", html: `
+    <p>Sistemas e integrações que preferem <strong>delegar o loop</strong>: uma chamada ao <code>consult</code>, evidência consolidada de volta.</p>
+    <p>Sem o <code>consult</code>, ficariam com a qualidade de passada única — cada integração teria que reimplementar loop, critérios de suficiência e orçamento.</p>` },
+  "consult": { kicker: "SUPERFÍCIE · ONDA 2", k: "retrieval", title: "consult — o produto agêntico", html: `
+    <p>Construído <strong>sobre</strong> o primitivo <code>search</code>: um agente de retrieval interno conduz ciclos (planeja → busca → avalia → repete), avalia suficiência e devolve evidência consolidada em uma única chamada. É o padrão <code>ask_question</code> (uma chamada, loop de recuperação interno), com a diferença deliberada de devolver evidência e flag de suficiência em vez de resposta gerada.</p>
+    <h4>As três amarras (para domar agência aninhada)</h4>
+    <ul>
+      <li><strong>Orçamento explícito por chamada:</strong> máximo de ciclos, teto de tokens e timeout são parâmetros, não configuração oculta</li>
+      <li><strong>Retorno estruturado, não prosa:</strong> contexto consolidado + passagens com origem + flag de suficiência + trace de custo</li>
+      <li><strong>Evidência, não resposta final:</strong> a geração fica com o chamador, que tem o contexto da conversa. O agente interno é de escopo fechado e terminável</li>
+    </ul>
+    <p>Esgotado o orçamento sem suficiência, retorna o melhor contexto acumulado <strong>sinalizado como insuficiente</strong> — nunca confiança fabricada. Não há política formal de retry nem classificação prévia de query (estilo Adaptive-RAG): adaptar a estratégia é raciocínio do agente.</p>` },
+  "f0": { kicker: "SEARCH · F0 · SEGURANÇA", k: "retrieval", title: "Hard filter de segurança", html: `
+    <p>Interseção entre o escopo pedido e os <strong>Espaços permitidos do chamador</strong> (derivados dos grupos no Keycloak). Aplicado <strong>antes de qualquer método de acesso</strong>, no servidor, em toda superfície de acesso a conteúdo (<code>search</code>, <code>fetch</code>, <code>consult</code>, interface web e API), sem exceção.</p>
+    <p>Não é rankeável nem contornável por parâmetro. A tool <code>fetch</code> obedece ao mesmo filtro: item fora de escopo não é lido nem aparece como referência navegável.</p>` },
+  "f1": { kicker: "SEARCH · F1 · SLOT, DEFAULT OFF", k: "retrieval", title: "Melhoria de query", html: `
+    <p>Reescrita single-shot ✦ da query antes do retrieval. Variantes: <strong>rewrite</strong> (versão mais clara) e <strong>step-back</strong> (mais ampla/abstrata).</p>
+    <p>Divisão de papéis explícita: o agente normalmente chama com off, porque <strong>reformular é papel dele</strong>; o simulador liga e desliga para medir; consumidores diretos ligam se quiserem. O slot existe dentro da tool porque o <code>search</code> precisa ser completo sozinho.</p>
+    <p>Decomposição em sub-queries <strong>não</strong> vive aqui: gera múltiplas chamadas de tool, logo é orquestração (papel do agente).</p>` },
+  "f2": { kicker: "SEARCH · F2", k: "retrieval", title: "Filtro de escopo", html: `
+    <p>Algorítmico sobre metadados: <strong>Espaço, tags, facetas</strong> (data, autor, tipo de documento, área de negócio). Reduz o espaço de busca antes dos métodos de acesso.</p>
+    <p>Os atributos de filtro são independentes dos vetores: atualizáveis a qualquer momento sem re-embedding.</p>
+    <p>Variante ligável do slot: <strong>metadata tagging ✦</strong> — a LLM deduz tags relevantes a partir da query e filtra o corpus por elas (default off).</p>` },
+  "f3": { kicker: "SEARCH · F3 · EM PARALELO", k: "retrieval", title: "Métodos de acesso", html: `
+    <p>Cada representação consultada aciona seus métodos ativos, <strong>em paralelo</strong>:</p>
+    <ul>
+      <li><strong>Índice:</strong> busca semântica (embedding de query: crua | HyDE onda 2), full-text BM25, travessia de grafo (onda 2)</li>
+      <li><strong>Wiki:</strong> busca de páginas (multi-vetor + BM25) — devolve páginas inteiras como passagens</li>
+    </ul>
+    <p>Os parâmetros da chamada definem quais representações consultar; a configuração de ativação define o que existe ligado.</p>` },
+  "f4": { kicker: "SEARCH · F4", k: "retrieval", title: "Normalização e pós-processamento", html: `
+    <p>Todos os resultados convergem para o contrato de <strong>passagem candidata</strong>. Sub-etapas, todas algorítmicas:</p>
+    <ul>
+      <li><strong>Expansão de contexto</strong> (filho → pai), só para resultados do índice. Variante registrada: RSE, que reconstrói segmentos contínuos a partir de chunks adjacentes relevantes — só entra em avaliação se casos concretos mostrarem que o pai fixo corta contexto</li>
+      <li><strong>Threshold de similaridade por método de acesso</strong> — cada método tem escala e corte próprios, porque os scores não são comparáveis entre si</li>
+      <li><strong>Fusão de rankings (RRF)</strong> — usa posições, não scores, pela mesma razão — seguida de dedup</li>
+      <li><strong>Filtragem por diversidade (Dartboard)</strong> — registrada para a onda 2, quando o corpus ficar denso</li>
+    </ul>` },
+  "f5": { kicker: "SEARCH · F5 · SLOT", k: "retrieval", title: "Reranking ✦", html: `
+    <p>Modelo especializado reordena o pool mesclado por relevância à query. Como tudo já está em formato de passagem, o reranker pontua pares (query, passagem) <strong>sem saber a origem</strong>: o rerank se aplica a tudo que for passagem, venha do índice ou da wiki.</p>
+    <p>O que não passa por rerank é saída sintetizada por LLM (caso do navegador sub-LLM), porque não é passagem comparável. O modelo de rerank é variante do slot.</p>` },
+  "f6": { kicker: "SEARCH · F6", k: "retrieval", title: "Retorno", html: `
+    <p>Top-k de passagens rankeadas mais o <strong>trace da execução</strong>: variantes usadas em cada slot, tempos, tokens, custo, scores.</p>
+    <p>O trace é devolvido no retorno da chamada e fica recuperável por identificador de execução. Alimenta o Simulador, os logs e a avaliação offline: é a matéria-prima do ciclo de convergência.</p>` },
+  "w-ler": { kicker: "TOOL FETCH", k: "retrieval", title: "fetch(id)", html: `
+    <p>Devolve um item inteiro a partir do identificador que veio numa passagem candidata: a versão atual de um <strong>documento canônico</strong> ou uma <strong>página da wiki</strong>. Completa o <code>search</code>: a busca encontra o ponto de entrada, o <code>fetch</code> entrega o inteiro e abre a navegação.</p>
+    <p>Obedece à mesma regra transversal de segurança: valida o Espaço do item contra os Espaços permitidos do chamador; item fora de escopo não é lido.</p>
+    <p>É o par <code>search</code> + <code>fetch</code> exigido pelo contrato de conectores de conhecimento do ChatGPT e adotado pelos servidores MCP para OKF.</p>` },
+  "w-refs": { kicker: "FETCH · NO RETORNO", k: "retrieval", title: "Referências do item", html: `
+    <p>Junto com o conteúdo, o <code>fetch</code> devolve as referências do item: numa página da wiki, os links cruzados para outras páginas; num documento canônico, as páginas da wiki derivadas dele, quando a wiki estiver ativa no Espaço. É o que permite ao agente decidir o próximo passo da navegação.</p>
+    <p>Item fora de escopo não aparece como referência navegável.</p>` },
+  "nav-direta": { kicker: "NAVEGAÇÃO · DEFAULT ONDA 1", k: "retrieval", title: "Leitura direta", html: `
+    <p><strong>O próprio agente navega</strong> com <code>fetch</code>, página por página, seguindo as referências devolvidas.</p>
+    <p>Simples, sem segunda LLM, cada passo visível no trace. Consome contexto do orquestrador — o trade-off aceito porque as páginas são atômicas e a busca de páginas entrega o ponto de entrada.</p>` },
+  "nav-subllm": { kicker: "NAVEGAÇÃO · VARIANTE LIGÁVEL", k: "retrieval", title: "Navegador sub-LLM ✦", html: `
+    <p>Uma sub-LLM encapsulada recebe a página de entrada, navega pelas referências e devolve <strong>contexto sintetizado</strong>.</p>
+    <p>Protege o contexto do orquestrador em navegações longas; custo extra e saída que <strong>pula o rerank</strong> (não é passagem comparável). Registrada para quando a economia de contexto justificar o custo. Mensurável pelo mesmo trace.</p>` },
+};
+
+/* corpo de e3 reaproveita a canonicalização conceitual */
+DATA["e3"].html = DATA["c-canonicalizacao"].html + `<p>O canônico é gravado no object store ao lado do bruto e <strong>versionado</strong>: reprocessar com um parser melhor gera nova versão do canônico e dispara reconstrução das representações.</p>`;
+
+/* =====================================================================
+   Inspector
+   ===================================================================== */
+const inspector = document.querySelector("[data-inspector]");
+const backdrop = document.querySelector("[data-backdrop]");
+const iTitle = document.querySelector("[data-i-title]");
+const iKicker = document.querySelector("[data-i-kicker]");
+const iBody = document.querySelector("[data-i-body]");
+let lastTrigger = null;
+
+function openInspector(id, trigger) {
+  const d = DATA[id];
+  if (!d) return;
+  iTitle.textContent = d.title;
+  iKicker.textContent = d.kicker;
+  iKicker.className = "i-kicker k-" + (d.k || "plain");
+  iBody.innerHTML = d.html;
+  iBody.scrollTop = 0;
+  document.querySelectorAll("[data-active]").forEach(n => n.removeAttribute("data-active"));
+  if (trigger && trigger.classList.contains("node")) trigger.setAttribute("data-active", "");
+  backdrop.hidden = false;
+  requestAnimationFrame(() => { backdrop.classList.add("open"); inspector.classList.add("open"); });
+  lastTrigger = trigger || null;
+}
+function closeInspector() {
+  inspector.classList.remove("open");
+  backdrop.classList.remove("open");
+  document.querySelectorAll("[data-active]").forEach(n => n.removeAttribute("data-active"));
+  setTimeout(() => { if (!backdrop.classList.contains("open")) backdrop.hidden = true; }, 260);
+  if (lastTrigger) { lastTrigger.focus({ preventScroll: true }); lastTrigger = null; }
+}
+document.addEventListener("click", (ev) => {
+  const t = ev.target.closest("[data-inspect]");
+  if (t) { openInspector(t.getAttribute("data-inspect"), t); return; }
+  if (ev.target.closest("[data-i-close]") || ev.target === backdrop) closeInspector();
+});
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape" && inspector.classList.contains("open")) closeInspector();
+});
+/* links internos dentro do inspector fecham o painel */
+iBody.addEventListener("click", (ev) => { if (ev.target.closest("a[href^='#']")) closeInspector(); });
+
+/* =====================================================================
+   Alternância de onda
+   ===================================================================== */
+document.querySelectorAll("[data-wave-btn]").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const w = btn.getAttribute("data-wave-btn");
+    document.body.setAttribute("data-wave", w);
+    document.querySelectorAll("[data-wave-btn]").forEach(b =>
+      b.setAttribute("aria-pressed", String(b === btn)));
+  });
+});
+
+/* =====================================================================
+   Filtro de slots
+   ===================================================================== */
+function applySlotFilter(f) {
+  document.querySelectorAll("[data-slot-filter]").forEach(c =>
+    c.setAttribute("aria-pressed", String(c.getAttribute("data-slot-filter") === f)));
+  document.querySelectorAll("#slots-table tbody tr").forEach(tr => {
+    tr.style.display = tr.getAttribute("data-pipe") === f ? "" : "none";
+  });
+}
+document.querySelectorAll("[data-slot-filter]").forEach(chip => {
+  chip.addEventListener("click", () => applySlotFilter(chip.getAttribute("data-slot-filter")));
+});
+applySlotFilter("ingest");
+
+/* =====================================================================
+   Filtro da taxonomia + contadores
+   ===================================================================== */
+function applyTaxFilter(kind) {
+  let anyVisible = false;
+  document.querySelectorAll(".tax-group").forEach(g => {
+    let visible = 0, total = 0;
+    g.querySelectorAll(".tax-item").forEach(item => {
+      total++;
+      const show = kind === "all" || item.getAttribute("data-kind") === kind;
+      item.classList.toggle("hidden", !show);
+      if (show) visible++;
+    });
+    g.classList.toggle("hidden", visible === 0);
+    const c = g.querySelector(".tg-count");
+    if (c) c.textContent = kind === "all" ? `${total} técnicas` : `${visible} de ${total}`;
+    if (visible > 0) anyVisible = true;
+  });
+  document.getElementById("tax-empty").style.display = anyVisible ? "none" : "block";
+}
+document.querySelectorAll("[data-tax-kind]").forEach(chip => {
+  chip.addEventListener("click", () => {
+    document.querySelectorAll("[data-tax-kind]").forEach(c =>
+      c.setAttribute("aria-pressed", String(c === chip)));
+    applyTaxFilter(chip.getAttribute("data-tax-kind"));
+  });
+});
+applyTaxFilter("all");
+
+/* =====================================================================
+   Scrollspy da navegação lateral
+   ===================================================================== */
+const navLinks = [...document.querySelectorAll(".sidenav a")];
+const sections = navLinks.map(a => document.querySelector(a.getAttribute("href"))).filter(Boolean);
+const spy = new IntersectionObserver((entries) => {
+  entries.forEach(e => {
+    if (!e.isIntersecting) return;
+    navLinks.forEach(a => a.classList.toggle("active", a.getAttribute("href") === "#" + e.target.id));
+  });
+}, { rootMargin: "-20% 0px -70% 0px" });
+sections.forEach(s => spy.observe(s));
+</script>
+</body>
+</html>

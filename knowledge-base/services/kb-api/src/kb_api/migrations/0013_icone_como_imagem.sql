@@ -1,0 +1,25 @@
+-- 0013 — o icone da base passa a aceitar imagem, nao so texto curto.
+--
+-- O QUE MUDOU DESDE A 0012
+--
+-- A 0012 gravava um emoji, e 32 caracteres bastavam. A tela passou a oferecer
+-- duas coisas que nao cabem nisso:
+--
+--   * icone da biblioteca de icones da interface, gravado como `lucide:<Nome>`;
+--   * imagem enviada por quem administra, gravada como `data:` base64.
+--
+-- POR QUE BASE64 NA COLUNA, E NAO UM OBJETO NO OBJECT STORE
+--
+-- O icone e desenhado na LISTA de bases, uma vez por linha. No object store,
+-- cada linha viraria uma requisicao autenticada a mais so para pintar 44px --
+-- e `<img src>` nao manda header, entao seria um fetch por icone e um blob por
+-- icone, como ja acontece com as figuras do documento. Na coluna, ele vem junto
+-- do `GET /v1/spaces` que a tela ja faz.
+--
+-- O preco e o tamanho da linha, e e por isso que o servidor REDUZ a imagem
+-- antes de gravar em vez de confiar no que o navegador mandou: 96x96 WebP fica
+-- na casa de poucos kB. O teto de 64 kB e o que impede uma foto de 4 MB de
+-- entrar por aqui -- e ele e verificado no servidor, porque o downscale do
+-- navegador e conveniencia, nao controle.
+ALTER TABLE space DROP CONSTRAINT IF EXISTS space_icon_curto;
+ALTER TABLE space ADD CONSTRAINT space_icon_cabe CHECK (length(icon) <= 65536);

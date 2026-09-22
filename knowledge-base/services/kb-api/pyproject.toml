@@ -1,0 +1,123 @@
+[project]
+name = "kb-api"
+version = "0.1.0"
+description = "Base de conhecimento do Goga Legal: REST de gestao + MCP"
+requires-python = ">=3.12"
+dependencies = [
+    # API
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "python-multipart>=0.0.12",
+    # Postgres + pgvector
+    "psycopg[binary,pool]>=3.2",
+    # Extracao: docling e o primario; os demais sao o caminho leve e o fallback
+    "docling>=2.15",
+    # transformers <5 de proposito: com a 5.x o docling-ibm-models nao carrega o
+    # modelo de layout ("Could not import module 'AutoImageProcessor'") e TODO
+    # PDF cai no fallback pymupdf, perdendo layout e tabela em Markdown -- que e
+    # justamente o que o docling agrega. Sem o pin a falha e silenciosa: a
+    # ingestao "funciona", so com extracao pior.
+    "transformers>=4.44,<5",
+    # torchvision fica FORA daqui de proposito: ele e instalado no Dockerfile
+    # junto do torch, do indice CPU do PyTorch. Declarar aqui faria o pip
+    # resolver do PyPI e reinstalar a variante CUDA, desfazendo o par.
+    "pymupdf>=1.24",
+    # Pillow ja vinha junto do docling, mas passou a ser usado DIRETO: o icone
+    # da base chega como imagem enviada pelo navegador e e reduzido no servidor
+    # antes de gravar. Dependencia transitiva usada direto quebra no dia em que
+    # o pacote de cima troca de estrategia, sem nada no nosso arquivo explicar.
+    "pillow>=10.0",
+    "python-docx>=1.1",
+    "python-pptx>=1.0",
+    "openpyxl>=3.1",
+    # Chunking estrutural
+    "llama-index-core>=0.12",
+    # Frontmatter dos conceitos no formato de entrada OKF. Ja vinha na arvore
+    # pelo docling, e esta declarado aqui de proposito: depender dele por
+    # transitividade faria o OKF parar de funcionar no dia em que o docling
+    # trocasse de parser, sem nada no diff sugerindo a causa.
+    "pyyaml>=6.0",
+    # Memgraph via Bolt
+    "neo4j>=5.26",
+    # HTTP com conexao persistente para o provedor de IA. Declarado aqui de
+    # proposito, e nao usado por transitividade (mesma razao do pyyaml): o
+    # `urllib` abria TLS novo a cada pergunta, e medido contra o provedor real
+    # isso era ~1 s -- o tempo da busca inteira. Depender disso sem declarar
+    # deixaria a busca lenta no dia em que a arvore mudasse.
+    "requests>=2.31",
+    # ── Avaliacao offline (FUN-07) ──
+    # Ragas e o framework primario de avaliacao que a especificacao nomeia
+    # (taxonomy §7), com as metricas `faithfulness`, `answer_relevancy`,
+    # `context_precision`, `context_recall` e `answer_correctness`.
+    "ragas>=0.4,<0.5",
+    # O cliente que o `llm_factory` do ragas recebe pronto. E o SDK oficial, e
+    # NAO substitui o `embedding.py`/`llm.py` daqui: a ingestao e a busca
+    # continuam no caminho proprio, que fala os quatro dialetos da casa e conta
+    # o uso. Este cliente existe so para o ragas.
+    "openai>=1.50",
+    # ⚠ PIN QUE PARECE ARBITRARIO E NAO E. O ragas 0.4.3 faz, no import de
+    # `ragas.llms`, `from langchain_community.chat_models.vertexai import
+    # ChatVertexAI` -- modulo que sumiu no langchain-community 0.4. Sem o teto,
+    # o `import ragas` quebra com ModuleNotFoundError. Nao usamos langchain em
+    # lugar nenhum; ele esta aqui so para satisfazer esse import.
+    "langchain-community<0.4",
+    # Cifra a credencial dos provedores de IA em repouso (Fernet). Entrou
+    # quando o provedor saiu da variavel de ambiente e passou a ser linha de
+    # banco: sem isto, um dump do Postgres entregaria a chave do modelo.
+    "cryptography>=43.0",
+]
+
+# Os gates rodam `uv sync --extra dev` e depois `python -m scripts.check` e
+# `python -m scripts.test`. Sem este extra o sync passa e o check quebra por
+# falta do ruff. O CI que rodava isso era da organizacao anterior e saiu no
+# WP-39 (ADR-0022); o extra continua sendo o contrato de quem montar o CI novo.
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.6",
+    "pytest>=8.0",
+]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+# `where = ["src"]` acha o kb_api; `scripts` fica FORA do pacote distribuido de
+# proposito -- e ferramenta de build, nao codigo que sobe na imagem.
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# O `dist/` e o venv nunca sao nossos; sem excluir, o check reprova por codigo
+# de terceiro.
+extend-exclude = [".venv", "dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+    # Os comentarios deste projeto explicam decisao e sao longos de proposito.
+    # A formatacao real e conferida pelo `ruff format --check`.
+    "E501",
+    # `def rota(x = Depends(...))` e a forma DOCUMENTADA do FastAPI: o objeto no
+    # default e o que declara a dependencia. B008 existe para pegar default
+    # mutavel compartilhado entre chamadas, que nao e o caso -- aqui seguir a
+    # regra quebraria o framework. 40 dos 65 achados iniciais eram isto.
+    "B008",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.setuptools.package-data]
+# As migracoes viajam DENTRO do pacote: sem declarar aqui, o `pip install .`
+# copia so os .py e a subida do pod quebra em "diretorio de migracoes nao
+# encontrado". O glob com subdiretorio e proposital -- `*.sql` sozinho nao
+# alcanca `migrations/`.
+# As imagens do MCP viajam pelo mesmo motivo das migracoes: sem declarar, o
+# `pip install .` copia so os .py e as rotas `/mcp/icon.png` e `/mcp/favicon.ico`
+# devolvem 404 na imagem -- sem quebrar nada no boot, que e o jeito ruim de
+# descobrir. Sao duas linhas porque sao duas extensoes: `assets/*` levaria junto
+# qualquer arquivo solto que aparecesse ali.
+kb_api = ["migrations/*.sql", "assets/*.png", "assets/*.ico"]

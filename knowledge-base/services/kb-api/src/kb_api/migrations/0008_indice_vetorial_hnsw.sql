@@ -1,0 +1,78 @@
+-- kb:no-transaction
+-- kb:opcional
+-- 0008 — indice vetorial HNSW sobre halfvec: a busca deixa de varrer tudo.
+--
+-- O PROBLEMA, MEDIDO
+--
+-- Ate aqui a busca semantica fazia SEQ SCAN em `chunk_embedding`. Com 3.972
+-- vetores (365 documentos) isso custava 21 ms e ninguem sentia. O custo e
+-- LINEAR: a mesma consulta com 100 mil vetores passaria de meio segundo e leria
+-- mais de um gigabyte de disco POR BUSCA, e com centenas de milhares deixaria de
+-- ser um servico interativo. "Milhares de arquivos indexados" e o caso de uso
+-- declarado, nao uma hipotese.
+--
+-- POR QUE NAO HAVIA INDICE, E POR QUE AGORA HA
+--
+-- A tentativa anterior falhou com `column cannot have more than 2000 dimensions
+-- for ivfflat index`: o modelo em uso devolve 3072, e tanto ivfflat quanto hnsw
+-- param em 2000 dimensoes no tipo `vector`. Ficou registrado como limitacao
+-- aceita (ADR-0018).
+--
+-- O que destrava e o tipo `halfvec` (pgvector 0.7+, e aqui roda 0.8.6): meia
+-- precisao, ate 4000 dimensoes indexaveis. O indice e sobre a EXPRESSAO
+-- `embedding::halfvec(3072)`, entao a coluna continua `vector(3072)` com o valor
+-- exato -- nada e perdido no armazenamento, so na comparacao dentro do indice.
+-- Meia precisao custa um pouco de recall e e o compromisso padrao da tecnica;
+-- perder um pouco de recall e muito melhor que varrer a tabela inteira.
+--
+-- A CONSULTA PRECISA USAR A MESMA EXPRESSAO
+--
+-- Indice de expressao so entra se o `ORDER BY` escreve a expressao igual. Quem
+-- consulta esta em `retrieval.py`, e ha teste travando os dois juntos: se a
+-- consulta voltar a ordenar por `embedding <=> ...` o indice deixa de ser usado
+-- **sem erro nenhum** -- a busca so fica lenta de novo, que e o modo de falha
+-- mais dificil de perceber.
+--
+-- SOBRE O FILTRO DE ESPACO
+--
+-- A busca sempre filtra por Espaco, e filtro com indice aproximado e o caso
+-- classico de "o indice devolve 40 e o filtro deixa 3". O pgvector 0.8 resolve
+-- com `hnsw.iterative_scan`, que a sessao liga antes de consultar: o scan
+-- continua puxando do indice ate o LIMIT ser satisfeito DEPOIS dos filtros.
+-- Medido no plano: 215 entradas de indice varridas para devolver 40 linhas.
+--
+-- E ACESSORIA (`kb:opcional`), E ISSO E DELIBERADO
+--
+-- `halfvec` exige pgvector >= 0.7 e o scan iterativo exige >= 0.8. Num servidor
+-- mais velho esta migracao nao tem como rodar -- e derrubar o servico por causa
+-- de um INDICE inverteria a logica do projeto: acessorio degrada, nao derruba.
+-- E a mesma regra do grafo e de um metodo de busca que falha. Sem o indice a
+-- busca continua correta, so volta a varrer.
+--
+-- A falha nao entra no ledger, entao a proxima subida tenta de novo: no dia em
+-- que o pgvector for atualizado, o indice aparece sozinho.
+--
+-- Onde isto vai rodar: o ambiente de destino e PostgreSQL gerenciado da OCI, e a
+-- medicao de 2026-09-10 registrada no README do overlay de GitOps diz
+-- `vector 0.8.0` -- tem `halfvec` e tem scan iterativo.
+--
+-- NUMA BASE QUE JA TEM MUITO DADO, A PRIMEIRA SUBIDA DEMORA
+--
+-- A migracao roda no startup, sob advisory lock, e a construcao do indice e
+-- proporcional ao numero de vetores. Enquanto ela roda, `/v1/ready` responde 503
+-- e o pod fica NotReady -- de proposito, e o `/v1/live` continua 200, entao o
+-- kubelet nao o mata. Numa base vazia sao 7 ms; numa com centenas de milhares de
+-- vetores, minutos. O rollout espera, e a replica antiga continua servindo.
+--
+-- CONCURRENTLY porque `CREATE INDEX` comum toma ACCESS EXCLUSIVE na tabela, e
+-- numa base grande isso deixaria a ingestao e a busca paradas durante a
+-- construcao. Por isso esta migracao roda fora de transacao -- e, como manda o
+-- README daqui, ela e reexecutavel: `IF NOT EXISTS` em tudo.
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS chunk_embedding_hnsw
+    ON chunk_embedding USING hnsw ((embedding::halfvec(3072)) halfvec_cosine_ops);
+
+-- A wiki tem o mesmo problema e a mesma cura. Ela e menor (uma pagina destilada
+-- por punhado de documentos, varios vetores por pagina), mas escala junto.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS wiki_page_vector_hnsw
+    ON wiki_page_vector USING hnsw ((embedding::halfvec(3072)) halfvec_cosine_ops);

@@ -1,0 +1,33 @@
+# Credenciais e configuração de ambiente. O .env fica FORA do git: ele carrega a
+# chave do Azure OpenAI e o token de serviço. O que entra é o .env.example.
+.env
+.env.*
+!.env.example
+
+# Node / Vite
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Ferramentas de IA: as configurações locais são de cada pessoa
+.codex
+.claude/settings.local.json
+.cursor/settings.local.json

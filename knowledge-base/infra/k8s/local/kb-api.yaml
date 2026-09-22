@@ -1,0 +1,86 @@
+# kb-api — o servico. Expoe as duas superficies do requisito FUN-11 no mesmo
+# processo: REST em /v1 (gestao e ingestao) e MCP em /mcp (agentes de IA).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kb-api
+  namespace: stack-knowledge-base
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: kb-api }
+  template:
+    metadata:
+      labels: { app: kb-api }
+    spec:
+      containers:
+        - name: kb-api
+          image: localhost:5112/ms-knowledge-base:dev
+          # Always, nao IfNotPresent: a tag `:dev` e MUTAVEL e o registry local
+          # e o unico consumidor. Com IfNotPresent o node reaproveita a camada
+          # cacheada da tag antiga, e um `rollout restart` depois de um build
+          # novo sobe o codigo VELHO -- sem erro nenhum, so comportamento
+          # inexplicavel. Foi exatamente como um conserto do docling ficou
+          # invisivel por duas rodadas de ingestao.
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef: { name: knowledge-base-config }
+            - secretRef: { name: knowledge-base-secret }
+            # Criado pelo 20-deploy.sh quando o Keycloak sobe; SOBRESCREVE o
+            # KB_KEYCLOAK_ISSUER vazio do config → liga a auth.
+            - configMapRef: { name: keycloak-config, optional: true }
+          ports:
+            - { containerPort: 8080, name: http }
+          startupProbe:
+            httpGet: { path: /v1/live, port: 8080 }
+            # A migracao do esquema roda no startup e espera o Postgres; a janela
+            # generosa evita o pod reiniciar em loop quando o banco sobe depois.
+            periodSeconds: 5
+            failureThreshold: 60
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet: { path: /v1/ready, port: 8080 }
+            periodSeconds: 15
+            timeoutSeconds: 10
+            # Ingestao longa deixa o /v1/ready lento; tirar o pod do balanceador
+            # por isso e aceitavel, mata-lo nao. Por isso o threshold aqui e
+            # folgado e o da liveness, mais ainda.
+            failureThreshold: 6
+          livenessProbe:
+            # /v1/live, nao /v1/health: responde na hora, sem tocar em banco nem
+            # grafo. Com o health aqui, uma ingestao de PDF de 200 paginas
+            # (~30 s de CPU) fazia a probe expirar e o kubelet MATAVA o pod no
+            # meio do trabalho -- e o cliente via HTTP 503 em todos os arquivos
+            # seguintes, sem erro nenhum no log do pod.
+            httpGet: { path: /v1/live, port: 8080 }
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 10
+          # 4Gi porque a extracao com docling carrega os modelos de layout e de
+          # estrutura de tabela na RAM e processa PDF de ate 18 MB / ~200
+          # paginas. Com 2560Mi o pod foi OOMKilled no meio da ingestao (exit
+          # 137) e TODOS os uploads passaram a ser recusados -- o sintoma
+          # aparece no cliente, nao no pod.
+          #
+          # A soma da stack tem de caber no teto do no (K3D_NODE_MEMORY=8g):
+          # postgres 1Gi + keycloak 1Gi + memgraph 768Mi + minio 512Mi + este
+          # 4Gi ≈ 7,3Gi. Ao mexer num, revise os outros.
+          resources:
+            requests: { cpu: "200m", memory: "768Mi" }
+            # 8Gi, nao 4Gi. O OCR e a extracao de figuras foram o que
+            # estourou o teto anterior: o docling rasteriza a pagina para achar
+            # e recortar imagem, e num PDF de 15 MB com 50 paginas isso passa de
+            # 4Gi -- o pod morreu OOMKilled no meio da ingestao e os 24 arquivos
+            # seguintes voltaram 502. O no tem 20Gi alocaveis e o resto da stack
+            # usa menos de 2Gi, entao a folga existe.
+            limits: { cpu: "3", memory: "8Gi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kb-api
+  namespace: stack-knowledge-base
+spec:
+  selector: { app: kb-api }
+  ports:
+    - { name: http, port: 80, targetPort: 8080 }

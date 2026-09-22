@@ -1,0 +1,85 @@
+# Memgraph — grafo de entidades (representacao AUXILIAR, ING-12).
+#
+# ⚠ Memgraph e IN-MEMORY: o grafo inteiro mora na RAM, entao o teto nao e
+# opcional. 768Mi cobre o grafo de termos das bases desta v0; se o pod comecar a
+# morrer por OOMKilled, o caminho e limpar o grafo ou subir o teto de forma
+# consciente, nao remove-lo.
+#
+# ⚠ SEM volume em /var/lib/memgraph. Com PVC **ou** emptyDir montado ali o
+# processo morre com SIGSEGV (exit 139) dois segundos depois de subir; a
+# mesma imagem, mesma versao e mesmo teto de memoria sobem normalmente sem
+# o mount. Testado com 2.19.0, 2.22.1, PVC e emptyDir, com e sem
+# --memory-limit: o mount e a variavel que decide.
+#
+# Isso e aceitavel porque o grafo e representacao DERIVADA e auxiliar
+# (ING-12, classificado dispensavel): ele e reconstruido do documento
+# canonico na ingestao, entao perde-lo num restart nao perde informacao.
+#
+# A imagem e o engine puro (`memgraph`), nao a `-platform`: o Lab e o mgconsole
+# nao sao usados por aqui e a imagem gorda so ocuparia RAM.
+#
+# ⚠ A versao e fixada em 2.22.1 porque a 2.19.0 SEGFAULTA (exit 139) no kernel
+# do WSL2 dois segundos depois de subir, em CrashLoopBackOff. Testadas: 2.19.0
+# quebra, 2.18.1 e 2.22.1 sobem. Nao troque para `latest` sem verificar.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: memgraph
+  namespace: stack-knowledge-base
+spec:
+  replicas: 1
+  strategy: { type: Recreate }   # PVC RWO — ver postgres.yaml
+  selector:
+    matchLabels: { app: memgraph }
+  template:
+    metadata:
+      labels: { app: memgraph }
+    spec:
+      # Memgraph exige vm.max_map_count >= 262144 e o no do k3d herda o valor do
+      # kernel do WSL (65530), entao o processo sobe e morre em loop com
+      # "Max virtual memory areas ... is too low". O sysctl e do NO, nao do pod:
+      # um initContainer privilegiado ajusta e sai. Mesmo padrao usado por
+      # Elasticsearch em k8s. Alternativa seria pedir sysctl no host, o que
+      # exigiria root fora do cluster.
+      initContainers:
+        - name: sysctl
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "sysctl -w vm.max_map_count=262144"]
+          securityContext:
+            privileged: true
+          resources:
+            requests: { cpu: "10m", memory: "16Mi" }
+            limits: { cpu: "100m", memory: "64Mi" }
+      containers:
+        - name: memgraph
+          image: memgraph/memgraph:2.22.1
+          imagePullPolicy: IfNotPresent
+          # --memory-limit em MB, explicito: sem ele o Memgraph dimensiona a
+          # arena pela RAM TOTAL da VM do WSL (o cgroup do pod nao muda o
+          # /proc/meminfo que ele le), tenta reservar mais do que o limite do
+          # pod e morre com SIGSEGV (exit 139) dois segundos depois de subir.
+          # Tem de ficar abaixo do `limits.memory` daqui.
+          args:
+            - "--telemetry-enabled=false"
+            - "--log-level=WARNING"
+            - "--memory-limit=600"
+          ports:
+            - { containerPort: 7687, name: bolt }
+          readinessProbe:
+            tcpSocket: { port: 7687 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "50m", memory: "128Mi" }
+            limits: { cpu: "1", memory: "768Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: memgraph
+  namespace: stack-knowledge-base
+spec:
+  selector: { app: memgraph }
+  ports:
+    - { name: bolt, port: 7687, targetPort: 7687 }

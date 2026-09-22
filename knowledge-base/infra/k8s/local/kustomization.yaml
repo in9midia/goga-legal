@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: stack-knowledge-base
+
+# secret.yaml NAO entra aqui de proposito: ele e criado pelo 20-deploy.sh com
+# os valores reais lidos do `.env` da raiz. Se estivesse no kustomize, todo
+# `kubectl apply -k` sobrescreveria o segredo real pelos placeholders vazios
+# -- e o servico voltaria a subir sem credencial de modelo e sem token de
+# servico, quebrando o MCP de forma silenciosa.
+resources:
+  - namespace.yaml
+  - limits.yaml      # trava de recurso do namespace — protege o WSL
+  - config.yaml
+  - postgres.yaml    # pgvector: indice vetorial + lexical
+  - minio.yaml       # bruto imutavel (ING-02)
+  - memgraph.yaml    # grafo de entidades (ING-12)
+  - kb-api.yaml      # REST + MCP
+  - kb-ui.yaml       # app React/Vite + o unico Ingress da stack
+
+# Nao ha Keycloak aqui, e nao e por falta de um. A autenticacao e o Keycloak do
+# Goga (kc.localtest.me:8481, realm goga-interno), que vive no cluster k3d
+# `goga` -- WP-04. Duplica-lo aqui criaria um segundo diretorio de identidade
+# sem dono, e o repertorio ficaria refem do ciclo de vida do cluster errado.
+# O `start-k8s-local.sh` da raiz do monorepo sobe os dois na ordem certa.

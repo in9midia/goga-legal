@@ -1,0 +1,138 @@
+# Conjunto de avaliação do Espaço `bancario`.
+#
+# As regras deste arquivo (as duas vozes, a ausência de gabarito e por quê)
+# estão em `content/README.md`, seção "Conjuntos de avaliação". Em resumo:
+# voz de leigo → `strategy: dificil` com `kind`; voz de técnico → `strategy:
+# direta`; `reference` vazio em todas, porque gabarito seria afirmação de
+# direito sem proveniência (R4).
+
+space: bancario
+questions:
+  # ── voz de leigo (25) ────────────────────────────────────────────────────
+  - question: "meu nome está sujo por uma dívida de um cartão que eu nunca pedi"
+    strategy: dificil
+    kind: consequencia
+  - question: "caiu um PIX da minha conta de madrugada e eu estava dormindo"
+    strategy: dificil
+    kind: parafrase
+  - question: "fui no caixa eletrônico, um rapaz me ajudou e depois sumiu dinheiro da conta"
+    strategy: dificil
+    kind: parafrase
+  - question: "clonaram meu cartão e o banco diz que a culpa é minha porque a senha foi usada"
+    strategy: dificil
+    kind: excecao
+  - question: "meu chip do celular parou de funcionar e no dia seguinte tinham feito empréstimo no meu nome"
+    strategy: dificil
+    kind: multi_salto
+  - question: "descontaram um empréstimo do meu benefício que eu nunca contratei"
+    strategy: dificil
+    kind: parafrase
+  - question: "o banco bloqueou minha conta e não me explica o motivo"
+    strategy: dificil
+    kind: consequencia
+  - question: "eu já tinha outra dívida negativada antes, isso atrapalha meu pedido de indenização?"
+    strategy: dificil
+    kind: excecao
+  - question: "estou devendo em cinco lugares e não sobra dinheiro nem para comida"
+    strategy: dificil
+    kind: parafrase
+  - question: "o banco quer que eu pague uma parcela maior do que tudo o que eu ganho no mês"
+    strategy: dificil
+    kind: limite
+  - question: "os juros do meu empréstimo dobraram a dívida em menos de um ano"
+    strategy: dificil
+    kind: limite
+  - question: "eu posso reclamar dos juros do banco por achar que estão altos demais?"
+    strategy: dificil
+    kind: excecao
+  - question: "o banco cobra uma taxa que não estava no contrato que eu assinei"
+    strategy: dificil
+    kind: parafrase
+  - question: "assinei um papel reconhecendo a dívida e agora descobri que o valor estava errado"
+    strategy: dificil
+    kind: consequencia
+  - question: "fiz um acordo com o banco e mesmo assim meu nome continuou negativado"
+    strategy: dificil
+    kind: consequencia
+  - question: "o banco vendeu minha dívida para outra empresa que agora me cobra o dobro"
+    strategy: dificil
+    kind: multi_salto
+  - question: "quanto tempo depois de paga a dívida o banco tem que tirar meu nome do cadastro?"
+    strategy: dificil
+    kind: limite
+  - question: "desde quando eu conto o prazo para reclamar de uma negativação indevida?"
+    strategy: dificil
+    kind: limite
+  - question: "o dinheiro que sumiu da conta é de 2019, ainda dá para pedir de volta?"
+    strategy: dificil
+    kind: limite
+  - question: "eu comprei com um boleto falso que veio por e-mail, o banco tem alguma culpa?"
+    strategy: dificil
+    kind: distincao
+  - question: "além de processar, tem algum lugar para reclamar de banco?"
+    strategy: dificil
+    kind: consequencia
+  - question: "qual a diferença de reclamar no Bacen e de entrar na justiça?"
+    strategy: dificil
+    kind: distincao
+  - question: "a financeira do carro é diferente do banco, as regras são as mesmas?"
+    strategy: dificil
+    kind: distincao
+  - question: "usei o cartão de crédito para fazer uma viagem cara, isso muda alguma coisa na renegociação?"
+    strategy: dificil
+    kind: excecao
+  - question: "quanto a justiça costuma dar de indenização quando o banco deixa a fraude acontecer?"
+    strategy: dificil
+    kind: limite
+
+  # ── voz de técnico (25) ──────────────────────────────────────────────────
+  - question: "O que a Súmula 479/STJ estabelece sobre fraude praticada por terceiro em operações bancárias?"
+    strategy: direta
+  - question: "O que a Súmula 297/STJ estabelece sobre a aplicação do CDC às instituições financeiras?"
+    strategy: direta
+  - question: "O que a Súmula 596/STF estabelece sobre juros remuneratórios em contratos bancários?"
+    strategy: direta
+  - question: "Qual o sentido da Súmula 385/STJ e por que ela é tese defensiva, e não fundamento ofensivo?"
+    strategy: direta
+  - question: "O que a Lei 14.181/2021 acrescentou ao CDC em matéria de superendividamento?"
+    strategy: direta
+  - question: "O que os arts. 54-A e seguintes do CDC dispõem sobre superendividamento?"
+    strategy: direta
+  - question: "Que exceções a Lei 14.181/2021 prevê quanto a crédito de luxo e garantia real?"
+    strategy: direta
+  - question: "Como o mínimo existencial é tratado no regime do superendividamento?"
+    strategy: direta
+  - question: "O que o art. 51, §4º, do CDC dispõe?"
+    strategy: direta
+  - question: "O que o art. 52 do CDC exige do fornecedor no fornecimento de crédito?"
+    strategy: direta
+  - question: "O que a Lei 14.905/2024 mudou nos arts. 389 e 406 do Código Civil?"
+    strategy: direta
+  - question: "Qual o regime vigente de juros e correção monetária após a Lei 14.905/2024?"
+    strategy: direta
+  - question: "Como a responsabilidade objetiva da instituição financeira é caracterizada em fraude de terceiro?"
+    strategy: direta
+  - question: "O que caracteriza fortuito interno e fortuito externo na atividade bancária?"
+    strategy: direta
+  - question: "Como a Súmula 479/STJ vem sendo aplicada a golpes com transferência por PIX?"
+    strategy: direta
+  - question: "Como a Súmula 479/STJ vem sendo aplicada ao SIM swap?"
+    strategy: direta
+  - question: "O que é exigido para a caracterização do empréstimo consignado indevido?"
+    strategy: direta
+  - question: "O que compõe o Custo Efetivo Total em contrato de empréstimo bancário?"
+    strategy: direta
+  - question: "Como a capitalização de juros é tratada em contrato bancário de consumo?"
+    strategy: direta
+  - question: "Que resoluções do CMN e do Bacen regulam o encerramento e o bloqueio de conta?"
+    strategy: direta
+  - question: "Quais são os requisitos do art. 784, III, do CPC para a confissão de dívida como título executivo?"
+    strategy: direta
+  - question: "Qual o prazo prescricional aplicável à repetição de indébito em relação de consumo bancária?"
+    strategy: direta
+  - question: "O que o art. 43 do CDC dispõe sobre bancos de dados e cadastros de consumidores?"
+    strategy: direta
+  - question: "Qual o procedimento de reclamação no Bacen como via paralela à judicial?"
+    strategy: direta
+  - question: "Qual a faixa usual de dano moral fixada pelos tribunais em fraude bancária com débito indevido?"
+    strategy: direta

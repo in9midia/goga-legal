@@ -1,0 +1,180 @@
+@import 'tailwindcss';
+
+/* Paleta do Goga Legal, extraída dos dois arquivos de marca em `brand/`
+   (`goga.svg` e `goga-icon.svg`). Ela entra aqui, como token de tema, e não
+   espalhada em classe utilitária: com os valores no `@theme`, `bg-ink-900` e
+   `text-text-muted` continuam valendo em toda a interface e a marca muda num
+   lugar só. Trocar o logotipo e deixar a cor anterior no CSS produziria uma
+   interface meio de cada marca, que é o modo de falha comum deste tipo de
+   troca. */
+@theme {
+  /* Superfícies. `ink-700` para baixo são os verdes que estão nos arquivos de
+     marca; `ink-800` a `ink-950` NÃO estão: a marca não traz cor de fundo, e
+     uma interface de leitura longa precisa de degraus abaixo do verde
+     principal. Foram obtidos escurecendo #124638, e por isso ficam anotados —
+     são derivados, não extraídos. */
+  --color-ink-950: #071b16;
+  --color-ink-900: #0a251e;
+  --color-ink-850: #0c2d24;
+  --color-ink-800: #0e362b;
+  --color-ink-700: #124638; /* verde principal: a cor mais presente na marca */
+  --color-ink-600: #154638; /* verde secundário */
+  --color-ink-500: #1e5142; /* verde secundário */
+
+  --color-line: #1c493c; /* verde secundário */
+  --color-line-soft: rgba(209, 224, 219, 0.08); /* neutro claro, diluído */
+
+  --color-text: #f6f7f7; /* quase branco */
+  --color-text-muted: #d1e0db; /* neutro claro */
+  --color-text-dim: #54766c; /* verde claro */
+
+  --color-accent: #fafbfb; /* quase branco */
+  --color-accent-strong: #ffffff;
+
+  /* Placa clara para o logotipo. Ele é de duas cores (escudo verde com o miolo
+     quase branco) e não existe versão clara dele; sobre o fundo escuro ele
+     sumiria, e invertido por filtro viraria uma mancha branca sólida, sem o
+     desenho do escudo. */
+  --color-brand: #124638;
+  --color-brand-soft: #54766c;
+  --color-brand-chip: #f6f7f7;
+
+  /* Cor de ESTADO não é cor de marca, de propósito: um "ok" no verde da marca
+     deixa de ser lido como estado e passa a ser lido como enfeite. Estes são
+     os quatro tons semânticos do Tailwind, escolhidos por serem reconhecíveis
+     fora de qualquer marca. */
+  --color-emerald: #16a34a;
+  --color-amber: #d97706;
+  --color-rose: #e11d48;
+  --color-blue: #2563eb;
+
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 8px 24px -16px rgba(0, 0, 0, 0.6);
+}
+
+:root {
+  color-scheme: dark;
+  background-color: var(--color-ink-950);
+  color: var(--color-text);
+  font-family:
+    'Inter',
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--color-ink-950);
+}
+
+/* Dentro de `@layer base` de propósito. Uma regra de elemento FORA de layer
+   vence qualquer utility do Tailwind (que vive na layer `utilities`), então
+   `<a className="text-ink-950">` continuava herdando o quase-branco daqui — e o
+   botão "Adicionar ao Cursor" saía com texto branco sobre fundo branco, ou
+   seja, invisível. Na layer base, a utility ganha, que é o esperado. */
+@layer base {
+  a {
+    color: var(--color-accent);
+    text-decoration: none;
+  }
+  a:hover {
+    color: var(--color-accent-strong);
+  }
+}
+
+code,
+pre,
+.mono {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+code {
+  background: var(--color-ink-800);
+  border: 1px solid var(--color-line);
+  padding: 0.08rem 0.4rem;
+  border-radius: 0.3rem;
+  font-size: 0.82em;
+  color: var(--color-text);
+}
+
+::placeholder {
+  color: var(--color-text-dim);
+  opacity: 1;
+}
+
+button:not(:disabled),
+a[href],
+label[for],
+input[type='checkbox']:not(:disabled),
+select:not(:disabled),
+summary {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-ink-600);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--color-ink-500);
+  background-clip: content-box;
+}
+
+/* Markdown do documento canonico: o texto extraido e a fonte de verdade da
+   busca, entao ele aparece cru, monoespacado, com os marcadores visiveis. Nao
+   e para ficar bonito -- e para dar para AUDITAR contra o arquivo original. */
+.canonical {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+
+/* ── documento original renderizado (docx-preview, planilha) ──────────────
+   O docx-preview injeta o CSS do próprio arquivo — fundo branco, fonte do
+   Word. Não vale forçar o tema escuro por cima: o ponto desta aba é ver o
+   documento COMO ELE É, para comparar com o canônico. O que se ajusta aqui é
+   só o que quebraria o layout da coluna. */
+.docx-host .docx-wrapper {
+  background: transparent;
+  padding: 0;
+}
+.docx-host .docx {
+  max-width: 100% !important;
+  width: 100% !important;
+  padding: 1.5rem !important;
+  box-shadow: none;
+}
+.docx-host img {
+  max-width: 100%;
+  height: auto;
+}
+
+.planilha table {
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.planilha td,
+.planilha th {
+  border: 1px solid #d1e0db;
+  padding: 3px 7px;
+  white-space: nowrap;
+}

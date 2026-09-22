@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <base href="/" />
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      href RELATIVO, e isso NAO e estilo: o `<base href>` acima e reescrito pelo
+      ingress de DEV/PROD para `/knowledge-base/` (sub_filter no
+      `configuration-snippet` do Application da UI). Um href absoluto
+      `/favicon.ico` sairia da aplicacao e bateria na raiz do hub, que e de outro
+      servico e devolve 404 -- o sintoma seria o icone sumir so no ambiente
+      publicado, com tudo certo em dev.
+    -->
+    <link rel="icon" type="image/x-icon" href="favicon.ico" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    />
+    <script src="env.js"></script>
+    <title>Base de conhecimento · Goga Legal</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

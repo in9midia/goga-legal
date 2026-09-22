@@ -1,0 +1,54 @@
+# Config nao-sensivel da stack (ambiente local).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: knowledge-base-config
+  namespace: stack-knowledge-base
+data:
+  KB_ENV: "k8s-local"
+  KB_LOG_LEVEL: "INFO"
+
+  # ── Postgres (pgvector) ──
+  POSTGRES_HOST: "postgres"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "knowledge_base"
+  POSTGRES_USER: "knowledge_base"
+  POSTGRES_PASSWORD: "knowledge_base"
+
+  # ── MinIO ──
+  S3_ENDPOINT: "http://minio:9000"
+  S3_BUCKET: "knowledge-base-raw"
+  S3_ACCESS_KEY: "kbkey"
+  S3_SECRET_KEY: "kbsecret123"
+
+  # ── Memgraph ──
+  MEMGRAPH_HOST: "memgraph"
+  MEMGRAPH_PORT: "7687"
+  MEMGRAPH_ENABLED: "true"
+
+  # ── Keycloak / OIDC ──
+  # Vazio = auth desligada (dev offline). O 20-deploy.sh cria o ConfigMap
+  # `keycloak-config`, que SOBRESCREVE estes valores, quando ha issuer no .env.
+  KB_KEYCLOAK_ISSUER: ""
+  KB_KEYCLOAK_AUDIENCE: ""
+  # Grupo de administracao da base. `/goga/curadoria` e quem ingere e corrige
+  # repertorio (ADR-0023); os outros tres grupos do realm nao administram a
+  # KB por padrao, e alcancam Espaco por grant explicito.
+  KB_ADMIN_GROUP: "/goga/curadoria"
+
+  # ── Pipeline ──
+  KB_CHILD_CHUNK_CHARS: "1200"
+  KB_CHILD_OVERLAP_CHARS: "150"
+  KB_PARENT_CHUNK_CHARS: "4800"
+  KB_MAX_UPLOAD_MB: "100"
+
+  # ── Busca ──
+  KB_DEFAULT_TOP_K: "10"
+  KB_CANDIDATE_POOL: "40"
+  KB_RRF_K: "60"
+  # Dimensao do vetor: esta no DDL da coluna `chunk_embedding.embedding
+  # vector(N)`, entao continua no ambiente. A API recusa tornar padrao um
+  # provedor que devolva outra.
+  KB_EMBEDDING_DIM: "3072"
+  # Modelo e endpoint SAIRAM daqui: sao cadastrados na tela Administracao >
+  # Modelos de IA e guardados no banco, cifrados.

@@ -1,0 +1,27 @@
+# Environment variables
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# AI Tools
+.codex
+.claude/settings.local.json
+.cursor/settings.local.json
+
+# OS
+Desktop.ini
+
+# Temp
+/tmp

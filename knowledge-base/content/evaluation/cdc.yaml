@@ -1,0 +1,136 @@
+# Conjunto de avaliação do Espaço `cdc`.
+#
+# As regras deste arquivo estão em `content/README.md`, seção "Conjuntos de
+# avaliação". Em resumo: voz de leigo → `strategy: dificil` com `kind`; voz de
+# técnico → `strategy: direta`; `reference` vazio em todas (R4).
+
+space: cdc
+questions:
+  # ── voz de leigo (25) ────────────────────────────────────────────────────
+  - question: "comprei uma geladeira pela internet e até hoje não entregaram, já passou um mês"
+    strategy: dificil
+    kind: consequencia
+  - question: "o anúncio dizia um preço e quando fui pagar a loja falou que era erro do site"
+    strategy: dificil
+    kind: parafrase
+  - question: "me arrependi da compra que fiz pelo celular, dá para desistir?"
+    strategy: dificil
+    kind: limite
+  - question: "quantos dias eu tenho para devolver uma coisa que comprei online e não gostei?"
+    strategy: dificil
+    kind: limite
+  - question: "a televisão quebrou com dois meses de uso e a loja diz que eu tenho que falar com o fabricante"
+    strategy: dificil
+    kind: distincao
+  - question: "levei o produto na assistência e faz mais de um mês que não devolvem"
+    strategy: dificil
+    kind: limite
+  - question: "descobri um defeito no produto só depois de um ano, ainda dá para reclamar?"
+    strategy: dificil
+    kind: excecao
+  - question: "a loja me obrigou a comprar um seguro junto com o celular para poder parcelar"
+    strategy: dificil
+    kind: parafrase
+  - question: "o contrato que assinei tem uma cláusula dizendo que eu não posso processar a empresa"
+    strategy: dificil
+    kind: consequencia
+  - question: "a faculdade aumentou a mensalidade no meio do ano sem avisar"
+    strategy: dificil
+    kind: parafrase
+  - question: "a operadora cortou minha internet mesmo eu tendo pago a conta"
+    strategy: dificil
+    kind: consequencia
+  - question: "comprei um carro usado na concessionária e depois apareceu que ele tinha batido"
+    strategy: dificil
+    kind: parafrase
+  - question: "recebi uma carta dizendo que meu carro precisa voltar para a fábrica por um problema de fábrica"
+    strategy: dificil
+    kind: parafrase
+  - question: "comprei num site que é só um marketplace, quem eu cobro: o site ou o vendedor?"
+    strategy: dificil
+    kind: distincao
+  - question: "a empresa diz que eu é que tenho que provar o defeito, mas eu não entendo nada de técnica"
+    strategy: dificil
+    kind: parafrase
+  - question: "a construtora atrasou a entrega do apartamento e quer que eu continue pagando normalmente"
+    strategy: dificil
+    kind: consequencia
+  - question: "desisti do apartamento na planta e a construtora quer ficar com quase tudo que eu paguei"
+    strategy: dificil
+    kind: limite
+  - question: "meu voo foi cancelado em cima da hora e a companhia só ofereceu voo dois dias depois"
+    strategy: dificil
+    kind: consequencia
+  - question: "minha mala sumiu na viagem e a companhia aérea fala em um limite de valor"
+    strategy: dificil
+    kind: limite
+  - question: "gastei três dias de trabalho ligando para a empresa resolver um problema que era deles"
+    strategy: dificil
+    kind: parafrase
+  - question: "meu nome foi para o Serasa por uma conta que eu nunca fiz"
+    strategy: dificil
+    kind: consequencia
+  - question: "quanto costuma valer uma indenização por dano moral em caso de negativação indevida?"
+    strategy: dificil
+    kind: limite
+  - question: "o produto que chegou é diferente do que estava na foto do anúncio"
+    strategy: dificil
+    kind: distincao
+  - question: "a empresa me ofereceu um acordo bem baixo, eu tenho que aceitar?"
+    strategy: dificil
+    kind: consequencia
+  - question: "o problema aconteceu com meu vizinho que comprou junto comigo, ele também pode reclamar?"
+    strategy: dificil
+    kind: multi_salto
+
+  # ── voz de técnico (25) ──────────────────────────────────────────────────
+  - question: "O que o art. 49 do CDC estabelece para a compra feita fora do estabelecimento comercial?"
+    strategy: direta
+  - question: "O que o art. 26 do CDC dispõe sobre prazo de reclamação por vício aparente?"
+    strategy: direta
+  - question: "O que o art. 26, III, do CDC dispõe sobre vício oculto?"
+    strategy: direta
+  - question: "Como o CDC trata a oferta vinculante nos arts. 30 e 35?"
+    strategy: direta
+  - question: "O que o art. 18 do CDC prevê para o vício de qualidade do produto?"
+    strategy: direta
+  - question: "Qual a diferença entre vício do produto e fato do produto no CDC?"
+    strategy: direta
+  - question: "O que o art. 13 do CDC dispõe sobre a responsabilidade do fornecedor intermediário?"
+    strategy: direta
+  - question: "O que o art. 38 do CDC estabelece sobre o ônus da prova na publicidade?"
+    strategy: direta
+  - question: "Em que condições o CDC admite a inversão do ônus da prova por hipossuficiência técnica?"
+    strategy: direta
+  - question: "O que o art. 51 do CDC trata a respeito de cláusulas contratuais?"
+    strategy: direta
+  - question: "O que o art. 52 do CDC exige do fornecedor no fornecimento de crédito ou financiamento?"
+    strategy: direta
+  - question: "O que o art. 39 do CDC arrola como prática abusiva?"
+    strategy: direta
+  - question: "Como o CDC trata a venda casada?"
+    strategy: direta
+  - question: "O que o art. 10 do CDC dispõe sobre produto com nocividade ou periculosidade?"
+    strategy: direta
+  - question: "Que obrigações o Decreto 2.181/97 estabelece em matéria de recall?"
+    strategy: direta
+  - question: "Que obrigações o Decreto 7.962/2013 impõe ao fornecedor?"
+    strategy: direta
+  - question: "O que o art. 34 do CDC dispõe sobre atos de prepostos e representantes autônomos?"
+    strategy: direta
+  - question: "Qual a diferença entre garantia legal e garantia contratual no CDC?"
+    strategy: direta
+  - question: "O que o art. 6º do CDC arrola como direitos básicos do consumidor?"
+    strategy: direta
+  - question: "Como o CDC define fornecedor no art. 3º?"
+    strategy: direta
+  - question: "Como o CDC define consumidor no art. 2º?"
+    strategy: direta
+  - question: "O que o art. 20 do CDC prevê para o vício na prestação de serviço?"
+    strategy: direta
+  - question: "O que o art. 42, parágrafo único, do CDC dispõe sobre cobrança indevida?"
+    strategy: direta
+  - question: "O que o art. 14 do CDC estabelece sobre a responsabilidade do prestador de serviço?"
+    strategy: direta
+  - question: "Qual o conteúdo da teoria do desvio produtivo do consumidor na construção do STJ?"
+    strategy: direta
