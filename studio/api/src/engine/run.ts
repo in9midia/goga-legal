@@ -4,7 +4,7 @@ import { flowGraphSchema, type FlowGraph } from "../shared/graph.js";
 import { HttpError, notFound } from "../lib/errors.js";
 import type { SessionUser } from "../lib/auth.js";
 import type { RunContext } from "./context.js";
-import { executeTurn, type TurnInput, type TurnOutcome } from "./executor.js";
+import { executeTurn, readCase, type TurnInput, type TurnOutcome } from "./executor.js";
 import { RunTracer, errorMessage, publish } from "./tracer.js";
 
 export interface RunTarget {
@@ -55,11 +55,18 @@ export async function startTurn(args: {
         .where(and(inArray(schema.file.id, allIds), eq(schema.file.sessionId, args.sessionId)))
     : [];
   const nameOf = new Map(sessionFiles.map((f) => [f.id, f.name]));
-  const history = rows.map(({ payload, attachments, ...m }) => ({
-    ...m,
-    status: (payload as { status?: string } | null)?.status ?? null,
-    anexos: m.role === "user" ? (attachments ?? []).flatMap((id) => nameOf.get(id) ?? []) : [],
-  }));
+  const history = rows.map(({ payload, attachments, ...m }) => {
+    const p = payload as { status?: string; pendencia?: string } | null;
+    return {
+      ...m,
+      // Pergunta por campo de documento nao e esclarecimento do caso: nao
+      // entra na contagem nem na lista de perguntas do classificador.
+      status: p?.pendencia === "documento" ? "clarify_documento" : (p?.status ?? null),
+      anexos: m.role === "user" ? (attachments ?? []).flatMap((id) => nameOf.get(id) ?? []) : [],
+    };
+  });
+  // Estado do caso: o do ultimo turno que o salvou (turno com erro nao tem).
+  const caso = rows.filter((m) => m.role === "assistant").map((m) => readCase(m.payload)).filter((c) => c !== null).at(-1) ?? null;
   const files = sessionFiles.filter((f) => args.fileIds.includes(f.id));
 
   const [runRow] = await db
@@ -102,7 +109,7 @@ export async function startTurn(args: {
 
   // Execucao EM PROCESSO, sem fila (decisao de arquitetura do MVP). O POST
   // devolve o runId na hora e o progresso sai pelo SSE.
-  void runInBackground(ctx, { message: args.message, history }, msg.id);
+  void runInBackground(ctx, { message: args.message, history, caso }, msg.id);
   return { runId: runRow.id, messageId: msg.id };
 }
 
@@ -134,7 +141,7 @@ async function runInBackground(ctx: RunContext, input: TurnInput, _userMsgId: st
 }
 
 /** Execucao sem sessao de chat (lote de avaliacao, teste de integracao). */
-export async function runOnce(args: { user: SessionUser | null; graph: FlowGraph; flowId: string | null; flowName: string; revision: number; message: string }) {
+export async function runOnce(args: { user: SessionUser | null; graph: FlowGraph; flowId: string | null; flowName: string; revision: number; message: string; history?: TurnInput["history"]; caso?: TurnInput["caso"] }) {
   const [runRow] = await db
     .insert(schema.run)
     .values({ flowId: args.flowId, flowName: args.flowName, flowRevision: args.revision, graph: args.graph, userId: args.user?.id ?? null, question: args.message })
@@ -157,7 +164,7 @@ export async function runOnce(args: { user: SessionUser | null; graph: FlowGraph
   let outcome: TurnOutcome | null = null;
   let error: string | null = null;
   try {
-    outcome = await executeTurn(ctx, { message: args.message, history: [] });
+    outcome = await executeTurn(ctx, { message: args.message, history: args.history ?? [], caso: args.caso ?? null });
   } catch (err) {
     error = errorMessage(err);
   }

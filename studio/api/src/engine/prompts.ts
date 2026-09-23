@@ -6,6 +6,9 @@ import { z } from "zod";
 
 const strList = z.array(z.string()).catch([]);
 
+export const INTENCOES = ["nova_consulta", "continuacao", "pedido_documento", "conversa"] as const;
+export type Intencao = (typeof INTENCOES)[number];
+
 export const classifierSchema = z.object({
   // Cada item e validado sozinho: um item torto nao pode zerar o ranking
   // inteiro (ranking vazio = score 0 = esclarecimento eterno). O prompt do
@@ -33,6 +36,13 @@ export const classifierSchema = z.object({
   conflito_interesse: z.boolean().catch(false),
   precisa_esclarecimento: z.boolean().catch(false),
   pergunta_esclarecimento: z.string().nullable().catch("").transform((v) => v ?? ""),
+  // Intencao do turno. O padrao (`nova_consulta`) e o caminho completo: se o
+  // modelo nao souber dizer, o motor faz o que sempre fez em vez de pegar atalho.
+  intencao: z.enum(INTENCOES).catch("nova_consulta"),
+  // So vale para `continuacao`: fato novo pede especialista de novo; pergunta
+  // sobre a orientacao ja dada reaproveita os pareceres.
+  fatos_novos: z.boolean().catch(true),
+  resposta_conversa: z.string().nullable().catch("").transform((v) => v ?? ""),
 });
 export type Classification = z.infer<typeof classifierSchema>;
 
@@ -68,6 +78,14 @@ export const consolidadoSchema = z.object({
 });
 export type Consolidado = z.infer<typeof consolidadoSchema>;
 
+// Preenchimento de documento pelo atalho `pedido_documento` (sem especialistas).
+export const documentoSchema = z.object({
+  modelo: z.string().nullable().catch("").transform((v) => v ?? ""),
+  campos: z.record(z.string(), z.coerce.string()).catch({}),
+  pergunta: z.string().nullable().catch("").transform((v) => v ?? ""),
+});
+export type DocumentoFill = z.infer<typeof documentoSchema>;
+
 export const complianceSchema = z.object({
   aprovado: z.boolean(),
   zona: z.enum(["verde", "amarela", "vermelha"]).catch("verde"),
@@ -84,7 +102,14 @@ Responda APENAS com um objeto JSON, sem texto fora dele:
 {"ranking":[{"nodeId":"<id do candidato>","score":0.0-1.0,"justificativa":"..."}],
  "polo":"autor|reu|indefinido","urgencia":"baixa|normal|alta","foro":"...",
  "complexidade":"baixa|media|alta","fora_de_escopo":bool,"conflito_interesse":bool,
- "precisa_esclarecimento":bool,"pergunta_esclarecimento":"uma única pergunta, se precisar"}
+ "precisa_esclarecimento":bool,"pergunta_esclarecimento":"uma única pergunta, se precisar",
+ "intencao":"nova_consulta|continuacao|pedido_documento|conversa","fatos_novos":bool,
+ "resposta_conversa":"só quando intencao=conversa"}
+Intenção da MENSAGEM ATUAL (olhe a conversa anterior):
+- nova_consulta: um problema jurídico novo, ou um assunto diferente do caso em andamento. Assunto diferente: o ranking considera SÓ a mensagem atual, não o caso anterior.
+- continuacao: sobre o caso em andamento: responde a uma pergunta do Goga, acrescenta fatos ou pergunta sobre a orientação já dada ("e se a loja não responder?", "explica o item 2"). fatos_novos=true se trouxe fato novo relevante; false se só pergunta sobre o que já foi orientado.
+- pedido_documento: pede para gerar/redigir um documento (carta, reclamação, notificação) do caso.
+- conversa: saudação, agradecimento, despedida ou pergunta sobre o próprio Goga, sem conteúdo jurídico. Escreva resposta_conversa: curta, cordial, sem orientação jurídica, sem prometer resultado; convide a contar o problema se ainda não contou.
 Inclua no ranking SOMENTE os candidatos plausíveis (score >= 0.1), no máximo 5, usando exatamente o nodeId informado; candidato omitido vale score 0. Justificativa com no máximo 15 palavras. Seja breve: a resposta tem limite de tamanho.`,
   parecer: `<<formato:parecer>>
 Responda APENAS com um objeto JSON (parecer padronizado), sem texto fora dele:
@@ -98,6 +123,10 @@ Responda APENAS com um objeto JSON, sem texto fora dele:
 {"resposta_simples":"linguagem simples, para o cidadão","resposta_tecnica":"versão técnica com fundamentos",
  "citacoes":["..."],"documentos_solicitados":["slug do modelo, só se o usuário pediu um documento"],
  "campos_documento":{"campo":"valor"}}`,
+  documento: `<<formato:documento>>
+Responda APENAS com um objeto JSON, sem texto fora dele:
+{"modelo":"slug do modelo escolhido","campos":{"campo":"valor"},"pergunta":"uma única pergunta pelos campos obrigatórios que faltam, ou vazio"}
+Preencha os campos SOMENTE com fatos que o usuário informou ou que estão nos pareceres. Nunca invente nome, CPF, endereço, número de pedido ou data: campo sem informação fica de fora e entra na pergunta.`,
   compliance: `<<formato:compliance>>
 Responda APENAS com um objeto JSON, sem texto fora dele:
 {"aprovado":bool,"zona":"verde|amarela|vermelha","motivos":["por que reprovou"],"correcoes":["o que o consolidador deve mudar"]}`,

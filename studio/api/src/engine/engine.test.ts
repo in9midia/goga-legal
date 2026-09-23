@@ -60,6 +60,67 @@ describe.skipIf(!dbUp)("motor: fluxo seed com modelo simulado", () => {
     expect(r.outcome?.status).toBe("clarify");
   }, 30000);
 
+  // Conversa de varios turnos: cada tipo de mensagem pega o caminho dela, e o
+  // numero de chamadas de LLM por turno e a medida de que o atalho funciona.
+  it("conversa de vários turnos: atalhos por intenção e estado do caso", async () => {
+    const { db, schema } = mods.db;
+    const graph = mods.flows.buildFlow(mods.flows.FULL_FLOW, mods.flows.FULL_CHAINS, mockId);
+    type Hist = NonNullable<Parameters<typeof mods.run.runOnce>[0]["history"]>;
+    const history: Hist = [];
+    let caso: Parameters<typeof mods.run.runOnce>[0]["caso"] = null;
+    const turn = async (message: string) => {
+      const r = await mods.run.runOnce({ user: null, graph, flowId: null, flowName: "teste", revision: 1, message, history: [...history], caso });
+      expect(r.error).toBeNull();
+      const o = r.outcome!;
+      history.push({ role: "user", content: message }, { role: "assistant", content: o.resposta_simples, status: o.pendencia === "documento" ? "clarify_documento" : o.status });
+      caso = o.caso;
+      const spans = await db.select().from(schema.span).where(eq(schema.span.runId, r.runId));
+      return { o, llm: spans.filter((s) => s.kind === "llm").length };
+    };
+
+    const oi = await turn("oi");
+    expect(oi.o.atalho).toBe("conversa");
+    expect(oi.o.especialistas).toEqual([]);
+    expect(oi.llm).toBe(1); // so o classificador
+    expect(oi.o.caso.relato).toEqual([]);
+
+    const caso1 = await turn("O banco fez um empréstimo no meu nome que eu não contratei e agora estou negativado");
+    expect(caso1.o.atalho).toBe("completo");
+    expect(caso1.o.caso.pareceres.length).toBeGreaterThan(0);
+
+    const duvida = await turn("e se o banco não responder?");
+    expect(duvida.o.atalho).toBe("reuso");
+    expect(duvida.o.especialistas.every((e) => e.reused)).toBe(true);
+    expect(duvida.llm).toBe(3); // classificador + consolidador + compliance
+    expect(duvida.llm).toBeLessThan(caso1.llm);
+    expect(duvida.o.caso.relato).toHaveLength(2);
+
+    const obrigado = await turn("obrigado");
+    expect(obrigado.o.atalho).toBe("conversa");
+    expect(obrigado.llm).toBe(1);
+    expect(obrigado.o.caso.pareceres.length).toBe(caso1.o.caso.pareceres.length);
+
+    const pede = await turn("gera a reclamação no procon");
+    expect(pede.o.atalho).toBe("documento");
+    expect(pede.o.status).toBe("clarify");
+    expect(pede.o.pendencia).toBe("documento");
+    expect(pede.o.caso.documento_pendente?.modelo).toBe("reclamacao-procon");
+    expect(pede.llm).toBe(2); // classificador + preenchimento
+
+    const dados = await turn("nome_consumidor: Maria Souza; cpf_consumidor: 111.444.777-35; contato_consumidor: maria@example.com; empresa: Banco X; documentos_anexos: extrato; cidade: Recife");
+    expect(dados.o.atalho).toBe("documento");
+    expect(dados.o.status).toBe("ok");
+    expect(dados.o.documentos.map((d) => d.name).sort()).toEqual(["reclamacao-procon.docx", "reclamacao-procon.pdf"]);
+    expect(dados.o.caso.documento_pendente).toBeNull();
+    expect(dados.o.caso.documentos).toContain("reclamacao-procon");
+
+    const novo = await turn("Comprei uma geladeira que veio com defeito e a loja não quer trocar");
+    expect(novo.o.atalho).toBe("completo");
+    expect(novo.o.flags).toContain("novo_assunto");
+    expect(novo.o.caso.relato).toEqual(["Comprei uma geladeira que veio com defeito e a loja não quer trocar"]);
+    expect(novo.o.caso.documentos).toEqual([]);
+  }, 60000);
+
   it("fora de escopo vai para o Encaminhamento (Ag. 5)", async () => {
     const graph = mods.flows.buildFlow(mods.flows.FULL_FLOW, mods.flows.FULL_CHAINS, mockId);
     const r = await mods.run.runOnce({ user: null, graph, flowId: null, flowName: "teste", revision: 1, message: "quero saber sobre divórcio e guarda dos filhos" });

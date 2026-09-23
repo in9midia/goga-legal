@@ -5,7 +5,7 @@ import { AlertTriangle, ArrowLeftRight, FileDown, FileText, Loader2, MessageSqua
 import { toast } from "sonner";
 import { api, fileUrl } from "@/lib/api";
 import { bytes, dateTime, usd } from "@/lib/format";
-import type { ChatSession, FlowSummary, Message, Outcome, RunDetail, SessionFile } from "@/lib/types";
+import { ATALHO_LABEL, type ChatSession, type FlowSummary, type Message, type Outcome, type RunDetail, type SessionFile } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useRunStream } from "@/hooks/useRunStream";
 import { Empty, Pill, StatusBadge } from "@/components/common";
@@ -386,6 +386,7 @@ function AssistantMessage({ m, run, selected, onSelect, flows, onCompare }: { m:
         {o?.status && <StatusBadge status={o.status} />}
         {o?.error && <StatusBadge status="error" />}
         {run && <span className="text-[0.68rem] text-text-dim">{run.flowName} · rev {run.flowRevision}{run.isProduction ? " · produção" : ""} · {usd(run.costUsd)}</span>}
+        {o?.atalho && o.atalho !== "completo" && <Pill>{ATALHO_LABEL[o.atalho]}</Pill>}
         {o?.flags?.filter((f) => f !== "compliance_reprovado").map((f) => <Pill key={f} tone="warn">{f.replace(/_/g, " ")}</Pill>)}
       </div>
       {o?.resposta_tecnica ? (

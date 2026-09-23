@@ -14,18 +14,56 @@ import {
   classifierSchema,
   complianceSchema,
   consolidadoSchema,
+  documentoSchema,
   parecerSchema,
   renderVars,
   section,
   type Classification,
   type Consolidado,
+  type Intencao,
   type Parecer,
 } from "./prompts.js";
 
+/**
+ * Estado do caso, carregado de um turno para o outro no `outcome` da mensagem
+ * do assistente. E o que permite responder "e se a loja nao responder?" sem
+ * rodar os especialistas de novo, e separar um assunto novo do anterior.
+ */
+export interface CaseState {
+  /** Mensagens do usuario que pertencem ao caso atual (base da busca na KB). */
+  relato: string[];
+  /** Pareceres da ultima rodada de especialistas deste caso. */
+  pareceres: { nodeId: string; name: string; specialtyNumber: number | null; parecer: Parecer; citacoes: CitationCheck[] }[];
+  /** Slugs dos modelos de documento ja gerados neste caso. */
+  documentos: string[];
+  /** Documento pedido que ainda espera campos obrigatorios do usuario. */
+  documento_pendente: { modelo: string; campos: Record<string, string> } | null;
+}
+
+const MAX_RELATO = 8;
+
+/** Le o estado do caso de um payload salvo; payload antigo (sem `caso`) vira null. */
+export function readCase(payload: unknown): CaseState | null {
+  const c = (payload as { caso?: Partial<CaseState> } | null)?.caso;
+  if (!c || !Array.isArray(c.relato)) return null;
+  return {
+    relato: c.relato.filter((r): r is string => typeof r === "string"),
+    pareceres: Array.isArray(c.pareceres) ? c.pareceres : [],
+    documentos: Array.isArray(c.documentos) ? c.documentos : [],
+    documento_pendente: c.documento_pendente ?? null,
+  };
+}
+
 export interface TurnInput {
   message: string;
-  /** `status` so vem nas mensagens do assistente (status do turno que as gerou). */
+  /**
+   * `status` so vem nas mensagens do assistente (status do turno que as gerou).
+   * `clarify_documento` = pergunta pelos campos de um documento, que nao conta
+   * como esclarecimento do caso.
+   */
   history: { role: "user" | "assistant"; content: string; status?: string | null; anexos?: string[] }[];
+  /** Estado do caso do ultimo turno que o tinha; null em conversa nova ou antiga. */
+  caso?: CaseState | null;
 }
 
 export interface SpecialistResult {
@@ -37,6 +75,8 @@ export interface SpecialistResult {
   citacoes?: CitationCheck[];
   error?: string;
   chainedFrom?: string;
+  /** Parecer reaproveitado de um turno anterior (o especialista nao rodou agora). */
+  reused?: boolean;
 }
 
 export interface TurnOutcome {
@@ -45,8 +85,14 @@ export interface TurnOutcome {
   resposta_tecnica: string;
   citacoes: CitationCheck[];
   documentos: { fileId: string; name: string; mime: string; template: string }[];
-  especialistas: { nodeId: string; name: string; ok: boolean; score?: number; chainedFrom?: string }[];
+  especialistas: { nodeId: string; name: string; ok: boolean; score?: number; chainedFrom?: string; reused?: boolean }[];
   classificacao?: Classification;
+  intencao?: Intencao;
+  /** Caminho que o turno tomou: completo, conversa, reuso de pareceres ou documento. */
+  atalho?: "completo" | "conversa" | "reuso" | "documento";
+  /** `documento` = o turno pediu campos de um documento (proximo turno completa). */
+  pendencia?: "documento";
+  caso: CaseState;
   flags: string[];
   compliance?: { aprovado: boolean; ciclos: number; motivos: string[] };
   path: { nodes: string[]; edges: string[] };
@@ -58,6 +104,9 @@ const HISTORY_TURNS = 6;
 /** Esclarecimentos seguidos antes de o motor rotear com o que tem. */
 const MAX_CLARIFY_STREAK = 2;
 const GENERIC_CLARIFY = "Pode me contar um pouco mais sobre o que aconteceu, com quem (empresa ou órgão) e quando?";
+const CONVERSA_PADRAO = "Olá! Eu sou o Goga e ajudo com orientação sobre problemas de consumo e outras questões cíveis. Me conte o que aconteceu, com quem e quando.";
+/** Perguntas seguidas por campos de documento antes de gerar com o que tem. */
+const MAX_DOC_CLARIFY = 2;
 
 export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<TurnOutcome> {
   const g = ctx.graph;
@@ -85,6 +134,7 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
   const flags: string[] = [];
   const specialties = new Map<number, Specialty>((await db.select().from(schema.specialty)).map((s) => [s.number, s]));
   const templates = await activeTemplates();
+  const cycle = compliance?.data.cycle ?? { maxCycles: 2, requiredChecks: ["disclaimer", "sem_promessa", "citacoes_verificadas", "zona", "lgpd"], safeResponse: "" };
 
   const root = await ctx.tracer.start({ kind: "run", name: "Execução", input: { mensagem: input.message, anexos: ctx.files.map((f) => f.name) } });
   const globalRules = [g.settings.globalRules, g.settings.tone && `Tom: ${g.settings.tone}`, `Idioma: ${g.settings.language}`].filter(Boolean).join("\n\n");
@@ -93,12 +143,18 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
   // Esclarecimentos seguidos no fim da conversa e as perguntas ja feitas: sem
   // isso o classificador pergunta de novo o que o usuario acabou de responder.
   const assistantTurns = input.history.filter((h) => h.role === "assistant");
-  let clarifyStreak = 0;
-  for (let i = assistantTurns.length - 1; i >= 0 && assistantTurns[i].status === "clarify"; i--) clarifyStreak++;
+  const streakOf = (status: string) => {
+    let n = 0;
+    for (let i = assistantTurns.length - 1; i >= 0 && assistantTurns[i].status === status; i--) n++;
+    return n;
+  };
+  const clarifyStreak = streakOf("clarify");
+  const docClarifyStreak = streakOf("clarify_documento");
   const askedQuestions = assistantTurns.filter((h) => h.status === "clarify").map((h) => h.content.trim());
-  // O relato do caso esta espalhado pelas mensagens do usuario: a busca na KB
-  // precisa dele inteiro, nao so da ultima resposta ("sim, gastei 300 reais").
-  const caseText = [...input.history.filter((h) => h.role === "user").slice(-4).map((h) => h.content), input.message].join("\n").slice(-2000);
+  const prev = input.caso ?? null;
+  // Estado do caso deste turno. Comeca igual ao anterior e e ajustado depois da
+  // classificacao (assunto novo zera o relato; conversa nao entra nele).
+  let caso: CaseState = prev ?? { relato: [], pareceres: [], documentos: [], documento_pendente: null };
 
   const baseCall = (n: FlowNode, parentId: string, name: string, system: string, messages: ModelMessage[]): LlmCall => {
     const modelId = modelFor(n);
@@ -126,33 +182,28 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
     section("Escalonar para humano quando", n.data.rules.escalation) +
     section("Zona permitida", n.data.rules.zone === "amarela" ? "verde e amarela (orientação com ressalvas)" : "somente verde (orientação geral)");
 
-  const finish = async (o: Omit<TurnOutcome, "path" | "flags">): Promise<TurnOutcome> => {
-    const outcome = { ...o, flags, path: path() };
+  type Draft = Omit<TurnOutcome, "path" | "flags" | "caso"> & { caso?: CaseState };
+  const finish = async (o: Draft): Promise<TurnOutcome> => {
+    const outcome = { ...o, caso: o.caso ?? caso, flags, path: path() };
     if (output) {
       await ctx.tracer.wrap({ kind: "agent", name: output.data.name, nodeId: output.id, parentId: root.id, input: { status: o.status } }, async () => ({
         resposta_simples: o.resposta_simples,
         documentos: o.documentos.map((d) => d.name),
       }));
     }
-    await root.end({ output: { status: o.status, flags }, tokensIn: ctx.tokensIn, tokensOut: ctx.tokensOut, costUsd: ctx.costUsd });
+    await root.end({ output: { status: o.status, atalho: o.atalho, flags }, tokensIn: ctx.tokensIn, tokensOut: ctx.tokensOut, costUsd: ctx.costUsd });
     return outcome;
   };
 
   try {
     // ── 1. Entrada ──────────────────────────────────────────────────────
     mark(entry.id);
-    const ficha = await ctx.tracer.wrap({ kind: "agent", name: entry.data.name, nodeId: entry.id, parentId: root.id, input: { mensagem: input.message } }, async () => {
-      const anexos = ctx.files.map((f) => `### Anexo: ${f.name}\n${f.text ? f.text.slice(0, 6000) : "(sem texto extraído)"}`).join("\n\n");
-      // Relato do usuario e o que importa: corte largo. Resposta do Goga, curto.
-      const hist = input.history.slice(-HISTORY_TURNS).map((h) => (h.role === "user" ? `Usuário: ${h.content.slice(0, 6000)}${h.anexos?.length ? ` [anexou: ${h.anexos.join(", ")}]` : ""}` : `Goga: ${h.content.slice(0, 800)}`)).join("\n");
-      return [
-        `## Mensagem atual\n${input.message.trim()}`,
-        hist && `## Conversa anterior\n${hist}`,
-        anexos && `## Anexos\n${anexos}`,
-      ]
-        .filter(Boolean)
-        .join("\n\n");
-    });
+    const anexos = ctx.files.map((f) => `### Anexo: ${f.name}\n${f.text ? f.text.slice(0, 6000) : "(sem texto extraído)"}`).join("\n\n");
+    // Relato do usuario e o que importa: corte largo. Resposta do Goga, curto.
+    const hist = input.history.slice(-HISTORY_TURNS).map((h) => (h.role === "user" ? `Usuário: ${h.content.slice(0, 6000)}${h.anexos?.length ? ` [anexou: ${h.anexos.join(", ")}]` : ""}` : `Goga: ${h.content.slice(0, 800)}`)).join("\n");
+    const buildFicha = (withHistory: boolean) =>
+      [`## Mensagem atual\n${input.message.trim()}`, withHistory && hist && `## Conversa anterior\n${hist}`, anexos && `## Anexos\n${anexos}`].filter(Boolean).join("\n\n");
+    let ficha = await ctx.tracer.wrap({ kind: "agent", name: entry.data.name, nodeId: entry.id, parentId: root.id, input: { mensagem: input.message } }, async () => buildFicha(true));
     const vars = { mensagem: input.message, ficha, regras_globais: globalRules, pareceres: "" };
 
     // ── 2. Classificador ────────────────────────────────────────────────
@@ -170,6 +221,13 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
         exemplos: sp?.routingHints.examples ?? [],
       };
     });
+    const casoResumo = prev
+      ? [
+          prev.pareceres.length ? `Orientação já dada neste caso por: ${prev.pareceres.map((p) => p.name).join(", ")}.` : "Caso em andamento, ainda sem orientação dada.",
+          prev.documentos.length && `Documentos já gerados: ${prev.documentos.join(", ")}.`,
+          prev.documento_pendente && `O Goga está coletando dados para gerar o documento "${prev.documento_pendente.modelo}": se a mensagem traz esses dados, a intenção é pedido_documento.`,
+        ]
+      : ["Nenhum caso em andamento."];
 
     const cls = await ctx.tracer.wrap({ kind: "agent", name: classifier.data.name, nodeId: classifier.id, parentId: root.id, input: { candidatos: candidateInfo.length } }, async (span) => {
       const especialidades = candidateInfo.map((c) => `- ${c.nodeId}: ${c.name} — ${c.escopo}`).join("\n");
@@ -177,6 +235,7 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
         renderVars(classifier.data.prompt.system, { ...vars, especialidades }) +
         section("Regras globais", globalRules) +
         section("Gatilhos de exclusão (fora de escopo: só detectar e encaminhar)", routing.exclusionTriggers) +
+        section("Caso em andamento", casoResumo.filter((l): l is string => !!l)) +
         section(
           "Perguntas de esclarecimento já feitas nesta conversa (NÃO repita; considere as respostas do usuário na conversa anterior)",
           askedQuestions,
@@ -202,6 +261,33 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
     const ranked = [...cls.ranking].sort((a, b) => b.score - a.score);
     const top = ranked[0]?.score ?? 0;
 
+    // Intencao efetiva. O modelo erra nos cantos; o motor corrige com o que sabe
+    // do caso: continuar/gerar documento sem caso nenhum e consulta nova, e
+    // resposta a uma coleta de campos em andamento e o proprio pedido.
+    let intencao: Intencao = cls.intencao;
+    if (prev?.documento_pendente && intencao === "continuacao") intencao = "pedido_documento";
+    if (intencao === "continuacao" && !prev && !input.history.length) intencao = "nova_consulta";
+
+    // Relato do caso: base da busca na KB e da ficha. Assunto novo depois de uma
+    // orientacao dada zera o relato (e a ficha perde a conversa anterior), para
+    // os dois assuntos nao se misturarem na busca nem nos pareceres.
+    const reset = intencao === "nova_consulta" && !!prev?.pareceres.length;
+    let relato: string[];
+    if (intencao === "conversa") relato = prev?.relato ?? [];
+    else if (reset) relato = [input.message];
+    else if (prev) relato = [...prev.relato, input.message];
+    // Conversa sem estado salvo (anterior a este campo): o relato e o que era.
+    else relato = [...input.history.filter((h) => h.role === "user").slice(-4).map((h) => h.content), input.message];
+    relato = relato.slice(-MAX_RELATO);
+    const caseText = relato.join("\n").slice(-2000);
+    if (reset) {
+      ficha = buildFicha(false);
+      vars.ficha = ficha;
+      flags.push("novo_assunto");
+    }
+    caso = { relato, pareceres: reset ? [] : caso.pareceres, documentos: reset ? [] : caso.documentos, documento_pendente: reset ? null : caso.documento_pendente };
+
+    const canGenerateDoc = templates.length > 0 && (await hasSkill(ctx, consolidator, "gerar_documento"));
     let selected: FlowNode[] = [];
     let decision: string;
     const encaminhamento = candidates.find((c) => c.data.specialtyNumber === 5);
@@ -210,6 +296,15 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
     } else if (cls.fora_de_escopo) {
       decision = encaminhamento ? "encaminhamento" : "fora_de_escopo_sem_no";
       if (encaminhamento) selected = [encaminhamento];
+    } else if (intencao === "conversa") {
+      decision = "conversa";
+    } else if (intencao === "pedido_documento" && canGenerateDoc) {
+      decision = "documento";
+    } else if (intencao !== "nova_consulta" && !cls.fatos_novos && prev?.pareceres.length) {
+      // Pergunta sobre a orientacao ja dada (ou documento sem skill): o
+      // Consolidador responde com os pareceres do turno anterior.
+      if (intencao === "pedido_documento") flags.push("documento_indisponivel");
+      decision = "reuso";
     } else if (clarifyStreak >= MAX_CLARIFY_STREAK && top === 0) {
       // Limite de esclarecimentos atingido e ainda sem ranking: perguntar de
       // novo so prende o usuario num loop. Falha visivel, com trace.
@@ -217,6 +312,7 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
     } else if ((cls.precisa_esclarecimento || top < routing.clarifyThreshold) && clarifyStreak < MAX_CLARIFY_STREAK) {
       decision = "esclarecimento";
     } else {
+      if (intencao === "pedido_documento") flags.push("documento_indisponivel");
       if (cls.precisa_esclarecimento || top < routing.clarifyThreshold) flags.push("esclarecimento_esgotado");
       const above = ranked.filter((r) => r.score >= routing.routingThreshold);
       const pick = (above.length ? above : ranked.slice(0, 1)).slice(0, cls.polo === "reu" && routing.defendantFastPath ? 1 : routing.maxSpecialists);
@@ -225,27 +321,28 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
       decision = "roteamento";
       if (cls.polo === "reu" && routing.defendantFastPath) flags.push("polo_reu_fast_path");
     }
-    await ctx.tracer.wrap({ kind: "route", name: `Roteamento: ${decision}`, nodeId: classifier.id, parentId: root.id, input: { limiar_roteamento: routing.routingThreshold, limiar_esclarecimento: routing.clarifyThreshold, top, esclarecimentos_seguidos: clarifyStreak } }, async () => ({
+    await ctx.tracer.wrap({ kind: "route", name: `Roteamento: ${decision}`, nodeId: classifier.id, parentId: root.id, input: { intencao_modelo: cls.intencao, intencao, fatos_novos: cls.fatos_novos, limiar_roteamento: routing.routingThreshold, limiar_esclarecimento: routing.clarifyThreshold, top, esclarecimentos_seguidos: clarifyStreak, pareceres_do_caso: prev?.pareceres.length ?? 0 } }, async () => ({
       decisao: decision,
       selecionados: selected.map((n) => ({ nodeId: n.id, nome: n.data.name, score: scoreOf.get(n.id) })),
     }));
     if (cls.urgencia === "alta") flags.push("urgencia_alta");
+    const base = { classificacao: cls, intencao };
 
     if (decision === "conflito_interesse") {
       flags.push("conflito_interesse");
       return finish({
+        ...base,
         status: "blocked",
         resposta_simples: "Não podemos orientar este caso: identificamos um possível conflito de interesse. Procure a Defensoria Pública ou um advogado de sua confiança.",
         resposta_tecnica: "Regra Absoluta nº 2 (conflito de interesse): atendimento bloqueado pelo classificador.",
         citacoes: [],
         documentos: [],
         especialistas: [],
-        classificacao: cls,
       });
     }
     if (decision === "fora_de_escopo_sem_no") {
       flags.push("fora_de_escopo");
-      return finish({ status: "blocked", resposta_simples: "Este assunto está fora do que o Goga orienta. Procure a Defensoria Pública, a OAB da sua cidade ou um advogado.", resposta_tecnica: "Fora de escopo e o fluxo não tem nó de Encaminhamento (Ag. 5).", citacoes: [], documentos: [], especialistas: [], classificacao: cls });
+      return finish({ ...base, status: "blocked", resposta_simples: "Este assunto está fora do que o Goga orienta. Procure a Defensoria Pública, a OAB da sua cidade ou um advogado.", resposta_tecnica: "Fora de escopo e o fluxo não tem nó de Encaminhamento (Ag. 5).", citacoes: [], documentos: [], especialistas: [] });
     }
     if (decision === "esclarecimento") {
       const asked = new Set(askedQuestions);
@@ -256,7 +353,90 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
           : !asked.has(GENERIC_CLARIFY)
             ? GENERIC_CLARIFY
             : "Há mais algum detalhe importante que eu ainda não sei? Se não houver, responda “não” e eu sigo com a orientação.";
-      return finish({ status: "clarify", resposta_simples: q, resposta_tecnica: `Score máximo ${top.toFixed(2)} abaixo do limiar de esclarecimento ${routing.clarifyThreshold} ou lacuna apontada pelo classificador (regra-mãe: uma lacuna por vez).`, citacoes: [], documentos: [], especialistas: [], classificacao: cls });
+      return finish({ ...base, status: "clarify", resposta_simples: q, resposta_tecnica: `Score máximo ${top.toFixed(2)} abaixo do limiar de esclarecimento ${routing.clarifyThreshold} ou lacuna apontada pelo classificador (regra-mãe: uma lacuna por vez).`, citacoes: [], documentos: [], especialistas: [] });
+    }
+
+    // ── Atalho: conversa ────────────────────────────────────────────────
+    // Saudacao/agradecimento: o proprio classificador ja escreveu a resposta.
+    // Sem especialista nem consolidador; so as checagens deterministicas.
+    if (decision === "conversa") {
+      let text = cls.resposta_conversa.trim() || CONVERSA_PADRAO;
+      const guardNode = compliance ?? consolidator;
+      if (compliance) mark(compliance.id);
+      const det = await ctx.tracer.wrap({ kind: "guardrail", name: "Checagens determinísticas (conversa)", nodeId: guardNode.id, parentId: root.id, input: { resposta: text } }, async () =>
+        checkCompliance(text, { disclaimer: "", checks: cycle.requiredChecks.filter((c) => c !== "disclaimer" && c !== "citacoes_verificadas") }),
+      );
+      const failed = det.filter((d) => !d.ok);
+      if (failed.length) {
+        flags.push("conversa_reprovada");
+        text = CONVERSA_PADRAO;
+      }
+      if (output) mark(output.id);
+      return finish({
+        ...base,
+        status: "ok",
+        atalho: "conversa",
+        resposta_simples: text,
+        resposta_tecnica: failed.length ? `Resposta do classificador reprovada (${failed.map((f) => f.detalhe).join("; ")}); usada a resposta padrão.` : "",
+        citacoes: [],
+        documentos: [],
+        especialistas: [],
+      });
+    }
+
+    // ── Atalho: documento ───────────────────────────────────────────────
+    if (decision === "documento") {
+      mark(consolidator.id);
+      const pend = caso.documento_pendente;
+      const fill = await ctx.tracer.wrap({ kind: "agent", name: `${consolidator.data.name} (documento)`, nodeId: consolidator.id, parentId: root.id, input: { pendente: pend, pareceres: caso.pareceres.length } }, async (span) => {
+        const system =
+          "Você prepara documentos do caso a partir de modelos cadastrados." +
+          section("Regras globais", globalRules) +
+          (await rulesOf(consolidator)) +
+          section("Modelos de documento disponíveis", templates.map((t) => `${t.slug}: ${t.title} — ${t.description} (campos: ${t.fields.map((c) => `${c.nome}${c.obrigatorio ? "*" : ""} = ${c.rotulo}`).join("; ")}; * = obrigatório)`)) +
+          section("Relato do caso", relato) +
+          section("Pareceres do caso", caso.pareceres.length ? JSON.stringify(caso.pareceres.map((p) => ({ especialista: p.name, parecer: p.parecer }))) : "") +
+          section("Documento em andamento (mantenha o modelo e os campos já coletados)", pend ? JSON.stringify(pend) : "") +
+          "\n\n" +
+          FORMAT.documento;
+        const { value } = await generateJson(baseCall(consolidator, span.id, "Preenchimento de documento", system, [...historyMsgs, { role: "user", content: ficha }]), documentoSchema);
+        return value;
+      });
+      const tpl = templates.find((t) => t.slug === fill.modelo) ?? templates.find((t) => t.slug === pend?.modelo);
+      const docBase = { ...base, atalho: "documento" as const, citacoes: [], especialistas: [] };
+      if (!tpl) {
+        caso = { ...caso, documento_pendente: { modelo: "", campos: {} } };
+        if (output) mark(output.id);
+        return finish({ ...docBase, status: "clarify", pendencia: "documento", resposta_simples: `Qual documento você precisa? Posso preparar: ${templates.map((t) => t.title).join("; ")}.`, resposta_tecnica: `Modelo "${fill.modelo}" não reconhecido.`, documentos: [] });
+      }
+      const campos: Record<string, string> = {};
+      for (const [k, v] of Object.entries({ ...pend?.campos, ...fill.campos })) if (v.trim()) campos[k] = v.trim();
+      const missing = tpl.fields.filter((f) => f.obrigatorio && !campos[f.nome]);
+      if (missing.length && docClarifyStreak < MAX_DOC_CLARIFY) {
+        caso = { ...caso, documento_pendente: { modelo: tpl.slug, campos } };
+        if (output) mark(output.id);
+        return finish({
+          ...docBase,
+          status: "clarify",
+          pendencia: "documento",
+          resposta_simples: fill.pergunta.trim() || `Para montar "${tpl.title}", preciso de: ${missing.map((f) => f.rotulo).join(", ")}.`,
+          resposta_tecnica: `Campos obrigatórios faltando em ${tpl.slug}: ${missing.map((f) => f.nome).join(", ")}.`,
+          documentos: [],
+        });
+      }
+      if (missing.length) flags.push("documento_incompleto");
+      await runSkill("gerar_documento", { modelo: tpl.slug, campos, formato: "ambos" }, { ctx, node: consolidator, parentId: root.id }).catch((err) => flags.push(`documento_falhou:${tpl.slug}:${errorMessage(err)}`));
+      const ok = ctx.generated.length > 0;
+      caso = { ...caso, documento_pendente: null, documentos: ok ? [...new Set([...caso.documentos, tpl.slug])] : caso.documentos };
+      if (output) mark(output.id, consolidator.id);
+      const faltou = missing.length ? ` Deixei em branco: ${missing.map((f) => f.rotulo).join(", ")}. Complete antes de enviar.` : "";
+      return finish({
+        ...docBase,
+        status: ok ? "ok" : "error",
+        resposta_simples: [ok ? `Pronto: preparei "${tpl.title}" em DOCX e PDF (arquivos abaixo). Revise os dados antes de usar; a decisão de enviar é sua.${faltou}` : `Não consegui gerar "${tpl.title}" agora. Tente de novo em instantes.`, g.settings.disclaimer].filter(Boolean).join("\n\n"),
+        resposta_tecnica: `Modelo ${tpl.slug} preenchido com: ${Object.keys(campos).join(", ") || "(nenhum campo)"}.`,
+        documentos: ctx.generated,
+      });
     }
 
     // ── 3. Especialistas (paralelo) + encadeamentos (sequencial) ─────────
@@ -269,10 +449,10 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
         let evidencias = "";
         if (n.data.knowledge.spaces.length) {
           try {
-            const r = (await runSkill("buscar_kb", { consulta: caseText }, env)) as { resultados: { titulo: string; base: string; pagina: number | null; trecho: string; armadilha: string | null; document_id: number }[] };
+            const r = (await runSkill("buscar_kb", { consulta: caseText }, env)) as { resultados: { titulo: string; base: string; pagina: number | null; trecho: string; armadilha: string | null; document_id?: number; pagina_wiki_id?: number }[] };
             evidencias = r.resultados
               .filter((p) => !(n.data.knowledge.verifiedOnly && p.armadilha))
-              .map((p, i) => `[${i + 1}] ${p.titulo} (base ${p.base}${p.pagina ? `, p. ${p.pagina}` : ""}, doc ${p.document_id})${p.armadilha ? `\n⚠ ARMADILHA: ${p.armadilha}` : ""}\n${p.trecho}`)
+              .map((p, i) => `[${i + 1}] ${p.titulo} (base ${p.base}${p.pagina ? `, p. ${p.pagina}` : ""}, ${p.pagina_wiki_id != null ? `pagina_wiki_id ${p.pagina_wiki_id}` : `document_id ${p.document_id}`})${p.armadilha ? `\n⚠ ARMADILHA: ${p.armadilha}` : ""}\n${p.trecho}`)
               .join("\n\n");
           } catch (err) {
             evidencias = `(KB indisponível: ${errorMessage(err)}. Não cite fundamento que não possa sustentar.)`;
@@ -313,31 +493,42 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
       }
     };
 
-    const firstWave = await Promise.allSettled(selected.map((n) => runSpecialist(n, classifier.id)));
-    const results: SpecialistResult[] = firstWave.map((r, i) => (r.status === "fulfilled" ? r.value : { nodeId: selected[i].id, name: selected[i].data.name, specialtyNumber: selected[i].data.specialtyNumber, ok: false, error: errorMessage(r.reason) }));
-    // Encadeamentos (53 -> 52, 54 -> 29 -> 52): cada especialista que rodou
-    // alimenta o seguinte, em sequencia, e cada no roda no maximo uma vez.
-    const queue = results.filter((r) => r.ok);
-    const ran = new Set(results.map((r) => r.nodeId));
-    while (queue.length) {
-      const src = queue.shift()!;
-      for (const t of outs(src.nodeId)) {
-        const tn = node(t);
-        if (tn.type !== "specialist" || ran.has(t)) continue;
-        ran.add(t);
-        const r = await runSpecialist(tn, src.nodeId, src);
-        results.push(r);
-        if (r.ok) queue.push(r);
+    let results: SpecialistResult[];
+    if (decision === "reuso") {
+      results = caso.pareceres.map((p) => ({ ...p, ok: true, reused: true }));
+      await ctx.tracer.wrap({ kind: "route", name: "Pareceres reaproveitados", nodeId: consolidator.id, parentId: root.id, input: { especialistas: results.map((r) => r.name) } }, async () => ({ reaproveitados: results.length }));
+    } else {
+      const firstWave = await Promise.allSettled(selected.map((n) => runSpecialist(n, classifier.id)));
+      results = firstWave.map((r, i) => (r.status === "fulfilled" ? r.value : { nodeId: selected[i].id, name: selected[i].data.name, specialtyNumber: selected[i].data.specialtyNumber, ok: false, error: errorMessage(r.reason) }));
+      // Encadeamentos (53 -> 52, 54 -> 29 -> 52): cada especialista que rodou
+      // alimenta o seguinte, em sequencia, e cada no roda no maximo uma vez.
+      const queue = results.filter((r) => r.ok);
+      const ran = new Set(results.map((r) => r.nodeId));
+      while (queue.length) {
+        const src = queue.shift()!;
+        for (const t of outs(src.nodeId)) {
+          const tn = node(t);
+          if (tn.type !== "specialist" || ran.has(t)) continue;
+          ran.add(t);
+          const r = await runSpecialist(tn, src.nodeId, src);
+          results.push(r);
+          if (r.ok) queue.push(r);
+        }
       }
     }
     const okResults = results.filter((r) => r.ok);
     if (!okResults.length) throw new Error(`Nenhum especialista concluiu: ${results.map((r) => `${r.name}: ${r.error}`).join("; ")}`);
-    for (const r of okResults) mark(consolidator.id, r.nodeId);
+    if (decision === "reuso") mark(consolidator.id);
+    else for (const r of okResults) mark(consolidator.id, r.nodeId);
+    caso = {
+      ...caso,
+      pareceres: okResults.map((r) => ({ nodeId: r.nodeId, name: r.name, specialtyNumber: r.specialtyNumber, parecer: r.parecer!, citacoes: r.citacoes ?? [] })),
+      documento_pendente: null,
+    };
 
     // ── 4/5. Consolidador <-> Compliance ────────────────────────────────
     const pareceres = JSON.stringify(okResults.map((r) => ({ especialista: r.name, parecer: r.parecer, citacoes_conferidas: r.citacoes })), null, 1);
     const allCitations = okResults.flatMap((r) => r.citacoes ?? []);
-    const cycle = compliance?.data.cycle ?? { maxCycles: 2, requiredChecks: ["disclaimer", "sem_promessa", "citacoes_verificadas", "zona", "lgpd"], safeResponse: "" };
     const hasCompliance = compliance && outs(consolidator.id).includes(compliance.id);
 
     let feedback: string[] = [];
@@ -345,11 +536,14 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
     let verdict = { aprovado: true, motivos: [] as string[] };
     let cycles = 0;
     for (;;) {
-      consolidado = await ctx.tracer.wrap({ kind: "agent", name: cycles ? `${consolidator.data.name} (revisão ${cycles})` : consolidator.data.name, nodeId: consolidator.id, parentId: root.id, input: { pareceres: okResults.length, correcoes: feedback } }, async (span) => {
+      consolidado = await ctx.tracer.wrap({ kind: "agent", name: cycles ? `${consolidator.data.name} (revisão ${cycles})` : consolidator.data.name, nodeId: consolidator.id, parentId: root.id, input: { pareceres: okResults.length, reaproveitados: decision === "reuso", correcoes: feedback } }, async (span) => {
         const system =
           renderVars(consolidator.data.prompt.system, { ...vars, pareceres }) +
           section("Regras globais", globalRules) +
           (await rulesOf(consolidator)) +
+          (decision === "reuso"
+            ? section("Continuação do caso", "Os pareceres abaixo são do turno anterior e a orientação já foi dada. Responda à mensagem atual do usuário (dúvida sobre a orientação) sem repetir a orientação inteira.")
+            : "") +
           section("Pareceres dos especialistas", pareceres) +
           section("Citações conferidas", allCitations.map((c) => `${c.citacao}: ${c.status}${c.bloqueada ? " (NÃO CITAR)" : ""}`)) +
           section("Modelos de documento disponíveis", templates.map((t) => `${t.slug}: ${t.title} (campos: ${t.fields.map((c) => c.nome).join(", ")})`)) +
@@ -413,22 +607,24 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
     }
 
     // ── Documentos pedidos ───────────────────────────────────────────────
-    if (status === "ok" && finalAnswer.documentos_solicitados.length && (await hasSkill(ctx, consolidator, "gerar_documento"))) {
+    if (status === "ok" && finalAnswer.documentos_solicitados.length && canGenerateDoc) {
       const valid = new Set(templates.map((t) => t.slug));
       for (const slug of finalAnswer.documentos_solicitados.filter((s) => valid.has(s)).slice(0, 3)) {
         await runSkill("gerar_documento", { modelo: slug, campos: finalAnswer.campos_documento, formato: "ambos" }, { ctx, node: consolidator, parentId: root.id }).catch((err) => flags.push(`documento_falhou:${slug}:${errorMessage(err)}`));
       }
+      caso = { ...caso, documentos: [...new Set([...caso.documentos, ...ctx.generated.map((d) => d.template)])] };
     }
 
     if (output) mark(output.id, hasCompliance && visited.has(compliance.id) ? compliance.id : consolidator.id);
     return finish({
+      ...base,
       status,
+      atalho: decision === "reuso" ? "reuso" : "completo",
       resposta_simples: finalAnswer.resposta_simples,
       resposta_tecnica: finalAnswer.resposta_tecnica,
       citacoes: dedupe(allCitations),
       documentos: ctx.generated,
-      especialistas: results.map((r) => ({ nodeId: r.nodeId, name: r.name, ok: r.ok, score: scoreOf.get(r.nodeId), chainedFrom: r.chainedFrom })),
-      classificacao: cls,
+      especialistas: results.map((r) => ({ nodeId: r.nodeId, name: r.name, ok: r.ok, score: scoreOf.get(r.nodeId), chainedFrom: r.chainedFrom, reused: r.reused })),
       compliance: hasCompliance ? { aprovado: verdict.aprovado, ciclos: cycles + (verdict.aprovado ? 1 : 0), motivos: verdict.motivos } : undefined,
     });
   } catch (err) {

@@ -208,13 +208,26 @@ export interface CitationCheck {
   nota?: string;
 }
 
+export type Atalho = "completo" | "conversa" | "reuso" | "documento";
+
+export const ATALHO_LABEL: Record<Atalho, string> = {
+  completo: "fluxo completo",
+  conversa: "conversa (sem especialistas)",
+  reuso: "pareceres reaproveitados",
+  documento: "documento",
+};
+
 export interface Outcome {
   status: "ok" | "clarify" | "blocked" | "error";
   resposta_simples: string;
   resposta_tecnica: string;
   citacoes: CitationCheck[];
   documentos: { fileId: string; name: string; mime: string; template: string }[];
-  especialistas: { nodeId: string; name: string; ok: boolean; score?: number; chainedFrom?: string }[];
+  especialistas: { nodeId: string; name: string; ok: boolean; score?: number; chainedFrom?: string; reused?: boolean }[];
+  intencao?: "nova_consulta" | "continuacao" | "pedido_documento" | "conversa";
+  /** Caminho que o turno tomou no fluxo. */
+  atalho?: Atalho;
+  pendencia?: "documento";
   flags: string[];
   compliance?: { aprovado: boolean; ciclos: number; motivos: string[] };
   path: { nodes: string[]; edges: string[] };

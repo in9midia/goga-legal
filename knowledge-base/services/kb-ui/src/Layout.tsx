@@ -100,12 +100,9 @@ export function Layout({ children }: { children: ReactNode }) {
         >
           <Menu size={18} strokeWidth={1.75} />
         </button>
-        <img
-          src="images/goga.svg"
-          alt="Goga Legal"
-          className="h-6 w-auto shrink-0 rounded bg-brand-chip px-1.5 py-1"
-        />
-        <span aria-hidden className="h-4 w-px shrink-0 bg-line" />
+        <div className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-text text-xs font-bold text-ink-950">
+          G
+        </div>
         <h1 className="truncate text-sm font-semibold tracking-tight">Base de conhecimento</h1>
       </header>
 
@@ -118,31 +115,27 @@ export function Layout({ children }: { children: ReactNode }) {
       ) : null}
 
       <aside
-        className={`fixed left-0 top-0 z-50 flex h-screen w-60 shrink-0 flex-col border-r border-line bg-ink-900 transition-transform duration-200 ease-out md:sticky md:translate-x-0 ${
+        className={`fixed left-0 top-0 z-50 flex h-screen w-60 shrink-0 flex-col border-r border-line bg-sidebar transition-transform duration-200 ease-out md:sticky md:translate-x-0 ${
           navOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
         }`}
       >
-        <div className="flex items-start gap-2.5 border-b border-line px-5 pb-5 pt-6">
-          <div className="min-w-0 flex-1">
-            <NavLink to="/" end aria-label="Ir para o início" className="inline-block">
-              {/* O logotipo é de DUAS cores (escudo verde-escuro com o miolo
-                  quase branco), e não existe versão clara dele. Inverter por
-                  filtro, que era o truque da marca anterior (de uma cor só),
-                  aqui achata tudo numa mancha branca e o desenho do escudo
-                  some. Por isso ele vai montado numa placa clara da própria
-                  paleta — `bg-brand-chip`, o quase-branco da marca.
-
-                  Por `<img>`, e não inline: os dois SVG da marca trazem `id` e
-                  classes internas do Illustrator, e dois SVG inline na mesma
-                  página colidem nesses nomes. */}
-              <img
-                src="images/goga.svg"
-                alt="Goga Legal"
-                className="h-10 w-auto rounded-md bg-brand-chip px-2 py-1.5 transition-opacity hover:opacity-80"
-              />
-            </NavLink>
-            <p className="mt-2 text-[12px] leading-tight text-text-muted">Base de conhecimento</p>
-          </div>
+        <div className="flex items-center gap-2.5 border-b border-line px-5 pb-5 pt-6">
+          {/* Mesmo cabeçalho do Goga Studio: monograma + nome + subtítulo, para
+              as duas interfaces se lerem como o mesmo produto. */}
+          <NavLink
+            to="/"
+            end
+            aria-label="Ir para o início"
+            className="flex min-w-0 flex-1 items-center gap-2.5"
+          >
+            <div className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-text text-sm font-bold text-ink-950">
+              G
+            </div>
+            <div className="min-w-0">
+              <div className="text-sm font-semibold leading-tight text-text">Goga KB</div>
+              <div className="text-[0.68rem] text-text-dim">documentos · interno</div>
+            </div>
+          </NavLink>
           <button
             type="button"
             onClick={() => setNavOpen(false)}

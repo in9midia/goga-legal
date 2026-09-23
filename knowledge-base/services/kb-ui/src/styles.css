@@ -1,48 +1,38 @@
 @import 'tailwindcss';
 
-/* Paleta do Goga Legal, extraída dos dois arquivos de marca em `brand/`
-   (`goga.svg` e `goga-icon.svg`). Ela entra aqui, como token de tema, e não
-   espalhada em classe utilitária: com os valores no `@theme`, `bg-ink-900` e
-   `text-text-muted` continuam valendo em toda a interface e a marca muda num
-   lugar só. Trocar o logotipo e deixar a cor anterior no CSS produziria uma
-   interface meio de cada marca, que é o modo de falha comum deste tipo de
-   troca. */
+/* Mesmo padrão visual do Goga Studio (`studio/ui/src/index.css`): escala
+   grafite `ink-*`, um acento neutro só para ação, cores de status contidas.
+   Os NOMES dos tokens são os mesmos nas duas interfaces, então trocar os
+   valores aqui basta para a KB sair com a cara do Studio — e, se o Studio
+   mudar de tema, é este bloco que acompanha. */
 @theme {
-  /* Superfícies. `ink-700` para baixo são os verdes que estão nos arquivos de
-     marca; `ink-800` a `ink-950` NÃO estão: a marca não traz cor de fundo, e
-     uma interface de leitura longa precisa de degraus abaixo do verde
-     principal. Foram obtidos escurecendo #124638, e por isso ficam anotados —
-     são derivados, não extraídos. */
-  --color-ink-950: #071b16;
-  --color-ink-900: #0a251e;
-  --color-ink-850: #0c2d24;
-  --color-ink-800: #0e362b;
-  --color-ink-700: #124638; /* verde principal: a cor mais presente na marca */
-  --color-ink-600: #154638; /* verde secundário */
-  --color-ink-500: #1e5142; /* verde secundário */
+  --color-ink-950: #0a0a0b;
+  --color-ink-900: #111113;
+  --color-ink-850: #161618;
+  --color-ink-800: #1c1c1f;
+  --color-ink-700: #232327;
+  --color-ink-600: #2c2c31;
+  --color-ink-500: #383840;
 
-  --color-line: #1c493c; /* verde secundário */
-  --color-line-soft: rgba(209, 224, 219, 0.08); /* neutro claro, diluído */
+  --color-sidebar: #0f0f11;
 
-  --color-text: #f6f7f7; /* quase branco */
-  --color-text-muted: #d1e0db; /* neutro claro */
-  --color-text-dim: #54766c; /* verde claro */
+  --color-line: #232327;
+  --color-line-soft: rgba(255, 255, 255, 0.06);
 
-  --color-accent: #fafbfb; /* quase branco */
+  --color-text: #ededee;
+  --color-text-muted: #9a9aa3;
+  --color-text-dim: #62626a;
+
+  /* Acento de ação: o `--primary` do Studio. */
+  --color-accent: #f5f5f7;
   --color-accent-strong: #ffffff;
 
-  /* Placa clara para o logotipo. Ele é de duas cores (escudo verde com o miolo
-     quase branco) e não existe versão clara dele; sobre o fundo escuro ele
-     sumiria, e invertido por filtro viraria uma mancha branca sólida, sem o
-     desenho do escudo. */
+  /* Placa clara do logotipo (escudo de duas cores, sem versão clara). */
   --color-brand: #124638;
   --color-brand-soft: #54766c;
-  --color-brand-chip: #f6f7f7;
+  --color-brand-chip: #f5f5f7;
 
-  /* Cor de ESTADO não é cor de marca, de propósito: um "ok" no verde da marca
-     deixa de ser lido como estado e passa a ser lido como enfeite. Estes são
-     os quatro tons semânticos do Tailwind, escolhidos por serem reconhecíveis
-     fora de qualquer marca. */
+  /* Cor de ESTADO não é cor de marca: os mesmos quatro tons do Studio. */
   --color-emerald: #16a34a;
   --color-amber: #d97706;
   --color-rose: #e11d48;
@@ -64,6 +54,7 @@
     Roboto,
     sans-serif;
   -webkit-font-smoothing: antialiased;
+  font-feature-settings: 'cv11', 'ss01', 'ss03';
 }
 
 body {
@@ -102,6 +93,10 @@ code {
   color: var(--color-text);
 }
 
+::selection {
+  background: rgba(255, 255, 255, 0.18);
+}
+
 ::placeholder {
   color: var(--color-text-dim);
   opacity: 1;
@@ -127,13 +122,13 @@ button:disabled {
   background: transparent;
 }
 *::-webkit-scrollbar-thumb {
-  background: var(--color-ink-600);
+  background: rgba(255, 255, 255, 0.08);
   border-radius: 999px;
   border: 2px solid transparent;
   background-clip: content-box;
 }
 *::-webkit-scrollbar-thumb:hover {
-  background: var(--color-ink-500);
+  background: rgba(255, 255, 255, 0.14);
   background-clip: content-box;
 }
 
@@ -174,7 +169,7 @@ button:disabled {
 }
 .planilha td,
 .planilha th {
-  border: 1px solid #d1e0db;
+  border: 1px solid #d4d4d8;
   padding: 3px 7px;
   white-space: nowrap;
 }

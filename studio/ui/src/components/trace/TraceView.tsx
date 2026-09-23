@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { ReactFlowProvider } from "@xyflow/react";
 import { BookOpen, Bot, ChevronRight, Cpu, ExternalLink, GitBranch, Play, Plug, ShieldCheck, Wrench, type LucideIcon } from "lucide-react";
 import type { FlowGraph, SpanRecord } from "@shared/graph";
-import type { Outcome } from "@/lib/types";
+import { ATALHO_LABEL, type Outcome } from "@/lib/types";
 import { int, ms, usd } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { JsonView, KPI, Pill, StatusBadge } from "@/components/common";
@@ -51,6 +51,18 @@ export function TraceView({ graph, spans, outcome, flowId, live }: { graph: Flow
     // Durante a execucao ao vivo nao ha `path`: deduz pelas arestas entre nos ja visitados.
     return new Set((graph?.edges ?? []).filter((e) => visited.has(e.source) && visited.has(e.target)).map((e) => e.id));
   }, [outcome, graph, visited]);
+  const [selNode, setSelNode] = useState<string | null>(null);
+  const selSpans = useMemo(() => {
+    if (!selNode) return null;
+    const byId = new Map(spans.map((s) => [s.id, s]));
+    // So os spans "de topo" do no: filhos de um span do mesmo no aparecem aninhados.
+    return spans.filter((s) => s.nodeId === selNode && byId.get(s.parentId ?? "")?.nodeId !== selNode).sort((a, b) => a.seq - b.seq);
+  }, [spans, selNode]);
+  const childrenOf = useMemo(() => {
+    const m = new Map<string | null, SpanRecord[]>();
+    for (const s of [...spans].sort((a, b) => a.seq - b.seq)) m.set(s.parentId, [...(m.get(s.parentId) ?? []), s]);
+    return m;
+  }, [spans]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -69,18 +81,38 @@ export function TraceView({ graph, spans, outcome, flowId, live }: { graph: Flow
         <TabsContent value="spans" className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
           <SpanTree spans={spans} flowId={flowId} live={live} />
         </TabsContent>
-        <TabsContent value="canvas" className="min-h-[320px] flex-1">
+        <TabsContent value="canvas" className="flex min-h-[320px] flex-1 flex-col">
           {graph ? (
-            <ReactFlowProvider>
-              <FlowCanvas key={spans.length ? "c" : "e"} nodes={toRfNodes(graph, { states, visited: visited.size ? visited : undefined })} edges={toRfEdges(graph, { used: usedEdges, animateUsed: true })} readOnly minimap={false} />
-            </ReactFlowProvider>
+            <div className="min-h-[260px] flex-1">
+              <ReactFlowProvider>
+                <FlowCanvas key={spans.length ? "c" : "e"} nodes={toRfNodes(graph, { states, visited: visited.size ? visited : undefined, selectedId: selNode })} edges={toRfEdges(graph, { used: usedEdges, animateUsed: true })} readOnly minimap={false} onNodeClick={(id) => setSelNode((cur) => (cur === id ? null : id))} onPaneClick={() => setSelNode(null)} />
+              </ReactFlowProvider>
+            </div>
           ) : null}
+          <div className="max-h-[50%] min-h-0 shrink-0 overflow-y-auto border-t border-line px-2 py-2">
+            {!selNode ? (
+              <p className="px-1 text-xs text-text-dim">Clique numa caixa para ver o que entrou e o que saiu dela.</p>
+            ) : (
+              <>
+                <div className="mb-1 flex items-center gap-2 px-1 text-xs">
+                  <span className="font-medium">{graph?.nodes.find((n) => n.id === selNode)?.data.name ?? selNode}</span>
+                  <button className="ml-auto text-text-dim hover:text-text" onClick={() => setSelNode(null)}>fechar</button>
+                </div>
+                {selSpans?.length ? (
+                  <div className="space-y-0.5">{selSpans.map((s) => <SpanRow key={s.id} span={s} childrenOf={childrenOf} depth={0} flowId={flowId} defaultOpen />)}</div>
+                ) : (
+                  <p className="px-1 text-xs text-text-dim">Este nó não foi executado nesta resposta.</p>
+                )}
+              </>
+            )}
+          </div>
         </TabsContent>
         {outcome && (
           <TabsContent value="resultado" className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
             <div className="flex flex-wrap gap-1.5">
               <StatusBadge status={outcome.status} />
               {outcome.compliance && <Pill tone={outcome.compliance.aprovado ? "ok" : "bad"}>compliance {outcome.compliance.aprovado ? "aprovado" : "reprovado"} · {outcome.compliance.ciclos} ciclo(s)</Pill>}
+              {outcome.atalho && <Pill>{ATALHO_LABEL[outcome.atalho]}</Pill>}
               {outcome.flags.map((f) => <Pill key={f} tone="warn">{f}</Pill>)}
             </div>
             {outcome.classificacao && <><div className="text-xs text-text-muted">Classificação</div><JsonView value={outcome.classificacao} /></>}
@@ -110,9 +142,9 @@ function SpanTree({ spans, flowId, live }: { spans: SpanRecord[]; flowId?: strin
   return <div className="space-y-0.5">{top.map((s) => <SpanRow key={s.id} span={s} childrenOf={children} depth={0} flowId={flowId} />)}</div>;
 }
 
-function SpanRow({ span, childrenOf, depth, flowId }: { span: SpanRecord; childrenOf: Map<string | null, SpanRecord[]>; depth: number; flowId?: string | null }) {
+function SpanRow({ span, childrenOf, depth, flowId, defaultOpen }: { span: SpanRecord; childrenOf: Map<string | null, SpanRecord[]>; depth: number; flowId?: string | null; defaultOpen?: boolean }) {
   const kids = childrenOf.get(span.id) ?? [];
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(!!defaultOpen);
   const K = KIND[span.kind];
   return (
     <div>

@@ -76,6 +76,12 @@ export async function fetchDocument(id: number): Promise<Record<string, unknown>
   return kbFetch(`/v1/documents/${id}?include_related=false`);
 }
 
+/** Pagina da wiki inteira. Passagens da wiki voltam da busca com document_id 0
+ * (a pagina pode derivar de varios documentos); o id dela e o `chunk_id`. */
+export async function fetchWikiPage(id: number): Promise<Record<string, unknown>> {
+  return kbFetch(`/v1/wiki/pages/${id}`);
+}
+
 export async function aiUsage(days: number): Promise<unknown> {
   return kbFetch(`/v1/ai/usage?days=${days}`, undefined, 8000);
 }

@@ -72,11 +72,12 @@ const AgentNode = memo(function AgentNode({ data, selected }: NodeProps<Node<Can
 
 export const nodeTypes = { agent: AgentNode };
 
-export function toRfNodes(graph: FlowGraph, opts: { modelLabel?: (id: string | null) => string | undefined; errors?: Set<string>; states?: Record<string, NodeState>; visited?: Set<string> } = {}): Node<CanvasNodeData>[] {
+export function toRfNodes(graph: FlowGraph, opts: { modelLabel?: (id: string | null) => string | undefined; errors?: Set<string>; states?: Record<string, NodeState>; visited?: Set<string>; selectedId?: string | null } = {}): Node<CanvasNodeData>[] {
   return graph.nodes.map((n) => ({
     id: n.id,
     type: "agent",
     position: n.position,
+    selected: opts.selectedId ? n.id === opts.selectedId : undefined,
     data: {
       type: n.type,
       data: n.data,

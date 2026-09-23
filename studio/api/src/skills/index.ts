@@ -44,6 +44,13 @@ function scopeSpaces(requested: string[] | undefined, node: FlowNode): string[] 
   return r.length ? r : allowed;
 }
 
+/** Titulo de uma pagina da wiki: a busca devolve vazio, o frontmatter tem. */
+function tituloDoConteudo(content: string): string {
+  const fm = /^---\n[\s\S]*?^title:\s*(.+)$/m.exec(content);
+  const h1 = /^#\s+(.+)$/m.exec(content);
+  return (fm?.[1] ?? h1?.[1] ?? "").trim().replace(/^['"]|['"]$/g, "");
+}
+
 /** Skills com implementacao no codigo ("builtin"). Texto e liga/desliga vem do banco. */
 export const SKILLS: SkillDef[] = [
   def({
@@ -58,38 +65,61 @@ export const SKILLS: SkillDef[] = [
       if (!spaces.length) return { resultados: [], aviso: "nó sem bases de conhecimento configuradas" };
       const r = await kb.search({ query: i.consulta, spaces, top_k: i.top_k ?? k.topK, min_trust: k.minTrust || undefined, as_of: k.asOf || undefined });
       ctx.kbDocIds ??= new Set();
-      for (const p of r.results) ctx.kbDocIds.add(p.document_id);
+      ctx.kbWikiIds ??= new Set();
       return {
-        resultados: r.results.map((p) => ({
-          document_id: p.document_id,
-          base: p.space,
-          titulo: p.title,
-          pagina: p.page,
-          score: p.score,
-          armadilha: p.armadilha ?? null,
-          trecho: p.content.slice(0, 1500),
-        })),
+        resultados: r.results.map((p) => {
+          // Pagina da wiki volta com document_id 0 (pode derivar de varios
+          // documentos): o id que abre ela e o chunk_id, por outra rota. Passar
+          // o 0 adiante faz o modelo pedir /documents/0 e tomar 404.
+          const wiki = p.representation === "wiki" || !p.document_id;
+          if (wiki) ctx.kbWikiIds!.add(p.chunk_id);
+          else ctx.kbDocIds!.add(p.document_id);
+          return {
+            ...(wiki ? { pagina_wiki_id: p.chunk_id } : { document_id: p.document_id }),
+            base: p.space,
+            titulo: p.title || tituloDoConteudo(p.content),
+            pagina: p.page,
+            score: p.score,
+            armadilha: p.armadilha || null,
+            trecho: p.content.slice(0, 1500),
+          };
+        }),
       };
     },
   }),
   def({
     id: "buscar_documento_kb",
     name: "Abrir documento da KB",
-    description: "Abre o documento completo da KB. Use SOMENTE um document_id que apareceu nas evidências ou num resultado de buscar_kb; nunca invente um id.",
-    input: z.object({ document_id: z.number().int() }),
+    description: "Abre o documento completo da KB. Passe document_id OU pagina_wiki_id, exatamente como vieram nas evidências ou num resultado de buscar_kb; nunca invente um id.",
+    input: z.object({ document_id: z.number().int().optional(), pagina_wiki_id: z.number().int().optional() }),
     llmTool: true,
     async run(i, { node, ctx }) {
+      const spaces = node.data.knowledge.spaces;
+      const foraDoEscopo = (doc: Record<string, unknown>) => {
+        const space = String(doc.space ?? doc.space_slug ?? "");
+        return space && spaces.length && !spaces.includes(space) ? { erro: `documento pertence à base "${space}", fora do escopo deste agente` } : null;
+      };
+      if (i.pagina_wiki_id != null) {
+        if (!ctx.kbWikiIds?.has(i.pagina_wiki_id)) {
+          return { erro: `pagina_wiki_id ${i.pagina_wiki_id} não veio de nenhuma busca nesta execução. Use um id dos resultados de buscar_kb; se não houver resultado útil, siga sem abrir documento.` };
+        }
+        const page = await kb.fetchWikiPage(i.pagina_wiki_id);
+        const bloqueio = foraDoEscopo(page);
+        if (bloqueio) return bloqueio;
+        const content = String(page.content ?? "");
+        return { ...page, content: content.slice(0, 12000), truncado: content.length > 12000 };
+      }
+      if (i.document_id == null) return { erro: "informe document_id ou pagina_wiki_id, como vieram nos resultados de buscar_kb" };
       // O modelo inventa id (0, 1...) quando a busca veio vazia: recusa aqui,
       // sem ir a KB, e diz o que fazer.
       if (!ctx.kbDocIds?.has(i.document_id)) {
-        return { erro: `document_id ${i.document_id} não veio de nenhuma busca nesta execução. Chame buscar_kb primeiro e use um id dos resultados; se não houver resultado útil, siga sem abrir documento.` };
+        const dica = ctx.kbWikiIds?.size ? " Trechos sem document_id são páginas da wiki: abra-os por pagina_wiki_id." : "";
+        return { erro: `document_id ${i.document_id} não veio de nenhuma busca nesta execução. Chame buscar_kb primeiro e use um id dos resultados; se não houver resultado útil, siga sem abrir documento.${dica}` };
       }
       const doc = await kb.fetchDocument(i.document_id);
-      const space = String(doc.space ?? doc.space_slug ?? "");
-      if (space && node.data.knowledge.spaces.length && !node.data.knowledge.spaces.includes(space)) {
-        return { erro: `documento pertence à base "${space}", fora do escopo deste agente` };
-      }
-      const content = String(doc.content ?? doc.canonical ?? doc.markdown ?? "");
+      const bloqueio = foraDoEscopo(doc);
+      if (bloqueio) return bloqueio;
+      const content = String(doc.content ?? doc.canonical ?? doc.canonical_md ?? doc.markdown ?? "");
       return { ...doc, content: content.slice(0, 12000), truncado: content.length > 12000 };
     },
   }),
