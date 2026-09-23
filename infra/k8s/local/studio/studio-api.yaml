@@ -29,8 +29,8 @@ spec:
           env:
             - { name: DATABASE_URL, value: "postgres://studio:studio@studio-postgres:5432/studio" }
             - { name: KB_URL, value: "http://kb-api.stack-knowledge-base" }
-            # Link da sidebar: o navegador abre a kb-ui pelo ingress do host.
-            - { name: KB_UI_URL, value: "http://localhost:8890" }
+            # Link da sidebar: URL publica da kb-ui (tunel Cloudflare).
+            - { name: KB_UI_URL, value: "https://goga-kb.inine.com.br" }
             - { name: STUDIO_FILES_DIR, value: /data/files }
           envFrom:
             # STUDIO_SECRET_KEY, STUDIO_SESSION_SECRET, admin e chaves de

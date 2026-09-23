@@ -7,6 +7,7 @@ o agent-runner do agentic-sdlc ja e Python -- a casa tem a stack.
 
 from __future__ import annotations
 
+import asyncio
 import html
 import json
 import logging
@@ -31,6 +32,7 @@ from . import (
     catalog,
     chunking,
     embedding,
+    fila,
     graph,
     icons,
     ingest,
@@ -131,8 +133,15 @@ def startup() -> None:
         _ready["error"] = str(exc)[:300]
         log.warning("object store indisponivel: %s", exc)
 
+    # Ordem importa: a fila retoma primeiro o `running` que tem bruto guardado;
+    # o que sobrar `running` nao tem de onde retomar e e fechado como antes.
+    try:
+        fila.retomar_orfaos()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("nao consegui retomar a fila de ingestao: %s", exc)
     _fechar_trabalhos_orfaos()
     retry.iniciar()
+    fila.iniciar()
 
 
 def _fechar_trabalhos_orfaos() -> None:
@@ -2006,8 +2015,19 @@ def delete_space(slug: str, principal: Principal = Depends(require_write)) -> di
 async def upload_document(
     slug: str,
     file: UploadFile,
+    wait: bool = Query(default=False),
     principal: Principal = Depends(require_write),
-) -> dict[str, Any]:
+) -> JSONResponse:
+    """Enfileira o arquivo e responde 202. Quem processa e `fila.py`, um por vez.
+
+    Sincrono, dez arquivos grandes enviados juntos viravam dez conexoes de
+    minutos: qualquer engasgo soltava a conexao, o cliente mandava o proximo e
+    o pod acabava com dois docling juntos e morria por memoria. Enfileirado, a
+    concorrencia deixa de depender de quem envia.
+
+    `wait=true` mantem o contrato antigo para os scripts de carga: o arquivo
+    passa pela MESMA fila, e a resposta so volta quando ele terminar.
+    """
     data = await file.read()
     limit = settings.max_upload_mb * 1024 * 1024
     if len(data) > limit:
@@ -2021,47 +2041,52 @@ async def upload_document(
         if cur.fetchone() is None:
             raise HTTPException(status_code=404, detail=f"Espaco {slug} nao existe")
 
-    # run_in_threadpool e obrigatorio aqui, nao otimizacao: a ingestao e CPU-bound
-    # (docling carrega modelo de layout e processa PDF de ate 200 paginas, ~30 s
-    # por arquivo) e este handler e `async`. Chamando direto, o event loop fica
-    # bloqueado, /v1/health para de responder, a liveness probe expira e o
-    # kubelet MATA o pod no meio da ingestao -- e o cliente ve HTTP 503 em todos
-    # os arquivos seguintes, sem nada de errado no log do pod.
-    try:
-        result = await run_in_threadpool(
-            ingest.ingest_document, slug, file.filename or "sem-nome", data, principal.describe()
+    nome = file.filename or "sem-nome"
+    enfileirado = await run_in_threadpool(
+        ingest.enfileirar, slug, nome, data, principal.describe()
+    )
+    del data
+    fila.acordar()
+    if not wait:
+        return JSONResponse(enfileirado, status_code=202)
+
+    run_id = enfileirado["run_id"]
+    prazo = time.monotonic() + 3600
+    while time.monotonic() < prazo:
+        await asyncio.sleep(2)
+        run = await run_in_threadpool(_ingest_run, run_id)
+        if run and run["status"] not in ("queued", "running"):
+            codigo = 200 if run["status"] in ("indexed", "skipped") else 422
+            completo = fila.resultado(run_id) or {}
+            # `status` do log primeiro: `skipped` diz mais que o `indexed` do
+            # resultado, e os scripts leem o primeiro `status` da resposta.
+            return JSONResponse({"status": run["status"], **completo, **run},
+                                status_code=codigo)
+    return JSONResponse({**enfileirado, "status": "running",
+                         "detail": "ainda processando; acompanhe em /v1/ingest-runs"},
+                        status_code=202)
+
+
+def _ingest_run(run_id: int) -> dict[str, Any] | None:
+    """Uma linha de `ingest_run`, com `status` primeiro (os scripts leem o primeiro)."""
+    with conn() as connection, connection.cursor() as cur:
+        cur.execute(
+            """
+            SELECT status, id, space_slug, filename, document_id, extractor, pages,
+                   figures, parents, children, embed_tokens, total_ms, error
+              FROM ingest_run WHERE id = %s
+            """,
+            (run_id,),
         )
-    except Exception as exc:  # noqa: BLE001
-        # ⚠ SEM ISTO, O CHAMADOR VE UM 500 PELADO. Medido: quebrando o endpoint
-        # do provedor de embedding, o upload respondia "Internal Server Error"
-        # sem mais nada -- enquanto o servidor JA tinha registrado o documento e
-        # agendado a retentativa. Quem enviou concluia que o arquivo se perdeu e
-        # reenviava, criando trabalho em cima de trabalho.
-        #
-        # A ingestao falhou de verdade, entao 422 e nao 200. O que muda e a
-        # mensagem dizer o que o sistema vai fazer sozinho.
-        nome = file.filename or "sem-nome"
-        agendado = ingest.classificar_erro(str(exc)) == ingest.RECUPERAVEL
-        log.warning("ingestao de %s falhou: %s", nome, str(exc)[:300])
-        return JSONResponse(
-            {
-                "filename": nome,
-                "status": "failed",
-                "error": str(exc)[:500],
-                "retry_scheduled": agendado,
-                "detail": (
-                    "a ingestão falhou por um motivo que costuma passar sozinho "
-                    f"(provedor, rede). O arquivo ficou guardado e o sistema vai tentar "
-                    f"de novo automaticamente, até {ingest.MAX_TENTATIVAS} vezes."
-                    if agendado else
-                    "a ingestão falhou por um motivo que não se resolve tentando de novo. "
-                    "Veja o erro e corrija o arquivo ou a configuração."
-                ),
-            },
-            status_code=422,
-        )
-    status = 200 if result.status == "indexed" else 422
-    return JSONResponse(result.to_dict(), status_code=status)
+        r = cur.fetchone()
+    if r is None:
+        return None
+    return {
+        "status": r[0], "run_id": r[1], "space": r[2], "filename": r[3],
+        "document_id": r[4], "extractor": r[5], "pages": r[6], "figures": r[7],
+        "parents": r[8], "children": r[9], "embed_tokens": r[10], "total_ms": r[11],
+        "already_indexed": r[0] == "skipped", "error": r[12],
+    }
 
 
 @app.delete("/v1/documents/{document_id}")
@@ -2435,7 +2460,7 @@ def list_ingest_runs(
                    size_bytes, pages, figures, parents, children, embed_tokens,
                    total_ms, error, principal, started_at, finished_at,
                    EXTRACT(EPOCH FROM (now() - started_at)) * 1000,
-                   chunk_engine
+                   chunk_engine, stage, progress, stage_detail, attempts, queued_at
               FROM ingest_run
               {onde}
              ORDER BY started_at DESC
@@ -2459,6 +2484,9 @@ def list_ingest_runs(
                 # como "0 ms" e parece concluida.
                 "total_ms": r[12] if r[4] != "running" else int(r[17] or 0),
                 "chunk_engine": r[18] or "",
+                "stage": r[19] or "", "progress": float(r[20] or 0),
+                "stage_detail": r[21] or "", "attempts": r[22] or 0,
+                "queued_at": r[23].isoformat() if r[23] else None,
                 "error": r[13], "principal": r[14],
                 "started_at": r[15].isoformat() if r[15] else None,
                 "finished_at": r[16].isoformat() if r[16] else None,
@@ -2468,11 +2496,108 @@ def list_ingest_runs(
     }
 
 
+_COLUNAS_FILA = """
+    id, space_slug, filename, status, size_bytes, stage, progress, stage_detail,
+    attempts, principal, queued_at, started_at, finished_at, total_ms, error,
+    document_id, extractor, pages, children,
+    EXTRACT(EPOCH FROM (now() - started_at)) * 1000
+"""
+
+
+def _linha_da_fila(r: tuple) -> dict[str, Any]:
+    em_curso = r[3] == "running"
+    return {
+        "id": r[0], "space": r[1], "filename": r[2], "status": r[3],
+        "size_bytes": r[4], "stage": r[5] or "", "progress": float(r[6] or 0),
+        "stage_detail": r[7] or "", "attempts": r[8] or 0, "principal": r[9],
+        "queued_at": r[10].isoformat() if r[10] else None,
+        "started_at": r[11].isoformat() if r[11] else None,
+        "finished_at": r[12].isoformat() if r[12] else None,
+        # Em curso, o `total_ms` ainda e zero: o util e o relogio desde o inicio.
+        "total_ms": int(r[19] or 0) if em_curso else (r[13] or 0),
+        "error": r[14] or "", "document_id": r[15], "extractor": r[16] or "",
+        "pages": r[17] or 0, "children": r[18] or 0,
+    }
+
+
+@app.get("/v1/ingest-queue")
+def ingest_queue(
+    recent: int = Query(default=30, le=200),
+    principal: Principal = Depends(require_write),
+) -> dict[str, Any]:
+    """A fila de ingestao inteira, de todas as bases: o que roda, o que espera,
+    e o que acabou de sair.
+
+    E a tela da fila que le isto. Separado de `/v1/ingest-runs` porque a
+    pergunta e outra: la e o historico paginado de uma base; aqui e "o que o
+    servidor esta fazendo agora e o que vem depois", na ORDEM em que o worker
+    vai pegar (`id` crescente), que e o que da sentido a "posicao na fila".
+    """
+    with conn() as connection, connection.cursor() as cur:
+        cur.execute(
+            f"SELECT {_COLUNAS_FILA} FROM ingest_run"
+            " WHERE status IN ('running', 'queued')"
+            " ORDER BY (status = 'running') DESC, id"
+        )
+        ativos = [_linha_da_fila(r) for r in cur.fetchall()]
+        cur.execute(
+            f"SELECT {_COLUNAS_FILA} FROM ingest_run"
+            " WHERE status NOT IN ('running', 'queued')"
+            " ORDER BY coalesce(finished_at, started_at) DESC LIMIT %s",
+            (recent,),
+        )
+        recentes = [_linha_da_fila(r) for r in cur.fetchall()]
+        cur.execute(
+            "SELECT status, count(*) FROM ingest_run"
+            " WHERE coalesce(finished_at, started_at) > now() - interval '24 hours'"
+            "    OR status IN ('running', 'queued')"
+            " GROUP BY status"
+        )
+        contagem = {status: int(n) for status, n in cur.fetchall()}
+    posicao = 0
+    for linha in ativos:
+        if linha["status"] == "queued":
+            posicao += 1
+            linha["position"] = posicao
+    return {"active": ativos, "recent": recentes, "counts_24h": contagem}
+
+
+@app.get("/v1/ingest-runs/{run_id}/events")
+def ingest_run_events(run_id: int, principal: Principal = Depends(require_write)) -> dict[str, Any]:
+    """O log de um documento: cada troca de etapa e cada marco, em ordem."""
+    with conn() as connection, connection.cursor() as cur:
+        cur.execute(f"SELECT {_COLUNAS_FILA} FROM ingest_run WHERE id = %s", (run_id,))
+        linha = cur.fetchone()
+        if linha is None:
+            raise HTTPException(status_code=404, detail=f"execução {run_id} não encontrada")
+        cur.execute(
+            "SELECT at, stage, progress, message FROM ingest_event"
+            " WHERE run_id = %s ORDER BY id",
+            (run_id,),
+        )
+        eventos = [
+            {"at": r[0].isoformat(), "stage": r[1], "progress": r[2], "message": r[3]}
+            for r in cur.fetchall()
+        ]
+    return {"run": _linha_da_fila(linha), "events": eventos}
+
+
+@app.post("/v1/ingest-runs/{run_id}/cancel")
+def cancel_ingest_run(run_id: int, principal: Principal = Depends(require_write)) -> dict[str, Any]:
+    """Tira da fila um arquivo que ainda nao comecou. O que ja roda, termina."""
+    if not fila.cancelar(run_id):
+        raise HTTPException(
+            status_code=409,
+            detail="só dá para cancelar o que ainda está na fila; este já começou ou terminou",
+        )
+    return {"id": run_id, "status": "cancelled"}
+
+
 @app.delete("/v1/ingest-runs")
 def clear_ingest_runs(principal: Principal = Depends(require_write)) -> dict[str, Any]:
     """Limpa o log, preservando o que esta em andamento."""
     with conn() as connection, connection.cursor() as cur:
-        cur.execute("DELETE FROM ingest_run WHERE status <> 'running'")
+        cur.execute("DELETE FROM ingest_run WHERE status NOT IN ('running', 'queued')")
         removidas = cur.rowcount
         connection.commit()
     return {"removed": removidas}

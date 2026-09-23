@@ -262,6 +262,42 @@ class Settings:
     max_figures_total_bytes: int = field(
         default_factory=lambda: _env_int("KB_MAX_FIGURES_TOTAL_BYTES", 64 * 1024 * 1024)
     )
+    # Paginas por chamada ao docling. Um livro inteiro (800+ paginas) numa
+    # chamada so estourou os 8 Gi do pod: o docling segura todas as paginas
+    # renderizadas ate o fim da conversao. Em lotes, o pico e o de um lote.
+    docling_page_batch: int = field(default_factory=lambda: _env_int("KB_DOCLING_PAGE_BATCH", 40))
+
+    # --- PDF hibrido (hibrido.py) ---
+    # O docling leva ~3,7 s por pagina em CPU (medido: 40 paginas em 2,5 min no
+    # pod de 3 CPU). Num livro digital de 1.169 paginas isso e mais de uma hora
+    # para chegar ao MESMO texto que o PyMuPDF le em 1,1 s. A triagem manda para
+    # o docling so as paginas que precisam dele (sem texto, imagem grande,
+    # tabela, texto corrompido).
+    pdf_hibrido: bool = field(default_factory=lambda: _env_bool("KB_PDF_HIBRIDO", True))
+    # Abaixo disto o docling inteiro leva poucos minutos, e o layout dele (titulos
+    # e tabelas em Markdown) vale o tempo. 80 paginas ~ 5 min.
+    pdf_hibrido_min_paginas: int = field(
+        default_factory=lambda: _env_int("KB_PDF_HIBRIDO_MIN_PAGINAS", 80)
+    )
+    # Se mais que esta fracao das paginas precisa do docling, o PDF e escaneado ou
+    # quase todo imagem: a triagem nao ganha nada e o arquivo vai inteiro para ele.
+    pdf_hibrido_max_fracao_docling: float = field(
+        default_factory=lambda: _env_float("KB_PDF_HIBRIDO_MAX_FRACAO_DOCLING", 0.5)
+    )
+    # Imagem cobrindo mais que isto da pagina = print, grafico, fluxograma: vale OCR.
+    pdf_imagem_area: float = field(default_factory=lambda: _env_float("KB_PDF_IMAGEM_AREA", 0.3))
+    # Mais tracos vetoriais que isto na pagina = provavel tabela (as grades sao
+    # linhas desenhadas). Pagina de texto corrido tem de 0 a poucos.
+    pdf_tabela_desenhos: int = field(default_factory=lambda: _env_int("KB_PDF_TABELA_DESENHOS", 40))
+
+    # --- Documento longo: grafo e wiki alem do comeco (fase 3) ---
+    # Teto de chamadas de extracao de grafo por documento. Antes eram 6 pais
+    # fixos, o que num livro de 450 pais cobria ~1% (sumario e prefacio). Cada
+    # pai e uma chamada ao modelo de chat.
+    grafo_max_pais: int = field(default_factory=lambda: _env_int("KB_GRAFO_MAX_PAIS", 40))
+    # Teto de destilacoes da wiki por documento longo (uma por secao amostrada).
+    # A destilacao e a chamada mais cara do pipeline (ate 8000 tokens de saida).
+    wiki_max_secoes: int = field(default_factory=lambda: _env_int("KB_WIKI_MAX_SECOES", 8))
 
     # --- Busca ---
     default_top_k: int = field(default_factory=lambda: _env_int("KB_DEFAULT_TOP_K", 10))

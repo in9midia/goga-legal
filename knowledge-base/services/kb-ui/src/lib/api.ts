@@ -24,7 +24,10 @@ import type {
   GraphInstance,
   GraphSchema,
   Health,
+  IngestEvent,
+  IngestQueue,
   IngestRunPage,
+  QueueRun,
   Auxiliary,
   Enrichment,
   ReprocessStatus,
@@ -234,21 +237,20 @@ export const kb = {
       )
       .then((r) => r.data),
 
-  /** Um POST por arquivo: a API extrai, fatia e vetoriza de forma síncrona, e
-   *  devolve o resultado daquele arquivo — inclusive qual extrator ganhou. */
+  /** Um POST por arquivo. A API guarda o arquivo, põe na fila e responde 202
+   *  com `status: 'queued'`; o processamento acontece depois, um por vez, e
+   *  aparece no log de ingestão. */
   upload: (slug: string, file: File, signal?: AbortSignal) => {
     const form = new FormData();
     form.append('file', file);
     return api
       .post(`/spaces/${encodeURIComponent(slug)}/documents`, form, {
-        // Um PDF de 120 páginas com OCR já levou 13 minutos. O timeout padrão
-        // de 60s cortaria a conexão e o arquivo pareceria ter falhado — quando
-        // na verdade o servidor terminaria e gravaria normalmente.
-        timeout: 3_600_000,
-        // Abortar aqui solta a ESPERA, não o trabalho: a ingestão é síncrona no
-        // servidor e segue até o fim num threadpool. Quem chama precisa dizer
-        // isso na tela, senão o arquivo aparece indexado depois de um
-        // "cancelado" e a pessoa acha que a tela mentiu.
+        // O POST cobre só a SUBIDA do arquivo (até 100 MB), não o
+        // processamento. Dez minutos é folga para upload lento; a ingestão, que
+        // já levou 13 min num PDF com OCR, acontece depois, fora da conexão.
+        timeout: 600_000,
+        // Abortar corta a subida. Se o arquivo já tinha chegado, ele está na
+        // fila e será processado mesmo assim.
         signal,
       })
       .then((r) => r.data);
@@ -408,6 +410,16 @@ export const kb = {
       .then((r) => r.data),
 
   clearIngestRuns: () => api.delete('/ingest-runs').then((r) => r.data),
+
+  ingestQueue: (recent = 30) =>
+    api.get<IngestQueue>('/ingest-queue', { params: { recent } }).then((r) => r.data),
+
+  ingestRunEvents: (id: number) =>
+    api
+      .get<{ run: QueueRun; events: IngestEvent[] }>(`/ingest-runs/${id}/events`)
+      .then((r) => r.data),
+
+  cancelIngestRun: (id: number) => api.post(`/ingest-runs/${id}/cancel`).then((r) => r.data),
 
   // ── token pessoal (qualquer pessoa logada, para os seus próprios) ──
   tokens: () =>

@@ -79,6 +79,8 @@ export const SKILLS: SkillDef[] = [
             base: p.space,
             titulo: p.title || tituloDoConteudo(p.content),
             pagina: p.page,
+            // Capitulo/secao do trecho num livro: com a pagina, vira "cap. X, p. Y".
+            secao: p.section || null,
             score: p.score,
             armadilha: p.armadilha || null,
             trecho: p.content.slice(0, 1500),

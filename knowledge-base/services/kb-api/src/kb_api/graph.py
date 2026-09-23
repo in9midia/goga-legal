@@ -39,6 +39,7 @@ import re
 import unicodedata
 from collections import Counter
 
+from . import progresso
 from .config import settings
 from .db import conn
 
@@ -467,10 +468,36 @@ def stats() -> dict:
 MAX_ENTIDADES = 8
 MAX_RELACOES = 8
 
-# Quantos chunks pais de um documento entram na extracao. O custo e por chamada,
-# e os primeiros pais concentram a definicao do assunto -- e o mesmo motivo pelo
-# qual a derivacao de conceito le so o comeco do canonico.
+# Piso de chunks pais por documento. O custo e por chamada, e num documento
+# curto os primeiros pais concentram a definicao do assunto.
 MAX_PAIS_POR_DOCUMENTO = 6
+# Um pai a mais a cada tantos, ate `settings.grafo_max_pais`. Com o piso fixo de
+# 6, um livro de ~450 pais (1.169 paginas) tinha o grafo feito do sumario e do
+# prefacio: ~1% do texto. Manual de 30 pais passa de 6 para 9 chamadas.
+PAIS_POR_CHAMADA_EXTRA = 10
+
+
+def pais_amostrados(total: int, teto: int | None = None) -> list[int]:
+    """Indices (0-based, em ordem) dos pais que entram na extracao do grafo.
+
+    Espalhados pelo documento inteiro, e nao os primeiros: o grafo de um livro
+    precisa ter entidades de todos os capitulos. O primeiro pai entra sempre (e
+    onde o assunto se apresenta).
+    """
+    if total <= 0:
+        return []
+    limite = settings.grafo_max_pais if teto is None else teto
+    quantos = min(
+        total,
+        max(MAX_PAIS_POR_DOCUMENTO,
+            min(limite, MAX_PAIS_POR_DOCUMENTO + total // PAIS_POR_CHAMADA_EXTRA)),
+    )
+    if quantos >= total:
+        return list(range(total))
+    if quantos <= 1:
+        return [0]
+    passo = (total - 1) / (quantos - 1)
+    return sorted({round(i * passo) for i in range(quantos)})
 
 _INSTRUCAO_GRAFO = """Você extrai entidades e relações de um trecho de documento corporativo.
 
@@ -558,12 +585,14 @@ def construir(space_slug: str, document_id: int) -> dict:
     try:
         with conn() as connection, connection.cursor() as cur:
             cur.execute(
-                """
-                SELECT id, content FROM chunk
-                 WHERE document_id = %s AND parent_id IS NULL
-                 ORDER BY ord LIMIT %s
-                """,
-                (document_id, MAX_PAIS_POR_DOCUMENTO),
+                "SELECT id FROM chunk WHERE document_id = %s AND parent_id IS NULL ORDER BY ord",
+                (document_id,),
+            )
+            todos = [linha[0] for linha in cur.fetchall()]
+            escolhidos = [todos[i] for i in pais_amostrados(len(todos))]
+            cur.execute(
+                "SELECT id, content FROM chunk WHERE id = ANY(%s) ORDER BY ord",
+                (escolhidos,),
             )
             pais = cur.fetchall()
 
@@ -571,7 +600,8 @@ def construir(space_slug: str, document_id: int) -> dict:
         total_relacoes = 0
         sem_resposta = 0
         with driver.session() as session:
-            for chunk_id, texto in pais:
+            for feitos, (chunk_id, texto) in enumerate(pais):
+                progresso.avancar("grafo", feitos, len(pais), f"trecho {feitos + 1} de {len(pais)}")
                 entidades, relacoes, respondeu = extrair(texto, space_slug)
                 if not respondeu:
                     sem_resposta += 1

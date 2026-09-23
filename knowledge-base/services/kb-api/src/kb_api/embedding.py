@@ -24,7 +24,7 @@ from dataclasses import dataclass
 import requests
 import requests.adapters
 
-from . import providers
+from . import progresso, providers
 from .config import settings
 
 log = logging.getLogger(__name__)
@@ -61,6 +61,13 @@ class EmbedResult:
 EMBED_ATTEMPTS = 3
 EMBED_BACKOFF_SECONDS = 2
 RETRIABLE_STATUS = {408, 429, 500, 502, 503, 504}
+
+# 429 NA INGESTAO ESPERA A QUOTA VOLTAR. A quota do Gemini e por minuto, e um
+# livro gera milhares de chunks: com 2 s + 4 s de espera a terceira tentativa
+# ainda caia na mesma janela, e o documento inteiro era recusado. Na busca
+# continua valendo `TENTATIVAS_POR_OPERACAO` -- ali quem espera e uma pessoa.
+TENTATIVAS_429_INDEX = 8
+ESPERA_429_MAX_SECONDS = 60
 
 # QUEM ESPERA MUDA A POLITICA, e isto nao e ajuste fino.
 #
@@ -152,18 +159,27 @@ def _post(
     ultimo: Exception | None = None
     espera = TIMEOUT_POR_OPERACAO.get(operation, TIMEOUT_PADRAO)
     tentativas = TENTATIVAS_POR_OPERACAO.get(operation, EMBED_ATTEMPTS)
+    if operation != "search":
+        tentativas = max(tentativas, TENTATIVAS_429_INDEX)
+    pausa = 0.0
     for tentativa in range(1, tentativas + 1):
+        pausa = EMBED_BACKOFF_SECONDS * tentativa
         try:
             resposta = _sessao.post(url, data=json.dumps(corpo).encode(),
                                     headers=cabecalhos, timeout=espera)
             if resposta.status_code >= 400:
                 detalhe = resposta.text[:200]
-                if resposta.status_code not in RETRIABLE_STATUS or tentativa == tentativas:
+                limite = tentativas if resposta.status_code == 429 else min(
+                    tentativas, TENTATIVAS_POR_OPERACAO.get(operation, EMBED_ATTEMPTS)
+                )
+                if resposta.status_code not in RETRIABLE_STATUS or tentativa >= limite:
                     raise EmbeddingError(
                         f"{provedor.name} recusou o embedding: "
                         f"HTTP {resposta.status_code} {detalhe}"
                     )
                 ultimo = EmbeddingError(f"HTTP {resposta.status_code}")
+                if resposta.status_code == 429:
+                    pausa = _espera_429(resposta, tentativa)
                 log.warning(
                     "embedding HTTP %s (tentativa %s/%s): %s",
                     resposta.status_code, tentativa, tentativas, detalhe,
@@ -174,14 +190,14 @@ def _post(
         except EmbeddingError:
             raise
         except Exception as exc:  # noqa: BLE001 - rede, DNS, timeout
-            if tentativa == tentativas:
+            if tentativa >= min(tentativas, TENTATIVAS_POR_OPERACAO.get(operation, EMBED_ATTEMPTS)):
                 raise EmbeddingError(f"falha de rede no embedding: {exc}") from None
             ultimo = exc
             log.warning(
                 "falha de rede no embedding (tentativa %s/%s): %s",
                 tentativa, tentativas, exc,
             )
-        time.sleep(EMBED_BACKOFF_SECONDS * tentativa)
+        time.sleep(pausa)
 
     if body is None:  # defensivo: o laco acima ou preenche ou levanta
         raise EmbeddingError(f"embedding nao respondeu: {ultimo}")
@@ -198,6 +214,15 @@ def _post(
     if "total_tokens" in uso:
         return vectors, int(uso["total_tokens"]), 0
     return vectors, 0, _estimar_tokens(texts)
+
+
+def _espera_429(resposta, tentativa: int) -> float:
+    """Segundos ate a proxima tentativa apos um 429: `Retry-After` se vier, senao exponencial."""
+    try:
+        pedido = float(resposta.headers.get("Retry-After", ""))
+    except ValueError:
+        pedido = 0.0
+    return min(ESPERA_429_MAX_SECONDS, max(pedido, 5.0 * 2 ** (tentativa - 1)))
 
 
 def embed(texts: list[str], operation: str = "index", space: str = "") -> EmbedResult:
@@ -223,6 +248,10 @@ def embed(texts: list[str], operation: str = "index", space: str = "") -> EmbedR
     try:
         for start in range(0, len(texts), BATCH_SIZE):
             batch = texts[start : start + BATCH_SIZE]
+            if operation == "index":
+                progresso.avancar(
+                    "embedding", start, len(texts), f"{start} de {len(texts)} trechos"
+                )
             batch_vectors, batch_tokens, batch_estimados = _post(batch, provedor, operation)
             if len(batch_vectors) != len(batch):
                 raise EmbeddingError(

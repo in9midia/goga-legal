@@ -246,6 +246,8 @@ export type Passage = {
   };
   /** Página do original onde a evidência está, quando se sabe. */
   page: number | null;
+  /** Capítulo/seção do trecho ("Título I › Capítulo IV"); vazio sem títulos. */
+  section?: string;
   document_pages: number;
   /** O trecho curto que casou — é ele que localiza a passagem no PDF. */
   match: string;
@@ -454,13 +456,14 @@ export type StackInfo = {
 
 // ── gestão (só admin) ─────────────────────────────────────────────────────
 
-/** Uma tentativa de ingestão. `running` é a que está acontecendo agora. */
+/** Uma tentativa de ingestão. `queued` espera a vez na fila do servidor;
+ *  `running` é a que está acontecendo agora (uma por vez). */
 export type IngestRun = {
   id: number;
   space: string;
   filename: string;
   document_id: number | null;
-  status: 'running' | 'indexed' | 'failed' | 'skipped';
+  status: 'queued' | 'running' | 'indexed' | 'failed' | 'skipped' | 'cancelled';
   extractor: string;
   size_bytes: number;
   pages: number;
@@ -895,4 +898,49 @@ export type GraphInstance = {
   /** O desenho foi cortado no teto de nós. Precisa aparecer na tela: uma figura
    *  com 300 de 2.700 nós, sem dizer, passa a impressão de grafo pequeno. */
   truncated: boolean;
+};
+
+/** Ainda não terminou: esperando na fila ou processando. */
+export function emAndamento(run: Pick<IngestRun, 'status'>): boolean {
+  return run.status === 'running' || run.status === 'queued';
+}
+
+/** Uma linha da fila de ingestão (`/ingest-queue`). `progress` vai de 0 a 100 e
+ *  sai do trabalho feito (lotes de página, de embedding, trechos do grafo), não
+ *  de estimativa por tempo. */
+export type QueueRun = {
+  id: number;
+  space: string;
+  filename: string;
+  status: IngestRun['status'];
+  size_bytes: number;
+  stage: string;
+  progress: number;
+  stage_detail: string;
+  attempts: number;
+  principal: string;
+  queued_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  total_ms: number;
+  error: string;
+  document_id: number | null;
+  extractor: string;
+  pages: number;
+  children: number;
+  /** Só nas `queued`: 1 = a próxima a ser processada. */
+  position?: number;
+};
+
+export type IngestQueue = {
+  active: QueueRun[];
+  recent: QueueRun[];
+  counts_24h: Partial<Record<IngestRun['status'], number>>;
+};
+
+export type IngestEvent = {
+  at: string;
+  stage: string;
+  progress: number | null;
+  message: string;
 };

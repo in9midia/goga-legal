@@ -52,13 +52,15 @@ export function leituraDaIngestao(envio: Envio | null, runs: RunEmCurso[]): Leit
   }
 
   const rodando = runs.filter((r) => r.status === 'running');
-  if (rodando.length === 0) return LEITURA_PARADA;
+  const naFila = runs.filter((r) => r.status === 'queued');
+  if (rodando.length === 0 && naFila.length === 0) return LEITURA_PARADA;
+  // O servidor processa um por vez: o `running` é o livro aberto, e o que está
+  // `queued` é a pilha esperando.
   return {
     ativo: true,
-    arquivo: rodando[0].filename,
+    arquivo: (rodando[0] ?? naFila[naFila.length - 1]).filename,
     lidos: 0,
-    // O primeiro é o que está sendo lido; os outros são fila de verdade.
-    restantes: rodando.length - 1,
+    restantes: rodando.length + naFila.length - 1,
   };
 }
 

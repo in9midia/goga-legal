@@ -15,7 +15,7 @@ createRoot(document.getElementById("root")!).render(
       <AuthProvider>
         <TooltipProvider delayDuration={200}>
           <App />
-          <Toaster position="bottom-right" />
+          <Toaster position="bottom-right" offset={{ bottom: 76, right: 20 }} />
         </TooltipProvider>
       </AuthProvider>
     </QueryClientProvider>

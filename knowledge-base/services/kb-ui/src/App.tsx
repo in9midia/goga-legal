@@ -9,6 +9,7 @@ import { DocumentsPage } from './pages/Documents';
 import { WikiPage } from './pages/Wiki';
 import { GraphPage } from './pages/Graph';
 import { HistoryPage } from './pages/History';
+import { QueuePage } from './pages/Queue';
 import { Home } from './pages/Home';
 import { SearchPage } from './pages/Search';
 import { SpacesPage } from './pages/Spaces';
@@ -25,6 +26,7 @@ export function App() {
         <Route path="/grafo" element={<GraphPage />} />
         <Route path="/buscar" element={<SearchPage />} />
         <Route path="/historico" element={<HistoryPage />} />
+        <Route path="/fila" element={<QueuePage />} />
         {/* `/conectar`, e nao `/mcp`: o nginx do kb-ui encaminha /mcp para a API
             (e o endpoint do servidor MCP), entao a rota da SPA com esse nome
             nunca chegava ao navegador -- a pagina vinha em branco com o JSON da

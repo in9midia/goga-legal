@@ -1,5 +1,6 @@
 import { createBrowserRouter, Navigate, Outlet, RouterProvider } from "react-router-dom";
 import { useAuth } from "@/lib/auth";
+import { AssistantProvider } from "@/lib/assistant";
 import { Loading } from "@/components/common";
 import { Layout } from "./Layout";
 import { LoginPage } from "./pages/Login";
@@ -15,12 +16,18 @@ import { CatalogsPage } from "./pages/admin/Catalogs";
 import { EvalPage } from "./pages/Eval";
 import { SkillsPage } from "./pages/Skills";
 import { McpPage } from "./pages/Mcp";
+import { AssistantPage } from "./pages/Assistant";
 
 function Gate() {
   const { user, loading } = useAuth();
   if (loading) return <Loading />;
   if (!user) return <LoginPage />;
-  return <Outlet />;
+  // Acima das telas: o turno do assistente continua ao trocar de rota.
+  return (
+    <AssistantProvider>
+      <Outlet />
+    </AssistantProvider>
+  );
 }
 
 // Data router (e nao <BrowserRouter>) porque o editor usa `useBlocker` para
@@ -47,6 +54,8 @@ const router = createBrowserRouter([
           { path: "admin/catalogs", element: <CatalogsPage /> },
           { path: "skills", element: <SkillsPage /> },
           { path: "mcp", element: <McpPage /> },
+          { path: "assistant", element: <AssistantPage /> },
+          { path: "assistant/:sessionId", element: <AssistantPage /> },
           { path: "*", element: <Navigate to="/simulator" replace /> },
         ],
       },

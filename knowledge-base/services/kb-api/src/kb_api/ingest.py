@@ -24,7 +24,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import graph, okf, providers, representations, storage, wiki
+from . import graph, okf, progresso, providers, representations, storage, wiki
 from .chunking import ChunkConfig, plan
 from .db import as_vector, conn, jsonb
 from .embedding import embed
@@ -144,21 +144,60 @@ def _run_close(run_id: int | None, result: IngestResult) -> None:
         log.warning("nao consegui fechar o log de ingestao %s: %s", run_id, exc)
 
 
+def enfileirar(space_slug: str, filename: str, data: bytes, principal: str) -> dict[str, Any]:
+    """Guarda o bruto e poe o arquivo na fila. Quem processa e `fila.py`.
+
+    O bruto vai para o object store AGORA, e nao no worker: e ele que torna a
+    fila duravel. Se o pod cair com a linha ainda `queued` (ou no meio, como
+    `running`), o worker da proxima subida le daqui e continua.
+    """
+    content_sha = hashlib.sha256(data).hexdigest()
+    mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    raw_key = f"{space_slug}/{content_sha[:2]}/{content_sha}/{filename}"
+    storage.put(raw_key, data, mime)
+    with conn() as connection, connection.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO ingest_run
+                (space_slug, filename, size_bytes, principal, status, raw_key, queued_at)
+            VALUES (%s,%s,%s,%s,'queued',%s, now())
+            RETURNING id
+            """,
+            (space_slug, filename, len(data), principal, raw_key),
+        )
+        run_id = cur.fetchone()[0]
+        cur.execute(
+            "SELECT count(*) FROM ingest_run WHERE status IN ('queued','running') AND id < %s",
+            (run_id,),
+        )
+        na_frente = int(cur.fetchone()[0])
+        connection.commit()
+    progresso.evento(run_id, "fila", f"recebido ({len(data) // 1024} KB); {na_frente} na frente")
+    return {"status": "queued", "run_id": run_id, "filename": filename,
+            "space": space_slug, "size_bytes": len(data), "ahead": na_frente}
+
+
 def ingest_document(
-    space_slug: str, filename: str, data: bytes, principal: str = "", force: bool = False
+    space_slug: str, filename: str, data: bytes, principal: str = "", force: bool = False,
+    run_id: int | None = None,
 ) -> IngestResult:
     """Ingestao de um documento, do bruto ao indice.
 
-    Sincrona de proposito nesta v0: quando o POST retorna, o documento ja esta
-    buscavel. O preco e que um PDF grande com OCR segura a conexao por minutos,
-    e e por isso que existe o log de ingestao -- ele e a unica janela para o que
-    esta acontecendo enquanto a chamada nao volta.
+    Sincrona para quem chama: o upload nao chama mais isto direto, quem chama e
+    o worker da fila (`fila.py`), a retentativa e o reprocessamento. Cada etapa
+    reporta em `progresso`, que e o que a tela da fila mostra.
     """
     started = time.perf_counter()
-    run_id = _run_open(space_slug, filename, len(data), principal)
+    # Vindo da fila, a linha ja existe (aberta como `queued` no upload).
+    if run_id is None:
+        run_id = _run_open(space_slug, filename, len(data), principal)
+    relator = progresso.iniciar(run_id)
     try:
+        progresso.etapa("iniciado", f"processando {filename}")
         resultado = _ingest_document(space_slug, filename, data, started, force)
     except Exception as exc:  # noqa: BLE001
+        progresso.etapa("falhou", str(exc)[:500])
+        progresso.encerrar(relator)
         # Erro inesperado tambem fecha a linha: log de ingestao que so registra
         # sucesso esconde justamente o que se quer investigar.
         #
@@ -188,6 +227,12 @@ def ingest_document(
             ),
         )
         raise
+    progresso.etapa(
+        "concluido" if resultado.status in ("indexed",) else "falhou",
+        "já estava indexado (mesmo conteúdo)" if resultado.already_indexed
+        else (resultado.error or f"{resultado.children} trechos indexados"),
+    )
+    progresso.encerrar(relator)
     _run_close(run_id, resultado)
     return resultado
 
@@ -239,6 +284,7 @@ def _ingest_document(
     storage.put(raw_key, data, mime)
 
     # --- 2. canonico ---
+    progresso.etapa("extracao")
     try:
         extracted = extract(data, filename)
     except ExtractionError as exc:
@@ -282,6 +328,7 @@ def _ingest_document(
     # derivacao e uma chamada de rede que custa dinheiro por documento, e o
     # corte precisa continuar testavel sem provedor de IA nenhum. A politica de
     # qual conceito ganha esta em `okf.resolve`.
+    progresso.etapa("corte")
     concept = (
         okf.resolve(canonical, filename, chunk_cfg.okf_types, extracted.title, space_slug)
         if chunk_cfg.okf
@@ -289,6 +336,7 @@ def _ingest_document(
     )
 
     chunk_plan = plan(canonical, chunk_cfg, concept=concept, space=space_slug)
+    progresso.avancar("corte", 1, 1, f"{len(chunk_plan.parents)} trechos pai")
     child_texts = [child.content for parent in chunk_plan.parents for child in parent.children]
 
     okf_alvos = okf.link_targets(concept) if concept else []
@@ -300,11 +348,13 @@ def _ingest_document(
     titulo = (concept.title if concept else "") or extracted.title or filename
 
     # --- 4. embedding do filho ---
+    progresso.etapa("embedding", f"{len(child_texts)} trechos para vetorizar")
     embedded = embed(child_texts, "index", space_slug) if child_texts else None
     vectors = embedded.vectors if embedded else []
     embed_tokens = embedded.tokens if embedded else 0
 
     # --- gravacao: versao nova, anterior desativada (FUN-02) ---
+    progresso.etapa("gravacao")
     with conn() as connection:
         with connection.cursor() as cur:
             cur.execute(
@@ -352,13 +402,14 @@ def _ingest_document(
                 cur.execute(
                     """
                     INSERT INTO chunk
-                        (document_id, space_slug, parent_id, ord, content, page, char_start, tsv)
-                    VALUES (%s,%s,NULL,%s,%s,%s,%s, to_tsvector('portuguese', unaccent(%s)))
+                        (document_id, space_slug, parent_id, ord, content, page, char_start,
+                         section, tsv)
+                    VALUES (%s,%s,NULL,%s,%s,%s,%s,%s, to_tsvector('portuguese', unaccent(%s)))
                     RETURNING id
                     """,
                     (document_id, space_slug, order, parent.content,
                      page_for(parent.start), parent.start if parent.start >= 0 else None,
-                     parent.content),
+                     parent.section, parent.content),
                 )
                 parent_id = cur.fetchone()[0]
 
@@ -366,13 +417,15 @@ def _ingest_document(
                     cur.execute(
                         """
                         INSERT INTO chunk
-                            (document_id, space_slug, parent_id, ord, content, page, char_start, tsv)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s, to_tsvector('portuguese', unaccent(%s)))
+                            (document_id, space_slug, parent_id, ord, content, page, char_start,
+                             section, tsv)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,
+                                to_tsvector('portuguese', unaccent(%s)))
                         RETURNING id
                         """,
                         (document_id, space_slug, parent_id, child_order, child.content,
                          page_for(child.start), child.start if child.start >= 0 else None,
-                         child.content),
+                         child.section, child.content),
                     )
                     chunk_id = cur.fetchone()[0]
                     if child_index < len(vectors):
@@ -454,12 +507,14 @@ def _ingest_document(
     # indice, e a representacao falha e reprocessavel sozinha.
     representacoes: dict[str, dict] = {}
     if representations.GRAFO in ativas.auxiliares:
+        progresso.etapa("grafo")
         # Estrutura AUXILIAR do indice: roda depois de os chunks existirem,
         # porque e sobre os chunks pais que a extracao opera.
         resultado_grafo = graph.construir(space_slug, document_id)
         representacoes[representations.GRAFO] = resultado_grafo
         _registrar_representacao(document_id, representations.GRAFO, resultado_grafo)
     if ativas.tem(representations.WIKI):
+        progresso.etapa("wiki")
         resultado_wiki = wiki.construir(space_slug, document_id, titulo, canonical)
         representacoes[representations.WIKI] = resultado_wiki
         _registrar_representacao(document_id, representations.WIKI, resultado_wiki)

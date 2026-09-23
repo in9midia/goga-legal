@@ -542,7 +542,7 @@ def enviar(arquivo: pathlib.Path, espaco: str) -> str:
     if token:
         cabecalhos["Authorization"] = f"Bearer {token}"
     pedido = urllib.request.Request(
-        f"{BASE_URL}/v1/spaces/{espaco}/documents", data=corpo, method="POST",
+        f"{BASE_URL}/v1/spaces/{espaco}/documents?wait=true", data=corpo, method="POST",
         headers=cabecalhos,
     )
     try:

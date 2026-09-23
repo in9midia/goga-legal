@@ -325,3 +325,43 @@ export const evalBatch = pgTable("eval_batch", {
   createdAt: createdAt(),
   endedAt: timestamp("ended_at", { withTimezone: true }),
 });
+
+// Assistente do Studio: um agente que opera o proprio Studio (fluxos,
+// catalogos, skills, MCP, historico) pelas mesmas rotas da UI. `llm` guarda as
+// ModelMessages que a linha contribui para o historico enviado ao modelo;
+// `parts` e o que a UI desenha (texto, chamadas de ferramenta, perguntas,
+// aprovacoes). Sao separados porque a UI mostra mais (e menos) do que o modelo ve.
+export const assistantSession = pgTable("assistant_session", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => appUser.id, { onDelete: "cascade" }),
+  title: text("title").notNull().default("Nova conversa"),
+  modelId: uuid("model_id").references(() => model.id, { onDelete: "set null" }),
+  createdAt: createdAt(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const assistantMessage = pgTable(
+  "assistant_message",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => assistantSession.id, { onDelete: "cascade" }),
+    role: text("role", { enum: ["user", "assistant"] }).notNull(),
+    // "running" = resposta sendo gravada aos poucos; se a API cair no meio, o
+    // boot a fecha como interrompida (com o que ja tinha sido feito).
+    status: text("status", { enum: ["running", "done"] }).notNull().default("done"),
+    content: text("content").notNull().default(""),
+    parts: jsonb("parts").$type<unknown[]>().notNull().default([]),
+    llm: jsonb("llm").$type<unknown[]>().notNull().default([]),
+    attachments: jsonb("attachments").$type<string[]>().notNull().default([]),
+    modelId: uuid("model_id"),
+    costUsd: doublePrecision("cost_usd").notNull().default(0),
+    tokensIn: integer("tokens_in").notNull().default(0),
+    tokensOut: integer("tokens_out").notNull().default(0),
+    createdAt: createdAt(),
+  },
+  (t) => [index("assistant_message_session_idx").on(t.sessionId, t.createdAt)],
+);

@@ -449,10 +449,10 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
         let evidencias = "";
         if (n.data.knowledge.spaces.length) {
           try {
-            const r = (await runSkill("buscar_kb", { consulta: caseText }, env)) as { resultados: { titulo: string; base: string; pagina: number | null; trecho: string; armadilha: string | null; document_id?: number; pagina_wiki_id?: number }[] };
+            const r = (await runSkill("buscar_kb", { consulta: caseText }, env)) as { resultados: { titulo: string; base: string; pagina: number | null; secao?: string | null; trecho: string; armadilha: string | null; document_id?: number; pagina_wiki_id?: number }[] };
             evidencias = r.resultados
               .filter((p) => !(n.data.knowledge.verifiedOnly && p.armadilha))
-              .map((p, i) => `[${i + 1}] ${p.titulo} (base ${p.base}${p.pagina ? `, p. ${p.pagina}` : ""}, ${p.pagina_wiki_id != null ? `pagina_wiki_id ${p.pagina_wiki_id}` : `document_id ${p.document_id}`})${p.armadilha ? `\n⚠ ARMADILHA: ${p.armadilha}` : ""}\n${p.trecho}`)
+              .map((p, i) => `[${i + 1}] ${p.titulo} (base ${p.base}${p.secao ? `, ${p.secao}` : ""}${p.pagina ? `, p. ${p.pagina}` : ""}, ${p.pagina_wiki_id != null ? `pagina_wiki_id ${p.pagina_wiki_id}` : `document_id ${p.document_id}`})${p.armadilha ? `\n⚠ ARMADILHA: ${p.armadilha}` : ""}\n${p.trecho}`)
               .join("\n\n");
           } catch (err) {
             evidencias = `(KB indisponível: ${errorMessage(err)}. Não cite fundamento que não possa sustentar.)`;

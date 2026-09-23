@@ -201,6 +201,11 @@ export function SearchPage() {
                         <FileText size={10} /> índice
                       </Pill>
                     )}
+                    {passage.section ? (
+                      <Pill title={passage.section}>
+                        <span className="max-w-[18rem] truncate">{passage.section}</span>
+                      </Pill>
+                    ) : null}
                     {passage.page ? <Pill tone="good">pág. {passage.page}</Pill> : null}
                     {passage.armadilha ? (
                       <Pill tone="warn" title={passage.armadilha}>

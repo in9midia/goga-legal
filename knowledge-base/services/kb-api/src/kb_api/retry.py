@@ -156,8 +156,8 @@ def _carga_de_gente() -> int:
         corte = datetime.now(UTC) - timedelta(seconds=TETO_DA_BORDA_SEGUNDOS)
         cur.execute(
             "SELECT count(*) FROM ingest_run "
-            " WHERE status = 'running' AND coalesce(principal, '') <> %s"
-            "   AND started_at > %s",
+            " WHERE coalesce(principal, '') <> %s"
+            "   AND ((status = 'running' AND started_at > %s) OR status = 'queued')",
             (PRINCIPAL, corte),
         )
         return int(cur.fetchone()[0])

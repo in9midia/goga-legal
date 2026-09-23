@@ -158,6 +158,9 @@ services/kb-api/     FastAPI: REST de gestão + servidor MCP + pipeline de inges
     main.py          rotas (é grande; procure pelo path da rota)
     ingest.py        do bruto ao índice
     extract.py       docling, fallbacks e OCR
+    hibrido.py       PDF longo: triagem por página, PyMuPDF onde basta, docling onde precisa
+    fila.py          fila de ingestão: o upload enfileira, um worker processa um por vez
+    progresso.py     etapa, percentual e log por documento (tela Fila de ingestão)
     representations.py  as representações e os métodos de acesso
     retrieval.py     um recuperador por método de acesso
     wiki.py          destilação em páginas OKF (representação wiki)

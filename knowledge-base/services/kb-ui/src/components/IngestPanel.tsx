@@ -24,17 +24,18 @@ import { progressoDaIngestao } from '../lib/progresso';
 import { ehAmbienteLocal, leituraDaIngestao, leituraSimulada } from '../lib/leitura';
 import { Button, Card, Empty, ErrorBox, Pill, Spinner } from './Ui';
 import { RobotReader } from './RobotReader';
-import type { IngestRun } from '../lib/types';
+import { emAndamento, type IngestRun } from '../lib/types';
 
 /**
  * Enviar documentos e acompanhar o processamento.
  *
- * A ingestão é síncrona: quando o POST volta, o documento já está buscável. O
- * preço é que um arquivo grande com OCR segura a conexão por minutos — e sem
- * esta tela quem enviou fica sem saber se travou. O log de ingestão é a janela
- * para o que acontece enquanto a chamada não volta, e é também onde aparece a
- * tentativa que FALHOU: essa não vira documento, então não estaria em lugar
- * nenhum.
+ * O envio só ENFILEIRA: cada POST sobe o arquivo e volta, e o servidor processa
+ * a fila um por vez. Antes a ingestão era síncrona, e dez arquivos grandes eram
+ * dez conexões de minutos; um engasgo soltava a conexão, a tela mandava o
+ * próximo e o pod acabava com dois processamentos juntos, morto por memória.
+ * O log de ingestão é onde se acompanha a fila (`na fila`, `processando`) e
+ * onde aparece a tentativa que FALHOU: essa não vira documento, então não
+ * estaria em lugar nenhum.
  *
  * ESCOLHER NÃO É ENVIAR
  *
@@ -105,8 +106,7 @@ export function IngestPanel({ space }: { space: string }) {
     // Enquanto houver algo processando, atualiza rápido; parado, devagar. Sem
     // isso, ou a tela fica estática durante 13 minutos ou consulta à toa o dia
     // inteiro.
-    refetchInterval: (query) =>
-      (query.state.data?.runs ?? []).some((r) => r.status === 'running') ? 3_000 : 20_000,
+    refetchInterval: (query) => ((query.state.data?.runs ?? []).some(emAndamento) ? 3_000 : 20_000),
   });
   const linhas = runs.data?.runs ?? [];
   const totalRuns = runs.data?.total ?? 0;
@@ -158,9 +158,9 @@ export function IngestPanel({ space }: { space: string }) {
     setIndice(0);
     parar.current = false;
 
-    // Um por vez, em série. Em paralelo, cada arquivo carrega o pipeline de
-    // extração no mesmo pod: dois arquivos grandes ao mesmo tempo foi o que já
-    // derrubou o serviço por falta de memória.
+    // Um upload por vez. O processamento já é serial no servidor; aqui a série
+    // é só para não subir dez arquivos de 10 MB pela mesma banda ao mesmo
+    // tempo, e para o "cancelar" ter um ponto claro onde parar.
     const tentados = new Set<string>();
     for (let i = 0; i < lote.length; i += 1) {
       if (parar.current) break;
@@ -171,11 +171,16 @@ export function IngestPanel({ space }: { space: string }) {
       abortar.current = controle;
       try {
         const corpo = await kb.upload(space, arquivo, controle.signal);
-        const detalhe = corpo.already_indexed
-          ? 'já estava indexado (mesmo conteúdo)'
-          : `${corpo.extractor} · ${corpo.children} ${corpo.children === 1 ? 'trecho' : 'trechos'}${
-              corpo.figures ? ` · ${corpo.figures} imagens` : ''
-            } · ${fmtMs(corpo.total_ms)}`;
+        const detalhe =
+          corpo.status === 'queued'
+            ? corpo.ahead
+              ? `na fila · ${corpo.ahead} na frente`
+              : 'na fila · próximo a processar'
+            : corpo.already_indexed
+              ? 'já estava indexado (mesmo conteúdo)'
+              : `${corpo.extractor} · ${corpo.children} ${corpo.children === 1 ? 'trecho' : 'trechos'}${
+                  corpo.figures ? ` · ${corpo.figures} imagens` : ''
+                } · ${fmtMs(corpo.total_ms)}`;
         setResultados((antes) => [...antes, { nome: arquivo.name, ok: true, detalhe }]);
       } catch (err) {
         const cancelado = controle.signal.aborted;
@@ -184,9 +189,7 @@ export function IngestPanel({ space }: { space: string }) {
           {
             nome: arquivo.name,
             ok: false,
-            detalhe: cancelado
-              ? 'espera cancelada — o servidor termina este arquivo mesmo assim'
-              : (err as Error).message,
+            detalhe: cancelado ? 'envio cancelado' : (err as Error).message,
           },
         ]);
       }
@@ -217,8 +220,7 @@ export function IngestPanel({ space }: { space: string }) {
     queryKey: ['ingest-atividade', space],
     queryFn: () => kb.ingestRunPage({ limit: 60, offset: 0, space }),
     enabled: !!space,
-    refetchInterval: (q) =>
-      (q.state.data?.runs ?? []).some((r) => r.status === 'running') ? 3_000 : 30_000,
+    refetchInterval: (q) => ((q.state.data?.runs ?? []).some(emAndamento) ? 3_000 : 30_000),
   });
   const progresso = progressoDaIngestao(
     atividade.data?.runs ?? [],
@@ -564,9 +566,12 @@ export function IngestPanel({ space }: { space: string }) {
           <span className="mono text-[12px] text-text-dim">
             {fmtNumber(totalRuns)} {totalRuns === 1 ? 'registro' : 'registros'} nesta base
           </span>
-          {linhas.some((r) => r.status === 'running') ? (
+          {linhas.some(emAndamento) ? (
             <Pill tone="warn">
               <Loader2 size={10} className="animate-spin" /> em andamento
+              {linhas.some((r) => r.status === 'queued')
+                ? ` · ${linhas.filter((r) => r.status === 'queued').length} na fila`
+                : ''}
             </Pill>
           ) : null}
           <button
@@ -732,13 +737,17 @@ function LinhaRun({ run }: { run: IngestRun }) {
           ? 'warn'
           : 'neutral';
   const rotulo =
-    run.status === 'running'
-      ? 'processando'
-      : run.status === 'skipped'
-        ? 'já indexado'
-        : run.status === 'indexed'
-          ? 'indexado'
-          : 'falhou';
+    run.status === 'cancelled'
+      ? 'cancelado'
+      : run.status === 'queued'
+        ? 'na fila'
+        : run.status === 'running'
+          ? 'processando'
+          : run.status === 'skipped'
+            ? 'já indexado'
+            : run.status === 'indexed'
+              ? 'indexado'
+              : 'falhou';
   return (
     <>
       <tr className={erroAberto ? '' : 'border-b border-line-soft last:border-0'}>
@@ -791,7 +800,7 @@ function LinhaRun({ run }: { run: IngestRun }) {
               {run.pages ? ` · ${run.pages} pág.` : ''}
               {run.figures ? ` · ${run.figures} imagens` : ''}
             </>
-          ) : run.status === 'running' ? (
+          ) : emAndamento(run) ? (
             fmtBytes(run.size_bytes)
           ) : (
             '—'

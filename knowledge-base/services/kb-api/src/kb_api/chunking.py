@@ -64,7 +64,9 @@ naquele formato nao mudar de comportamento num deploy.
 
 from __future__ import annotations
 
+import bisect
 import logging
+import re
 from dataclasses import dataclass, field
 
 from . import okf
@@ -195,6 +197,9 @@ class Piece:
 
     content: str
     start: int = -1
+    # Caminho de secoes onde o trecho comeca ("Titulo I › Capitulo IV"). Vazio
+    # em documento sem titulo. Vai para `chunk.section` e para a citacao.
+    section: str = ""
 
 
 @dataclass
@@ -202,6 +207,7 @@ class Parent:
     content: str
     start: int = -1
     children: list[Piece] = field(default_factory=list)
+    section: str = ""
 
 
 @dataclass
@@ -528,6 +534,13 @@ def plan(
         technique = f"okf+{technique}"
 
     cabecalho = okf.header(concept) if concept else ""
+    secoes = MapaDeSecoes(mapa)
+    # A secao entra no TEXTO do trecho so junto do cabecalho do conceito: e o
+    # mesmo principio (Contextual Chunk Headers), um nivel abaixo -- o conceito
+    # diz de que documento o trecho e, a secao diz de que capitulo. Sem conceito
+    # o texto fica o de sempre (contrato de `test_okf`: ligar o modo num arquivo
+    # que nao e conceito nao muda nada); a secao continua indo para a coluna.
+    com_secao = bool(cabecalho)
 
     parent_texts = _pack(blocks, cfg.parent_chars)
     # Pais nao tem sobreposicao entre si, entao o cursor nunca precisa recuar.
@@ -555,18 +568,75 @@ def plan(
         # viraria -1 e o documento inteiro perderia a pagina de cada trecho. O
         # sintoma seria mudo: a ingestao reporta sucesso, so a evidencia deixa
         # de apontar para onde estava.
+        secao_pai = secoes.em(parent_start)
+        filhos: list[Piece] = []
+        for text, start in zip(children, child_starts, strict=True):
+            secao = secoes.em(start) or secao_pai
+            filhos.append(Piece(
+                content=_com_cabecalho(_cabecalho_do_trecho(cabecalho, secao, com_secao), text),
+                start=start, section=secao,
+            ))
         parents.append(
             Parent(
-                content=_com_cabecalho(cabecalho, parent_text),
+                content=_com_cabecalho(
+                    _cabecalho_do_trecho(cabecalho, secao_pai, com_secao), parent_text
+                ),
                 start=parent_start,
-                children=[
-                    Piece(content=_com_cabecalho(cabecalho, text), start=start)
-                    for text, start in zip(children, child_starts, strict=True)
-                ],
+                children=filhos,
+                section=secao_pai,
             )
         )
 
     return ChunkPlan(parents=parents, technique=technique, concept=concept)
+
+
+_TITULO_RE = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$", re.MULTILINE)
+# Quantos niveis do caminho entram na citacao. Um livro com sumario de 1.279
+# entradas chega a 5-6 niveis; o caminho inteiro vira uma linha que ninguem le,
+# e os ultimos tres ja dizem capitulo e secao.
+NIVEIS_DA_SECAO = 3
+SECAO_MAX_CHARS = 200
+
+
+class MapaDeSecoes:
+    """Em que secao do documento cai cada ponto do canonico.
+
+    Existe para livro: um documento de 1.169 paginas era UMA unidade para tudo
+    que e "por documento", e a citacao dizia so a pagina. Com o caminho de
+    secoes, cada trecho sabe o capitulo em que esta -- sem chamada de IA, so
+    lendo os titulos que a extracao ja pos no canonico (o sumario do PDF, na
+    extracao hibrida; o layout, no docling).
+    """
+
+    def __init__(self, markdown: str) -> None:
+        self.offsets: list[int] = []
+        self.caminhos: list[str] = []
+        pilha: list[tuple[int, str]] = []
+        for m in _TITULO_RE.finditer(markdown):
+            nivel, titulo = len(m.group(1)), m.group(2).strip()
+            while pilha and pilha[-1][0] >= nivel:
+                pilha.pop()
+            pilha.append((nivel, titulo))
+            caminho = " › ".join(t for _, t in pilha[-NIVEIS_DA_SECAO:])
+            self.offsets.append(m.start())
+            self.caminhos.append(caminho[:SECAO_MAX_CHARS])
+
+    def __bool__(self) -> bool:
+        return bool(self.offsets)
+
+    def em(self, offset: int) -> str:
+        """Caminho da secao que contem o offset. Vazio antes do primeiro titulo."""
+        if offset < 0 or not self.offsets:
+            return ""
+        i = bisect.bisect_right(self.offsets, offset) - 1
+        return self.caminhos[i] if i >= 0 else ""
+
+
+def _cabecalho_do_trecho(conceito: str, secao: str, com_secao: bool) -> str:
+    if not (com_secao and secao):
+        return conceito
+    linha = f"Seção: {secao}"
+    return f"{conceito}\n{linha}" if conceito else linha
 
 
 def _com_cabecalho(cabecalho: str, texto: str) -> str:

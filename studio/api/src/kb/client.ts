@@ -20,6 +20,8 @@ export interface KbPassage {
   filename: string;
   content: string;
   page: number | null;
+  /** Caminho de secoes do trecho ("Título I › Capítulo IV"); vazio sem títulos. */
+  section?: string;
   score: number;
   armadilha?: string | null;
   representation?: string;

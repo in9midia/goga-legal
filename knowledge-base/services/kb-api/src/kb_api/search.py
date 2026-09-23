@@ -78,6 +78,9 @@ class Passage:
     # pai: o pai pode atravessar duas paginas, e a pergunta de quem le e "onde
     # exatamente", nao "mais ou menos onde".
     page: int | None = None
+    # Caminho de secoes do trecho ("Titulo I › Capitulo IV"): com a pagina, e o
+    # que faz a citacao de um livro dizer "cap. X, p. Y" e nao so "p. 612".
+    section: str = ""
     # Total de paginas do original, para a UI saber se pode paginar.
     document_pages: int = 0
     # O texto do FILHO que casou. O que se entrega e o pai (contexto), mas para
@@ -100,6 +103,7 @@ class Passage:
             "representation": self.representacao,
             # score da fusao, e os componentes para a evidencia ser auditavel
             "page": self.page,
+            "section": self.section,
             "document_pages": self.document_pages,
             "match": self.match,
             "armadilha": self.armadilha,
@@ -141,7 +145,7 @@ def _parents(cur, parent_ids: list[int]) -> dict[int, dict[str, Any]]:
     cur.execute(
         """
         SELECT c.id, c.document_id, c.space_slug, c.content, c.page,
-               d.title, d.filename, d.pages
+               d.title, d.filename, d.pages, c.section
           FROM chunk c
           JOIN document d ON d.id = c.document_id
          WHERE c.id = ANY(%s)
@@ -157,6 +161,7 @@ def _parents(cur, parent_ids: list[int]) -> dict[int, dict[str, Any]]:
             "title": linha[5] or "",
             "filename": linha[6] or "",
             "document_pages": linha[7] or 0,
+            "section": linha[8] or "",
         }
         for linha in cur.fetchall()
     }
@@ -407,6 +412,7 @@ def search(
                 passage.title = parent["title"]
                 passage.filename = parent["filename"]
                 passage.document_pages = parent["document_pages"]
+                passage.section = parent["section"]
                 # A pagina do filho ganha da do pai: e mais precisa. A do pai
                 # entra so quando o filho nao tinha nenhuma.
                 if passage.page is None:
@@ -434,6 +440,7 @@ def search(
             "vector_score": passage.method_scores.get("semantica"),
             "lexical_score": passage.method_scores.get("lexical"),
             "page": passage.page,
+            "section": passage.section,
             "armadilha": passage.armadilha,
             "excerpt": " ".join((passage.content or "").split())[:280],
         }

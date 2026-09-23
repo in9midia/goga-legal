@@ -1,22 +1,16 @@
-import type { IngestRun } from './types';
+import { emAndamento, type IngestRun } from './types';
 
 /**
  * Quanto já andou, quanto falta, e quanto tempo isso deve levar.
  *
  * O QUE O SERVIDOR SABE E O QUE ELE NÃO SABE
  *
- * A ingestão é síncrona e sem fila no servidor: ele processa UM arquivo por
- * requisição e não faz ideia de quantos virão depois. Quem tem a fila é quem
- * envia — a tela, quando o envio sai daqui; um script ou o MCP, quando vem de
- * fora.
+ * O upload só enfileira: o servidor guarda o arquivo, responde, e processa a
+ * fila um por vez. Então quem sabe quantos faltam é o SERVIDOR, pelas linhas
+ * `queued` do log, venha a carga desta tela, de um script ou do MCP.
  *
- * Daí as duas leituras, e a diferença entre elas é honestidade:
- *
- * - **fila local**: dá para dizer "faltam 12" e prever o término, porque a
- *   lista inteira está aqui;
- * - **carga externa**: dá para dizer quantos já passaram, a que ritmo e há
- *   quanto tempo — e NÃO dá para dizer quantos faltam. Inventar um total seria
- *   uma barra de progresso que anda para trás quando chega mais arquivo.
+ * A fila local ainda existe enquanto os arquivos sobem (cada POST leva o tempo
+ * do upload), e nesse intervalo é ela que diz quantos faltam enviar.
  */
 
 /** Uma sequência contígua de processamento. Duas cargas separadas por meia hora
@@ -65,8 +59,8 @@ export function progressoDaIngestao(
   }
   if (!rodada.length) return null;
 
-  const ativo = rodada.some((r) => r.status === 'running');
-  const terminadas = rodada.filter((r) => r.status !== 'running' && r.total_ms > 0);
+  const ativo = rodada.some(emAndamento);
+  const terminadas = rodada.filter((r) => !emAndamento(r) && r.total_ms > 0);
   const inicioDaRodada = Math.min(
     ...rodada.map((r) => (r.started_at ? Date.parse(r.started_at) : agora)),
   );
@@ -88,7 +82,10 @@ export function progressoDaIngestao(
   // enquanto o `POST` dele nao voltou. Descontar com base no `ativo` do
   // servidor faria este numero discordar do "faltam" que a propria fila mostra,
   // por alguns segundos, toda vez que a execucao ainda nao apareceu no log.
-  const faltam = fila ? Math.max(0, fila.total - fila.indice - 1) : null;
+  // Sem envio local, a fila do servidor: o que esta `queued` ainda nao
+  // comecou. O `running` e o arquivo em voo e nao entra, como o `indice` acima.
+  const naFila = rodada.filter((r) => r.status === 'queued').length;
+  const faltam = fila ? Math.max(0, fila.total - fila.indice - 1) + naFila : ativo ? naFila : null;
   const restante_ms = faltam !== null && media_ms !== null ? faltam * media_ms : null;
 
   return {

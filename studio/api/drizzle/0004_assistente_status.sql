@@ -1,0 +1,1 @@
+ALTER TABLE "assistant_message" ADD COLUMN "status" text DEFAULT 'done' NOT NULL;

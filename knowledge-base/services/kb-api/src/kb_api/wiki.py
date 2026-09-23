@@ -48,7 +48,8 @@ import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from . import llm, okf
+from . import llm, okf, progresso
+from .config import settings
 from .db import as_vector, conn, jsonb
 from .embedding import embed
 
@@ -441,15 +442,79 @@ def gravar(space_slug: str, document_id: int, paginas: list[Pagina]) -> dict:
     }
 
 
+_TITULO_RE = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$", re.MULTILINE)
+
+
+def secoes_do_documento(canonical: str, maximo: int) -> list[tuple[str, str]]:
+    """Ate `maximo` pedacos (titulo, texto) espalhados pelo documento inteiro.
+
+    POR QUE: a destilacao le `LIMITE_DOCUMENTO` caracteres. Num livro de 2,1
+    milhoes de caracteres isso era o sumario e o prefacio, e a wiki do livro
+    falava so do comeco dele. Aqui o documento vira secoes pelo nivel de titulo
+    mais alto que o divide em mais de uma parte, e as secoes sao amostradas de
+    ponta a ponta. Sem titulo nenhum, janelas de `LIMITE_DOCUMENTO` espalhadas.
+    """
+    titulos = list(_TITULO_RE.finditer(canonical))
+    cortes: list[tuple[str, int]] = []
+    for nivel in range(1, 7):
+        deste = [(m.group(2).strip(), m.start()) for m in titulos if len(m.group(1)) <= nivel]
+        if len(deste) >= 2:
+            cortes = deste
+            break
+    if cortes:
+        secoes = [
+            (titulo, canonical[inicio:(cortes[i + 1][1] if i + 1 < len(cortes) else len(canonical))])
+            for i, (titulo, inicio) in enumerate(cortes)
+        ]
+        # Secao minuscula (so o titulo, uma nota) nao sustenta uma pagina de wiki.
+        secoes = [(t, x) for t, x in secoes if len(x.strip()) >= 1500] or secoes
+    else:
+        passo = LIMITE_DOCUMENTO
+        secoes = [
+            (f"parte {i // passo + 1}", canonical[i:i + passo])
+            for i in range(0, len(canonical), passo)
+        ]
+    if len(secoes) <= maximo:
+        return secoes
+    if maximo <= 1:
+        return secoes[:1]
+    passo_amostra = (len(secoes) - 1) / (maximo - 1)
+    return [secoes[round(i * passo_amostra)] for i in range(maximo)]
+
+
 def construir(space_slug: str, document_id: int, titulo: str, canonical: str) -> dict:
-    """O build da representacao wiki para um documento. Nunca levanta."""
+    """O build da representacao wiki para um documento. Nunca levanta.
+
+    Documento que cabe em `LIMITE_DOCUMENTO`: uma destilacao, como sempre.
+    Maior que isso: uma destilacao por secao amostrada (`secoes_do_documento`),
+    ate `settings.wiki_max_secoes`. Cada rodada ve o indice da wiki ja com as
+    paginas da rodada anterior, entao a segunda secao edita em vez de duplicar.
+    """
     try:
-        paginas, motivo = destilar(space_slug, document_id, titulo, canonical)
-        if not paginas:
-            return {"status": "falha", "erro": motivo or "a destilação não produziu página",
+        corpo = (canonical or "").strip()
+        if len(corpo) <= LIMITE_DOCUMENTO:
+            partes = [(titulo, corpo)]
+        else:
+            partes = [
+                (f"{titulo} — {secao}", texto)
+                for secao, texto in secoes_do_documento(corpo, settings.wiki_max_secoes)
+            ]
+        total = {"paginas": 0, "vetores": 0, "tokens": 0, "fora_do_contrato": 0}
+        motivos: list[str] = []
+        for n, (titulo_parte, texto) in enumerate(partes):
+            if len(partes) > 1:
+                progresso.avancar("wiki", n, len(partes), f"seção {n + 1} de {len(partes)}")
+            paginas, motivo = destilar(space_slug, document_id, titulo_parte, texto)
+            if not paginas:
+                motivos.append(motivo or "a destilação não produziu página")
+                continue
+            resultado = gravar(space_slug, document_id, paginas)
+            for chave in total:
+                total[chave] += int(resultado.get(chave) or 0)
+        if not total["paginas"]:
+            return {"status": "falha", "erro": "; ".join(dict.fromkeys(motivos))[:300],
                     "paginas": 0}
-        resultado = gravar(space_slug, document_id, paginas)
-        return {"status": "ok", **resultado}
+        return {"status": "ok", "secoes": len(partes), **total}
     except Exception as exc:  # noqa: BLE001 - o build da wiki nao derruba o do indice
         log.warning("build da wiki falhou em %s/%s: %s", space_slug, document_id, exc)
         return {"status": "falha", "erro": str(exc)[:300], "paginas": 0}

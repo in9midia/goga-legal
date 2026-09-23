@@ -325,7 +325,7 @@ def main() -> int:
 
         passo("4. ingestao real: extrai, corta, vetoriza, destila a wiki e extrai o grafo")
         inicio = time.time()
-        resultado = api("POST", f"/spaces/{slug}/documents", arquivo=("politica-ferias.md", DOCUMENTO))
+        resultado = api("POST", f"/spaces/{slug}/documents?wait=true", arquivo=("politica-ferias.md", DOCUMENTO))
         confere(resultado.get("status") == "indexed", "documento indexado",
                 f"{resultado.get('parents')} pais / {resultado.get('children')} filhos "
                 f"em {resultado.get('total_ms')} ms")

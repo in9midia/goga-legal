@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, FileDown, History, Rocket, ThumbsDown, ThumbsUp } from "lucide-react";
+import { ArrowLeft, Bot, FileDown, History, Rocket, ThumbsDown, ThumbsUp } from "lucide-react";
 import { api, fileUrl, qs } from "@/lib/api";
 import { dateTime, isoDay, ms, usd, int } from "@/lib/format";
 import type { FlowSummary, Run, RunDetail, User } from "@/lib/types";
@@ -143,6 +143,12 @@ export function RunPage() {
           ]}
         />
         {run.sessionId && <Link to={`/simulator/${run.sessionId}`} className="text-xs text-text-muted hover:text-text">abrir conversa</Link>}
+        <Link
+          to={`/assistant?${new URLSearchParams({ q: run.sessionId ? `Avalie a conversa simulada ${run.sessionId} e, em especial, a execução ${run.id}: o que funcionou, o que falhou e que ajustes no fluxo você propõe?` : `Avalie a execução ${run.id}: o que funcionou, o que falhou e que ajustes no fluxo você propõe?` })}`}
+          className="flex items-center gap-1 text-xs text-text-muted hover:text-text"
+        >
+          <Bot className="h-3.5 w-3.5" /> analisar com o assistente
+        </Link>
       </header>
       <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
         <div className="min-h-0 space-y-4 overflow-y-auto border-r border-line p-5">

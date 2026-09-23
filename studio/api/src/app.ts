@@ -15,6 +15,7 @@ import { flowRoutes } from "./routes/flows.js";
 import { sessionRoutes } from "./routes/sessions.js";
 import { runRoutes } from "./routes/runs.js";
 import { batchRoutes } from "./routes/batch.js";
+import { assistantRoutes } from "./routes/assistant.js";
 
 export async function buildApp() {
   const app = Fastify({ logger: { level: config.isProd ? "info" : "warn" }, bodyLimit: 5 * 1024 * 1024, trustProxy: true });
@@ -52,5 +53,6 @@ export async function buildApp() {
   await app.register(sessionRoutes);
   await app.register(runRoutes);
   await app.register(batchRoutes);
+  await app.register(assistantRoutes);
   return app;
 }

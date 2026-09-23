@@ -32,6 +32,19 @@ const run = (i: number, inicioMs: number, duracaoMs: number, status = 'indexed')
 describe('progressoDaIngestao', () => {
   const AGORA = 1_000_000;
 
+  it('sabe quantos faltam pela fila do servidor, venha a carga de onde vier', () => {
+    const runs = [
+      run(1, AGORA - 300_000, 60_000),
+      run(2, AGORA - 60_000, 0, 'running'),
+      run(3, AGORA - 50_000, 0, 'queued'),
+      run(4, AGORA - 40_000, 0, 'queued'),
+    ];
+    const p = progressoDaIngestao(runs, null, AGORA)!;
+    expect(p.ativo).toBe(true);
+    expect(p.faltam).toBe(2);
+    expect(p.concluidos).toBe(1);
+  });
+
   it('não inventa total quando a carga vem de fora', () => {
     // Script ou MCP: o servidor processa um arquivo por requisição e não sabe
     // quantos virão. Uma barra com total chutado andaria para trás.

@@ -237,8 +237,9 @@ Registradas porque o custo delas foi descoberto rodando, não lendo:
     `--lb-config-override settings.defaultProxyTimeout=3600` no
     `00-cluster-up.sh`.
 
-    A correção de fundo é ingestão assíncrona (ING-06), que continua fora desta
-    v0. Enquanto for síncrona, todo timeout no caminho precisa caber no pior
+    Desde a fila de ingestão (armadilha 28) o upload responde `202` assim que o
+    arquivo sobe, e a conexão longa só existe para quem pede `?wait=true` (os
+    scripts de carga). Para esses, o timeout continua precisando caber no pior
     documento.
 
 14. **`.mjs` não está no `mime.types` do nginx.** O worker do pdf.js é um módulo
@@ -633,8 +634,9 @@ Registradas porque o custo delas foi descoberto rodando, não lendo:
     Vale para `scripts/rebuild-graph.py` também, e lá o estrago seria maior: ele
     apaga `:Chunk` para recriar.
 
-28. **A ingestão é síncrona, e o teto dela é o timeout da borda.** O `POST` de
-    upload só responde quando o documento está indexado. Quem segura a conexão
+28. **A ingestão era síncrona, e o teto dela era o timeout da borda.** Hoje ela
+    é enfileirada (ver o fim deste item); o histórico fica porque explica a fila.
+    O `POST` de upload só respondia quando o documento estava indexado. Quem segura a conexão
     todo esse tempo é o nginx do ingress, com `proxy-read-timeout: 1800`.
 
     Parece folgado até a base carregar em paralelo. Medido numa carga real de
@@ -659,9 +661,65 @@ Registradas porque o custo delas foi descoberto rodando, não lendo:
       alimenta sozinha, e os tempos sobem justamente quando o cliente conclui
       que precisa insistir.
 
-    O conserto de verdade é upload assíncrono: aceitar o arquivo com `202`,
-    devolver um identificador e deixar a tela acompanhar pela fila, que já
-    existe e já mostra progresso. Está em *O que ficou de fora* por isso.
+    Em 2026-09-23 isso derrubou o pod: dez PDFs de 10 MB (livros inteiros)
+    enviados de uma vez. Um engasgo soltava a conexão, a tela mandava o próximo,
+    e o pod ficava com dois docling juntos até ser OOMKilled com 8 Gi, perdendo
+    tudo que estava no ar.
+
+    **O conserto (ING-06):** o upload guarda o bruto no object store, abre a
+    linha em `ingest_run` como `queued` e responde `202`. Uma thread
+    (`fila.py`) processa a fila **um arquivo por vez**, pegando com
+    `FOR UPDATE SKIP LOCKED`. Na subida do pod, o que estava `running` volta
+    para a fila (o bruto está guardado), até duas vezes: um arquivo que derruba
+    o pod toda vez para de ser retomado e fecha como falha, senão a fila vira
+    um laço de OOM. `?wait=true` mantém o contrato antigo para os scripts de
+    carga, passando pela mesma fila.
+
+    Junto, o docling converte PDF em lotes de `KB_DOCLING_PAGE_BATCH` páginas
+    (40): convertido inteiro, um livro de 800+ páginas segurava todas as
+    páginas renderizadas até o fim e passava dos 8 Gi sozinho.
+
+29a. **O docling em CPU custa ~3,7 s por página, mesmo em PDF digital.** Medido
+    no pod de 3 CPU: o livro "Comentários ao CDC" (1.169 páginas) levaria mais de
+    uma hora de extração, para chegar ao mesmo texto que o PyMuPDF lê em 1,1 s
+    (1.168 das 1.169 páginas tinham camada de texto limpa). Com oito livros na
+    fila, eram horas de CPU disputada com a busca.
+
+    **O conserto (`hibrido.py`):** PDF a partir de `KB_PDF_HIBRIDO_MIN_PAGINAS`
+    (80) passa por uma triagem por página em ~1,5 s. Vai para o docling só a
+    página sem texto, com imagem grande (`KB_PDF_IMAGEM_AREA`), com texto
+    corrompido ou com cara de tabela (`KB_PDF_TABELA_DESENHOS`); o resto sai
+    pelo PyMuPDF, com o cabeçalho e o rodapé correntes removidos. O sumário
+    embutido no PDF vira os títulos `#`/`##` que o corte `markdown` usa. Se mais
+    da metade das páginas precisa do docling (escaneado), o arquivo vai inteiro
+    para ele, como antes. Medido no mesmo livro: **~10 s** de extração.
+
+    **O sumário do PDF mente sobre a página.** No mesmo livro, 1.222 das 1.279
+    entradas apontavam para as páginas 100-199 (muitas para a 182). Confiando
+    nisso, 1.282 títulos caíram nas primeiras páginas e 2.605 trechos receberam
+    a mesma seção, sem erro nenhum. Por isso cada entrada é **ancorada no texto**:
+    procurada, em ordem de leitura, num bloco que comece pelo título. Entrada não
+    achada fica de fora; se menos de 30% forem achadas, o sumário é descartado e
+    o corte vai por tamanho. Três armadilhas apareceram nos livros reais, e a
+    ancoragem trata as três: o **sumário impresso** do próprio livro casa com
+    todos os títulos (página onde 8 ou mais títulos começam bloco é ignorada;
+    no Filomeno, 121 de 123 entradas tinham ido parar nas páginas 47-49); o corpo
+    sem espaço entre número e título ("1.1Introdução"), resolvido comparando sem
+    espaço nem pontuação; e o número impresso separado do título ou o título
+    quebrado em duas linhas (Theodoro vol. 2: de 90 para 594 de 768 ancoradas).
+    Resultado: Rizzatto 1.273/1.279, Filomeno 104/123, Theodoro vol. 2 594/768.
+
+    Duas consequências do mesmo livro, corrigidas junto:
+
+    - o grafo lia só os **6 primeiros** trechos pai e a wiki só os **12 mil
+      primeiros caracteres**: ~1% de um livro (sumário e prefácio). O grafo
+      agora amostra pais espalhados pelo documento inteiro, até
+      `KB_GRAFO_MAX_PAIS` (40); a wiki destila por seção amostrada, até
+      `KB_WIKI_MAX_SECOES` (8). Documento curto continua como antes;
+    - a citação dizia só "p. 612". Cada trecho agora guarda o caminho de seções
+      (`chunk.section`, "Capítulo I › Art. 1º › 2. Protecionismo"), que vai na
+      busca, no MCP e nas evidências do Studio. Nos Espaços com enriquecimento
+      `conceito`, a seção entra também no cabeçalho do trecho, junto do conceito.
 
 29. **Reenviar não apaga a versão anterior, e o grafo dela ficava para trás.**
     `FUN-02` versiona: mandar o mesmo nome de arquivo de novo marca a linha
@@ -736,11 +794,6 @@ Consciente, não esquecido:
   filtrados, e link resolvido pelo caminho no bundle em vez do nome final do
   arquivo) não existe — e nem **produzir** OKF a partir de uma base, que é o
   caminho inverso.
-- **Ingestão assíncrona** (ING-06): o `POST` de documento continua síncrono. O
-  log de ingestão dá visibilidade do que está rodando, com total, decorrido e
-  estimativa, mas não é fila nem retomada — e enquanto for síncrona, todo
-  timeout no caminho precisa caber no pior documento, que sob carga paralela
-  chegou a **17,4 min** (era 13,5 sem concorrência). Ver armadilha 28.
 - **Analytics agregado** (WEB-05, opcional): o histórico mostra tempo e tokens
   **por execução**, e a tela de Stack mostra os totais da instalação. Média por
   técnica e por método de acesso — que é o que o requisito pede — ainda não.

@@ -1,3 +1,4 @@
+import { simulateReadableStream } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 
 // Modelo OFFLINE, deterministico. Existe para dois usos: o teste de integracao
@@ -154,28 +155,77 @@ function respond(system: string, user: string): unknown {
   }
 }
 
+// Assistente do Studio no modo simulado: nao entende nada, so exercita o
+// caminho de ferramentas (execucao, pergunta com opcoes, aprovacao, exibir)
+// para a tela poder ser testada sem chave de provedor.
+type Content = { type: "text"; text: string } | { type: "tool-call"; toolCallId: string; toolName: string; input: string };
+
+function assistantReply(prompt: Msg[]): Content[] {
+  const last = prompt[prompt.length - 1];
+  const call = (toolName: string, input: unknown): Content[] => [{ type: "tool-call", toolCallId: `sim-${Math.random().toString(36).slice(2, 10)}`, toolName, input: JSON.stringify(input) }];
+  if (last?.role === "tool") {
+    const parts = (Array.isArray(last.content) ? last.content : []) as { toolName?: string; output?: { value?: unknown } }[];
+    const lines = parts.map((p) => `- **${p.toolName}**: \`${JSON.stringify(p.output?.value ?? null).slice(0, 300)}\``);
+    return [{ type: "text", text: `Resultado (modelo simulado):\n\n${lines.join("\n")}` }];
+  }
+  const q = norm(textOf(last ?? { role: "user", content: "" }).split("\n### Anexo")[0]);
+  if (/\bfluxos?\b/.test(q)) return call("listar_fluxos", {});
+  if (/panorama|visao geral/.test(q)) return call("visao_geral", {});
+  if (/pergunt|escolh/.test(q))
+    return call("perguntar", {
+      pergunta: "Qual área devo priorizar no ajuste?",
+      opcoes: [{ rotulo: "Roteamento", descricao: "Classificador e limiares" }, { rotulo: "Especialistas", descricao: "Prompts e bases" }, { rotulo: "Compliance" }],
+      multipla: /varias|multipl/.test(q),
+      permitirOutro: true,
+    });
+  if (/exclu|apag/.test(q)) return call("excluir", { entidade: "conversa_simulada", id: "00000000-0000-0000-0000-000000000000", nome: "conversa de teste (simulado)" });
+  if (/tabela|grafico|mostr|exib/.test(q))
+    return [
+      { type: "text", text: "Custo por agente (dados de exemplo do modelo simulado):" },
+      ...call("exibir", /grafico/.test(q) ? { tipo: "grafico", titulo: "Custo por agente", unidade: "US$", dados: [{ rotulo: "Classificador", valor: 0.002 }, { rotulo: "Especialistas", valor: 0.011 }, { rotulo: "Consolidador", valor: 0.004 }] } : { tipo: "tabela", titulo: "Custo por agente", colunas: ["Agente", "Chamadas", "US$"], linhas: [["Classificador", 12, 0.002], ["Especialistas", 30, 0.011]] }),
+    ];
+  return [{ type: "text", text: `**Modelo simulado** (offline): recebi _"${q.slice(0, 160)}"_. Escolha um modelo real para o assistente trabalhar de verdade. Palavras que exercitam ferramentas: *fluxos*, *panorama*, *pergunte*, *mostre uma tabela/gráfico*, *exclua*.` }];
+}
+
+function generate(options: { prompt: unknown }) {
+  const prompt = options.prompt as unknown as Msg[];
+  const system = prompt.filter((m) => m.role === "system").map(textOf).join("\n");
+  const users = prompt.filter((m) => m.role === "user").map(textOf);
+  const user = users[users.length - 1] ?? "";
+  let content: Content[];
+  if (system.includes("Você é o Assistente do Goga Studio")) content = assistantReply(prompt);
+  else {
+    const out = respond(system, user);
+    content = [{ type: "text", text: out === null ? `Resposta simulada para: ${user.slice(0, 200)}` : JSON.stringify(out) }];
+  }
+  const inTok = Math.ceil((system.length + users.join("").length) / 4);
+  const outTok = Math.ceil(JSON.stringify(content).length / 4);
+  const reason = content.some((c) => c.type === "tool-call") ? "tool-calls" : "stop";
+  return {
+    content,
+    finishReason: { unified: reason, raw: reason },
+    usage: {
+      inputTokens: { total: inTok, noCache: inTok, cacheRead: 0, cacheWrite: 0 },
+      outputTokens: { total: outTok, text: outTok, reasoning: 0 },
+    },
+    warnings: [],
+  };
+}
+
 export function mockModel(modelId: string) {
   return new MockLanguageModelV4({
     provider: "mock",
     modelId,
-    doGenerate: async (options) => {
-      const prompt = options.prompt as unknown as Msg[];
-      const system = prompt.filter((m) => m.role === "system").map(textOf).join("\n");
-      const users = prompt.filter((m) => m.role === "user").map(textOf);
-      const user = users[users.length - 1] ?? "";
-      const out = respond(system, user);
-      const text = out === null ? `Resposta simulada para: ${user.slice(0, 200)}` : JSON.stringify(out);
-      const inTok = Math.ceil((system.length + users.join("").length) / 4);
-      const outTok = Math.ceil(text.length / 4);
-      return {
-        content: [{ type: "text", text }],
-        finishReason: { unified: "stop", raw: "stop" },
-        usage: {
-          inputTokens: { total: inTok, noCache: inTok, cacheRead: 0, cacheWrite: 0 },
-          outputTokens: { total: outTok, text: outTok, reasoning: 0 },
-        },
-        warnings: [],
-      } as never;
+    doGenerate: async (options) => generate(options) as never,
+    doStream: async (options) => {
+      const r = generate(options);
+      const chunks: unknown[] = [{ type: "stream-start", warnings: [] }];
+      r.content.forEach((c, i) => {
+        if (c.type === "text") chunks.push({ type: "text-start", id: `t${i}` }, ...c.text.match(/[\s\S]{1,24}/g)!.map((delta) => ({ type: "text-delta", id: `t${i}`, delta })), { type: "text-end", id: `t${i}` });
+        else chunks.push(c);
+      });
+      chunks.push({ type: "finish", finishReason: r.finishReason, usage: r.usage });
+      return { stream: simulateReadableStream({ chunks, chunkDelayInMs: 15 }) } as never;
     },
   });
 }

@@ -94,7 +94,7 @@ while IFS= read -r -d '' arquivo; do
   # do curl cortaria a conexao e o arquivo pareceria ter falhado -- quando na
   # verdade o servidor termina e grava normalmente.
   resposta="$(curl -s --max-time 3600 -X POST \
-    "$BASE_URL/v1/spaces/$slug/documents" \
+    "$BASE_URL/v1/spaces/$slug/documents?wait=true" \
     -H "Authorization: Bearer $TOKEN" \
     -F "file=@$arquivo" 2>/dev/null || true)"
   # `grep -o | head -1`, e nao `sed` com `.*` na frente: a resposta tem MAIS DE

@@ -7,6 +7,7 @@ import {
   Cpu,
   History,
   Home,
+  ListOrdered,
   Library,
   LogOut,
   type LucideIcon,
@@ -34,6 +35,9 @@ const NAV_GROUPS: { label?: string; adminOnly?: boolean; items: NavItem[] }[] = 
     items: [
       { to: '/', label: 'Início', icon: Home, end: true },
       { to: '/bases', label: 'Bases', icon: Library },
+      // A fila e da instalacao, nao de uma base: o servidor processa um
+      // arquivo por vez, de todas elas. Por isso fica no menu, e nao no card.
+      { to: '/fila', label: 'Fila de ingestão', icon: ListOrdered },
       // DOCUMENTOS, WIKI, GRAFO E BENCHMARK SAÍRAM DAQUI, de propósito.
       //
       // As quatro são "por base": nenhuma delas responde nada sem um Espaço

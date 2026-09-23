@@ -1,8 +1,10 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { BookOpen, BrainCircuit, ClipboardList, ExternalLink, FlaskConical, History, LibraryBig, LogOut, type LucideIcon, MessagesSquare, Plug, Sparkles, Receipt, ShieldCheck, Users, Workflow } from "lucide-react";
+import { BookOpen, Bot, BrainCircuit, ClipboardList, ExternalLink, FlaskConical, History, LibraryBig, LogOut, type LucideIcon, MessagesSquare, Plug, Sparkles, Receipt, ShieldCheck, Users, Workflow } from "lucide-react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { useAssistant } from "@/lib/assistant";
+import { AssistantDock } from "@/components/assistant/Dock";
 import { cn } from "@/lib/utils";
 
 type Item = { to: string; label: string; icon: LucideIcon; admin?: boolean; external?: boolean };
@@ -13,6 +15,7 @@ const groups: { label?: string; items: Item[] }[] = [
   {
     label: "Studio",
     items: [
+      { to: "/assistant", label: "Assistente", icon: Bot },
       { to: "/flows", label: "Fluxos", icon: Workflow },
       { to: "/simulator", label: "Simulador", icon: MessagesSquare },
       { to: "/history", label: "Histórico", icon: History },
@@ -41,8 +44,9 @@ const groups: { label?: string; items: Item[] }[] = [
 
 export function Layout() {
   const { user, isAdmin, logout } = useAuth();
+  const assistantBusy = Object.values(useAssistant().live).some((l) => l.running);
   const health = useQuery({ queryKey: ["health"], queryFn: () => api.get("/health").then(() => true).catch(() => false), refetchInterval: 30_000 });
-  const kb = useQuery({ queryKey: ["kb-spaces"], queryFn: () => api.get<{ available: boolean; uiUrl: string }>("/kb/spaces"), staleTime: 60_000 });
+  const kb = useQuery({ queryKey: ["kb-spaces"], queryFn: () => api.get<{ available: boolean; uiUrl: string }>("/kb/spaces"), staleTime: 30_000, refetchInterval: 30_000 });
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -78,6 +82,7 @@ export function Layout() {
                     <NavLink key={i.to} to={i.to} className={({ isActive }) => cn("flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors", isActive ? "bg-ink-800 text-text" : "text-text-muted hover:bg-ink-850 hover:text-text")}>
                       <i.icon className="h-4 w-4 shrink-0" strokeWidth={1.75} />
                       <span className="font-medium">{i.label}</span>
+                      {i.to === "/assistant" && assistantBusy && <span title="trabalhando" className="ml-auto h-1.5 w-1.5 animate-pulse rounded-full bg-blue-400" />}
                     </NavLink>
                   ),
                 )}
@@ -107,6 +112,7 @@ export function Layout() {
       <main className="min-w-0 flex-1 overflow-y-auto">
         <Outlet />
       </main>
+      <AssistantDock />
     </div>
   );
 }

@@ -25,6 +25,7 @@ import { kb } from '../lib/api';
 import { LADO, TIPOS_ACEITOS, ehImagem, nomeLucide, reduzirParaIcone } from '../lib/icone';
 import { ICONES, NOMES, iconeDaBiblioteca } from '../lib/iconeCatalogo';
 import { fmtMs, fmtNumber, fmtWhen } from '../lib/format';
+import { emAndamento } from '../lib/types';
 import type {
   IngestRun,
   AiProvider,
@@ -63,10 +64,9 @@ export function SpacesPage() {
   const runs = useQuery({
     queryKey: ['ingest-runs'],
     queryFn: () => kb.ingestRuns(120),
-    refetchInterval: (query) =>
-      (query.state.data ?? []).some((r) => r.status === 'running') ? 3_000 : 20_000,
+    refetchInterval: (query) => ((query.state.data ?? []).some(emAndamento) ? 3_000 : 20_000),
   });
-  const processando = (runs.data ?? []).some((r) => r.status === 'running');
+  const processando = (runs.data ?? []).some(emAndamento);
 
   // ⚠ A CONTAGEM PRECISA ANDAR ENQUANTO A INGESTÃO ANDA.
   //
@@ -573,30 +573,37 @@ const ROTULOS: Record<string, string> = {
 /**
  * O que está acontecendo nesta base agora.
  *
- * A ingestão é síncrona e o `space` não guarda estado de processamento, então o
- * único lugar que sabe "está rodando" é o log de ingestão. O que dá para dizer
- * com honestidade, e o que NÃO dá:
+ * O `space` não guarda estado de processamento; quem sabe é o log de ingestão,
+ * que agora também é a fila do servidor:
  *
- * - **processando**: há uma execução em `running` nesta base. Essa é certa;
- * - **quantos faltam**: a fila de envio vive no navegador de quem está enviando.
- *   O servidor não a conhece, e inventar um número aqui seria mentir. O que
- *   aparece é o que ele sabe: quantos arquivos desta base já passaram na janela
- *   recente do log, e quantos falharam;
- * - **em dia**: nada em `running`.
+ * - **processando**: há uma execução `running` (ou `queued`, esperando a vez)
+ *   nesta base;
+ * - **na fila**: as linhas `queued` desta base. O servidor conhece a fila
+ *   inteira, então esse número é verdadeiro, venha a carga de onde vier;
+ * - **em dia**: nada em `running` nem `queued`.
  */
 function StatusDaBase({ space, runs }: { space: Space; runs: IngestRun[] }) {
   const meus = runs.filter((r) => r.space === space.slug);
-  const rodando = meus.find((r) => r.status === 'running');
-  const ultima = meus.find((r) => r.status !== 'running');
+  const rodando =
+    meus.find((r) => r.status === 'running') ?? meus.find((r) => r.status === 'queued');
+  const naFila = meus.filter((r) => r.status === 'queued').length;
+  const ultima = meus.find((r) => !emAndamento(r));
 
   if (rodando) {
     return (
       <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-amber/40 bg-amber/10 px-2.5 py-1.5 text-[12px]">
         <Loader2 size={13} className="animate-spin text-amber" />
-        <strong className="text-amber">processando</strong>
+        <strong className="text-amber">
+          {rodando.status === 'queued' ? 'na fila' : 'processando'}
+        </strong>
         <span className="min-w-0 flex-1 truncate text-text-muted" title={rodando.filename}>
           {rodando.filename}
         </span>
+        {naFila > (rodando.status === 'queued' ? 1 : 0) ? (
+          <span className="mono text-text-dim">
+            +{naFila - (rodando.status === 'queued' ? 1 : 0)} na fila
+          </span>
+        ) : null}
         <span className="mono text-text-dim">{fmtMs(rodando.total_ms)}</span>
       </div>
     );

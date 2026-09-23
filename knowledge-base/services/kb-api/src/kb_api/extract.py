@@ -24,11 +24,12 @@ import io
 import logging
 import re
 import subprocess
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import okf
+from . import okf, progresso
 from .config import settings
 
 log = logging.getLogger(__name__)
@@ -239,8 +240,10 @@ def _docling_markdown(document) -> tuple[str, int]:
     if total <= 0:
         return _clean(document.export_to_markdown(escape_html=False)), 0
 
+    # As chaves de `pages` sao os numeros ORIGINAIS: convertido com
+    # `page_range=(41, 80)`, o documento tem as paginas 41..80, nao 1..40.
     parts: list[str] = []
-    for page in range(1, total + 1):
+    for page in sorted(document.pages):
         try:
             body = document.export_to_markdown(page_no=page, escape_html=False)
         except Exception as exc:  # noqa: BLE001 - versao sem page_no
@@ -278,8 +281,12 @@ def _ocr_image(data: bytes) -> str:
     return _clean(result.stdout.decode("utf-8", "replace"))
 
 
-def _docling_figures(document) -> list[Figure]:
-    """Figuras do documento, cada uma com legenda e texto lido por OCR."""
+def _docling_figures(document, anteriores: list[Figure] | None = None) -> list[Figure]:
+    """Figuras do documento, cada uma com legenda e texto lido por OCR.
+
+    `anteriores` sao as figuras dos lotes de paginas ja convertidos: os tetos
+    (quantidade e bytes) valem para o DOCUMENTO, e a numeracao continua.
+    """
     if not settings.figures_enabled:
         return []
     try:
@@ -287,12 +294,13 @@ def _docling_figures(document) -> list[Figure]:
     except Exception:  # noqa: BLE001
         return []
 
+    ja = len(anteriores or [])
     figures: list[Figure] = []
-    total_bytes = 0
+    total_bytes = sum(len(f.data) for f in anteriores or [])
     for item, _level in document.iterate_items():
         if not isinstance(item, PictureItem):
             continue
-        if len(figures) >= settings.max_figures_per_document:
+        if ja + len(figures) >= settings.max_figures_per_document:
             log.info("documento passou de %s figuras; o resto fica de fora",
                      settings.max_figures_per_document)
             break
@@ -339,7 +347,7 @@ def _docling_figures(document) -> list[Figure]:
         except Exception:  # noqa: BLE001
             caption = ""
 
-        ref = f"fig-{len(figures) + 1}"
+        ref = f"fig-{ja + len(figures) + 1}"
         figures.append(
             Figure(ref=ref, page=page, data=data, caption=caption, ocr_text=_ocr_image(data))
         )
@@ -399,12 +407,38 @@ def _docling(data: bytes, filename: str) -> Extracted | None:
         return None
 
     try:
-        converter = _docling_converter()
-        stream = DocumentStream(name=filename, stream=io.BytesIO(data))
-        result = converter.convert(stream)
-        markdown, pages = _docling_markdown(result.document)
-        figures = _docling_figures(result.document)
-        markdown = _attach_figures(markdown, figures)
+        # Um docling por vez no processo. Dois uploads simultaneos de livro
+        # somavam dois picos de memoria e o pod era OOMKilled com os dois.
+        with _DOCLING_LOCK:
+            converter = _docling_converter()
+            markdowns: list[str] = []
+            figures: list[Figure] = []
+            pages = 0
+            faixas = _faixas_de_pagina(data, filename)
+            ultima = faixas[-1][1] if faixas[-1] is not None else 0
+            for n, faixa in enumerate(faixas):
+                stream = DocumentStream(name=filename, stream=io.BytesIO(data))
+                if faixa is None:
+                    result = converter.convert(stream)
+                else:
+                    log.info("docling %s: paginas %s-%s", filename, *faixa)
+                    # Antes do lote, e nao depois: o lote leva minutos, e a
+                    # tela precisa dizer QUAL faixa esta em curso.
+                    progresso.avancar(
+                        "extracao", n, len(faixas),
+                        f"docling: páginas {faixa[0]}-{faixa[1]} de {ultima}",
+                        marco_a_cada=0,
+                    )
+                    result = converter.convert(stream, page_range=faixa)
+                parte, n = _docling_markdown(result.document)
+                novas = _docling_figures(result.document, figures)
+                markdowns.append(_attach_figures(parte, novas))
+                figures.extend(novas)
+                pages += n
+                # Solta o documento do lote antes de converter o proximo: e
+                # isso que limita o pico de memoria ao tamanho de um lote.
+                del result
+        markdown = _clean("\n\n".join(m for m in markdowns if m))
     except Exception as exc:  # noqa: BLE001 - arquivo protegido, corrompido etc.
         log.warning("docling falhou em %s: %s", filename, exc)
         return None
@@ -412,6 +446,74 @@ def _docling(data: bytes, filename: str) -> Extracted | None:
     if not markdown:
         return None
     return Extracted(markdown=markdown, extractor="docling", pages=pages, figures=figures)
+
+
+_DOCLING_LOCK = threading.Lock()
+
+
+def docling_paginas(
+    data: bytes, filename: str, faixas: list[tuple[int, int]], ao_iniciar_faixa=None,
+) -> tuple[dict[int, str], list[Figure]] | None:
+    """Markdown de CADA pagina das faixas pedidas, com as figuras dela, pelo docling.
+
+    E o que a extracao hibrida (hibrido.py) usa para mandar ao docling so as
+    paginas que precisam dele. As chaves sao os numeros originais das paginas.
+    `None` = docling indisponivel ou falhou; quem chama decide o plano B.
+    """
+    try:
+        from docling.datamodel.base_models import DocumentStream
+    except Exception as exc:  # noqa: BLE001 - ausencia da lib e caso esperado
+        log.info("docling indisponivel (%s)", exc)
+        return None
+
+    paginas: dict[int, str] = {}
+    figures: list[Figure] = []
+    try:
+        with _DOCLING_LOCK:
+            converter = _docling_converter()
+            for n, faixa in enumerate(faixas):
+                if ao_iniciar_faixa:
+                    ao_iniciar_faixa(n, faixa)
+                stream = DocumentStream(name=filename, stream=io.BytesIO(data))
+                result = converter.convert(stream, page_range=faixa)
+                document = result.document
+                novas = _docling_figures(document, figures)
+                figures.extend(novas)
+                for page in sorted(document.pages):
+                    corpo = document.export_to_markdown(page_no=page, escape_html=False).strip()
+                    # Figura sem pagina conhecida fica na primeira da faixa: perder
+                    # a posicao exata e ruim, perder o texto da figura e pior.
+                    dela = [
+                        f for f in novas
+                        if f.page == page or (f.page is None and page == faixa[0])
+                    ]
+                    paginas[page] = _attach_figures(corpo, dela)
+                del result, document
+    except Exception as exc:  # noqa: BLE001 - arquivo protegido, corrompido etc.
+        log.warning("docling falhou em %s (faixas %s): %s", filename, faixas, exc)
+        return None
+    return paginas, figures
+
+
+def _faixas_de_pagina(data: bytes, filename: str) -> list[tuple[int, int] | None]:
+    """Faixas `(inicio, fim)` 1-based para converter o PDF em lotes.
+
+    `[None]` = converter inteiro: nao e PDF, e curto, ou nao deu para contar as
+    paginas (ai o docling decide sozinho, como antes).
+    """
+    lote = settings.docling_page_batch
+    if lote <= 0 or not filename.lower().endswith(".pdf"):
+        return [None]
+    try:
+        import fitz  # PyMuPDF
+
+        with fitz.open(stream=data, filetype="pdf") as doc:
+            total = doc.page_count
+    except Exception:  # noqa: BLE001
+        return [None]
+    if total <= lote:
+        return [None]
+    return [(inicio, min(inicio + lote - 1, total)) for inicio in range(1, total + 1, lote)]
 
 
 # ── 2. bibliotecas por formato ─────────────────────────────────────────────
@@ -650,8 +752,19 @@ def _titulo(markdown: str, fallback: str) -> str:
     return _first_heading(markdown, fallback)
 
 
+def _hibrido(data: bytes, filename: str) -> Extracted | None:
+    """PDF longo: PyMuPDF onde basta, docling so nas paginas que precisam (hibrido.py).
+
+    Import tardio porque `hibrido` importa deste modulo. `None` = PDF curto,
+    escaneado ou ilegivel para o PyMuPDF: segue a cadeia, docling inteiro.
+    """
+    from . import hibrido
+
+    return hibrido.extrair(data, filename)
+
+
 BY_EXTENSION = {
-    ".pdf": (_docling, _pymupdf),
+    ".pdf": (_hibrido, _docling, _pymupdf),
     ".docx": (_docling, _docx),
     ".doc": (_docling, _docx),
     ".pptx": (_docling, _pptx),
@@ -675,7 +788,9 @@ def extract(data: bytes, filename: str) -> Extracted:
         tried.append(extractor.__name__.strip("_"))
         result = extractor(data, filename)
         if result and result.markdown.strip():
-            result.title = _titulo(result.markdown, Path(filename).stem)
+            # Extrator que ja sabe o titulo (o hibrido usa o nome do arquivo)
+            # nao e sobrescrito pela heuristica do primeiro cabecalho.
+            result.title = result.title or _titulo(result.markdown, Path(filename).stem)
             log.info("%s extraido por %s", filename, result.extractor)
             return result
 

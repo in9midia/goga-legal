@@ -542,10 +542,12 @@ tirar um arquivo da lista — foi assim que um `.gitkeep` arrastado junto com a
 pasta deixou de virar uma falha no log.
 
 Durante o envio a fila fica visível: qual está agora, quantos faltam, e o que já
-passou. **Cancelar** interrompe a fila e deixa o resto ainda escolhido, para não
-ter de selecionar noventa arquivos de novo. Uma ressalva honesta que a tela
-também diz: o arquivo que já está no servidor **termina de ser processado** — a
-ingestão é síncrona e cancelar solta a espera, não o trabalho.
+passou. Cada envio só **sobe** o arquivo: o servidor o guarda, põe na fila e
+responde, então a lista anda na velocidade do upload. O processamento acontece
+depois, um arquivo por vez, e aparece no log como `na fila` e `processando`.
+**Cancelar** interrompe o envio e deixa o resto ainda escolhido, para não ter de
+selecionar noventa arquivos de novo. O que já tinha subido está na fila do
+servidor e **será processado** mesmo assim.
 
 Junto da fila vai um **progresso com prazo**: quantos do total já passaram,
 quanto tempo já correu, e a estimativa do que falta. A média sai do **tempo de
@@ -656,11 +658,13 @@ Há um atalho para ver **só as falhas**, e ele filtra no banco, não na página
 filtrar depois de cortar mostraria só as falhas que por acaso caíssem na primeira
 página.
 
-A ingestão é síncrona: quando o `POST` volta, o documento já está buscável. O
-preço é que um PDF grande com OCR segura a conexão por minutos — o maior desta
-base levou **13,5 minutos** (121 páginas, 60 imagens), e **17,4 minutos** quando
-duas bases carregavam ao mesmo tempo. O teto é o timeout da borda, 30 minutos;
-o que acontece ao passar dele está na armadilha 28 da arquitetura.
+A ingestão é enfileirada: o `POST` volta assim que o arquivo sobe, e o servidor
+processa a fila um por vez, então enviar dez livros juntos não multiplica a
+memória do pod. Um PDF grande com OCR ainda leva minutos (o maior desta base
+levou **13,5 minutos**, 121 páginas e 60 imagens), mas isso deixou de prender
+uma conexão. Se o pod reiniciar no meio, o arquivo volta para a fila sozinho;
+se ele derrubar o pod duas vezes, fecha como falha com essa explicação. O
+porquê está na armadilha 28 da arquitetura.
 
 O log responde as duas perguntas que a tabela de documentos não responde:
 
@@ -708,6 +712,42 @@ O custo é zero para quem não está ingerindo, e isso foi condição de projeto
   arquivo e o progresso continuam escritos em HTML embaixo da cena, que é o que
   o leitor de tela lê;
 - com `prefers-reduced-motion`, a cena é desenhada parada, sem laço de animação.
+
+### A fila de ingestão
+
+**Fila de ingestão**, no menu, mostra a fila do servidor inteira, de todas as
+bases. O servidor processa **um arquivo por vez**, então dez livros enviados para
+uma base atrás de três de outra só andam quando chega a vez deles, e é aqui que
+isso fica visível.
+
+A tela tem três blocos:
+
+- **em processamento**: o arquivo que está rodando, com a **etapa** (extraindo
+  texto, cortando, gerando embeddings, gravando, extraindo grafo), o **detalhe**
+  (por exemplo "docling: páginas 41-80 de 912") e o **percentual**. O percentual
+  sai do trabalho feito (lotes de página, lotes de embedding, trechos do grafo),
+  não do tempo: um livro pode ficar minutos no mesmo número enquanto um lote de
+  40 páginas passa pelo OCR;
+- **na fila**: a ordem em que o worker vai pegar, com o botão **tirar da fila**.
+  Só dá para tirar o que ainda não começou; o que está rodando termina;
+- **concluídos recentemente**: o resultado e **até onde chegou**. Numa falha,
+  isso diz onde olhar: parar em ~3% é a extração (arquivo), em 50-78% é o
+  embedding (quase sempre cota do provedor de IA).
+
+PDFs longos (80 páginas ou mais) passam por uma **triagem** antes da extração,
+e a decisão aparece no log: por exemplo "triagem: 1.165 págs pelo PyMuPDF, 4
+pelo docling (sem texto: 1, imagem: 1, tabela: 2)". Só as páginas que precisam
+de OCR ou de leitura de tabela vão ao docling, então um livro digital de mil
+páginas extrai em segundos. O extrator do documento aparece como
+`pymupdf+docling` (ou `pymupdf`, quando nenhuma página precisou).
+
+Todo documento tem um **log**, que se abre na linha: cada troca de etapa e cada
+marco (cada lote do docling, cada 10% do embedding e do grafo), com hora e
+percentual. Execuções anteriores à fila não têm log detalhado.
+
+Se o serviço reiniciar no meio, o arquivo volta para a fila sozinho e aparece
+como **retomado**. Se ele derrubar o serviço duas vezes, fecha como falha em vez
+de tentar para sempre.
 
 ### A retentativa automática
 

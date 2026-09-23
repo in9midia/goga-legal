@@ -8,6 +8,23 @@ import {
 } from './leitura';
 
 describe('leituraDaIngestao', () => {
+  it('conta a fila do servidor: um processando, os queued esperando', () => {
+    const leitura = leituraDaIngestao(null, [
+      { status: 'queued', filename: 'c.pdf' },
+      { status: 'queued', filename: 'b.pdf' },
+      { status: 'running', filename: 'a.pdf' },
+    ]);
+    expect(leitura).toEqual({ ativo: true, arquivo: 'a.pdf', lidos: 0, restantes: 2 });
+  });
+
+  it('com só queued (worker ainda não pegou), mostra o mais antigo', () => {
+    const leitura = leituraDaIngestao(null, [
+      { status: 'queued', filename: 'b.pdf' },
+      { status: 'queued', filename: 'a.pdf' },
+    ]);
+    expect(leitura).toEqual({ ativo: true, arquivo: 'a.pdf', lidos: 0, restantes: 1 });
+  });
+
   it('fica parada quando não há envio local nem run rodando', () => {
     expect(leituraDaIngestao(null, []).ativo).toBe(false);
     expect(leituraDaIngestao(null, [{ status: 'indexed', filename: 'a.pdf' }]).ativo).toBe(false);
