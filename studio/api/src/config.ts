@@ -35,4 +35,6 @@ export const config = {
   kbUrl: env("KB_URL", "http://localhost:8890").replace(/\/$/, ""),
   kbUiUrl: env("KB_UI_URL", env("KB_URL", "http://localhost:8890")).replace(/\/$/, ""),
   filesDir: env("STUDIO_FILES_DIR", "./data/files"),
+  // Tabela de precos do LiteLLM (a mesma da KB). Vazio desliga a busca de preco.
+  priceCatalogUrl: env("STUDIO_PRICE_CATALOG_URL", "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"),
 };

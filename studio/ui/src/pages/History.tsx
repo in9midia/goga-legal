@@ -9,6 +9,7 @@ import { useAuth } from "@/lib/auth";
 import { Page } from "@/Layout";
 import { Empty, ErrorBox, Field, Loading, PageHeader, Pill, StatusBadge } from "@/components/common";
 import { TraceView } from "@/components/trace/TraceView";
+import { TranscriptMenu } from "@/components/transcript";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -134,6 +135,13 @@ export function RunPage() {
             {run.flowName} · rev {run.flowRevision} · {run.isProduction ? "produção" : "rascunho"} · {run.userEmail ?? "lote"} · {dateTime(run.startedAt)} · {usd(run.costUsd)} · {ms(run.endedAt ? Date.parse(run.endedAt) - Date.parse(run.startedAt) : null)}
           </div>
         </div>
+        <TranscriptMenu
+          label="Copiar fluxo completo"
+          sources={[
+            { label: "Esta execução", path: `/runs/${run.id}/transcript`, filename: `execucao-${run.id.slice(0, 8)}.md` },
+            ...(run.sessionId ? [{ label: "Conversa inteira (todas as interações)", path: `/sessions/${run.sessionId}/transcript`, filename: `conversa-${run.sessionId.slice(0, 8)}.md` }] : []),
+          ]}
+        />
         {run.sessionId && <Link to={`/simulator/${run.sessionId}`} className="text-xs text-text-muted hover:text-text">abrir conversa</Link>}
       </header>
       <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">

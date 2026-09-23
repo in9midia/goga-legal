@@ -479,7 +479,10 @@ function DocumentRow({
                   pergunta pontua 0,0000 num trecho sem o cabeçalho do conceito
                   e 0,4000 com ele — numa base com os dois modos convivendo,
                   metade dos documentos responde e a outra metade não. */}
-              {doc.chunk_enrichment !== undefined &&
+              {/* Documento que falhou nunca foi indexado: nao ha enriquecimento
+                  a comparar, e a etiqueta so escondia o erro real. */}
+              {!falhou &&
+              doc.chunk_enrichment !== undefined &&
               enriquecimentoDaBase &&
               doc.chunk_enrichment !== enriquecimentoDaBase ? (
                 <Pill
@@ -518,6 +521,11 @@ function DocumentRow({
               ) : null}
               <span className="mono text-[11px] text-text-dim">{fmtBytes(doc.size_bytes)}</span>
             </div>
+            {falhou && doc.error ? (
+              <div className="mt-1 line-clamp-2 text-[11px] text-rose" title={doc.error}>
+                {doc.error}
+              </div>
+            ) : null}
           </div>
         </div>
       </button>

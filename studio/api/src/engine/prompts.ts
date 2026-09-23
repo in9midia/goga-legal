@@ -7,15 +7,24 @@ import { z } from "zod";
 const strList = z.array(z.string()).catch([]);
 
 export const classifierSchema = z.object({
+  // Cada item e validado sozinho: um item torto nao pode zerar o ranking
+  // inteiro (ranking vazio = score 0 = esclarecimento eterno). O prompt do
+  // preset pede `especialidade` (numero); o motor traduz para nodeId.
+  // `ranking` em si e obrigatorio (sem .catch): um JSON sem ele nao e uma
+  // classificacao, e tem de cair no reparo em vez de virar "tudo padrao".
   ranking: z
     .array(
-      z.object({
-        nodeId: z.string(),
-        score: z.coerce.number().min(0).max(1).catch(0),
-        justificativa: z.string().catch(""),
-      }),
+      z
+        .object({
+          nodeId: z.string().catch(""),
+          especialidade: z.coerce.number().int().nullable().catch(null).optional(),
+          score: z.coerce.number().min(0).max(1).catch(0),
+          justificativa: z.string().catch(""),
+        })
+        .nullable()
+        .catch(null),
     )
-    .catch([]),
+    .transform((items) => items.filter((i): i is NonNullable<typeof i> => i !== null)),
   polo: z.enum(["autor", "reu", "indefinido"]).catch("indefinido"),
   urgencia: z.enum(["baixa", "normal", "alta"]).catch("normal"),
   foro: z.string().catch(""),
@@ -23,7 +32,7 @@ export const classifierSchema = z.object({
   fora_de_escopo: z.boolean().catch(false),
   conflito_interesse: z.boolean().catch(false),
   precisa_esclarecimento: z.boolean().catch(false),
-  pergunta_esclarecimento: z.string().catch(""),
+  pergunta_esclarecimento: z.string().nullable().catch("").transform((v) => v ?? ""),
 });
 export type Classification = z.infer<typeof classifierSchema>;
 
@@ -76,7 +85,7 @@ Responda APENAS com um objeto JSON, sem texto fora dele:
  "polo":"autor|reu|indefinido","urgencia":"baixa|normal|alta","foro":"...",
  "complexidade":"baixa|media|alta","fora_de_escopo":bool,"conflito_interesse":bool,
  "precisa_esclarecimento":bool,"pergunta_esclarecimento":"uma única pergunta, se precisar"}
-Inclua no ranking TODOS os candidatos, usando exatamente o nodeId informado.`,
+Inclua no ranking SOMENTE os candidatos plausíveis (score >= 0.1), no máximo 5, usando exatamente o nodeId informado; candidato omitido vale score 0. Justificativa com no máximo 15 palavras. Seja breve: a resposta tem limite de tamanho.`,
   parecer: `<<formato:parecer>>
 Responda APENAS com um objeto JSON (parecer padronizado), sem texto fora dele:
 {"especialidade":"...","resumo_fatos":"...","enquadramento":["..."],"direitos":["..."],

@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { useRunStream } from "@/hooks/useRunStream";
 import { Empty, Pill, StatusBadge } from "@/components/common";
 import { TraceView } from "@/components/trace/TraceView";
+import { CopyButton, TranscriptMenu } from "@/components/transcript";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -122,7 +123,12 @@ export function SimulatorPage() {
                   {runDetail.data.run.isProduction ? " · produção" : " · rascunho"}
                 </span>
               )}
-              {traceRunId && !isLive && <Link to={`/history/${traceRunId}`} className="ml-auto text-[0.7rem] text-text-muted hover:text-text">abrir no histórico</Link>}
+              {traceRunId && !isLive && (
+                <div className="ml-auto flex items-center gap-2">
+                  <TranscriptMenu label="Copiar execução" sources={[{ label: "Esta execução", path: `/runs/${traceRunId}/transcript`, filename: `execucao-${traceRunId.slice(0, 8)}.md` }]} />
+                  <Link to={`/history/${traceRunId}`} className="text-[0.7rem] text-text-muted hover:text-text">abrir no histórico</Link>
+                </div>
+              )}
             </div>
             <div className="min-h-0 flex-1">
               {traceRunId ? (
@@ -268,6 +274,13 @@ function Chat({
         <span className="text-xs text-text-muted">Fluxo</span>
         <TargetSelect value={target} flows={flows} onChange={onTarget} />
         {detail && <span className="ml-auto truncate text-[0.7rem] text-text-dim">{detail.session.title}</span>}
+        {sessionId && messages.length > 0 && (
+          <TranscriptMenu
+            label="Copiar conversa completa"
+            className={cn(!detail && "ml-auto")}
+            sources={[{ label: "Conversa inteira (todas as interações e execuções)", path: `/sessions/${sessionId}/transcript`, filename: `conversa-${sessionId.slice(0, 8)}.md` }]}
+          />
+        )}
       </div>
 
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
@@ -279,8 +292,9 @@ function Chat({
         )}
         {messages.map((m) =>
           m.role === "user" ? (
-            <div key={m.id} className="ml-auto max-w-[85%] rounded-lg rounded-br-sm bg-ink-700 px-3.5 py-2.5 text-sm">
-              <div className="whitespace-pre-wrap">{m.content}</div>
+            <div key={m.id} className="group relative ml-auto max-w-[85%] rounded-lg rounded-br-sm bg-ink-700 px-3.5 py-2.5 text-sm">
+              <div className="whitespace-pre-wrap select-text">{m.content}</div>
+              <div className="-mb-1 mt-1 flex justify-end"><CopyButton text={m.content} title="Copiar pergunta" label="Copiar" className="h-6 text-text-muted" /></div>
               {m.attachments.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1">
                   {m.attachments.map((id) => <FileChip key={id} file={filesById.get(id)} id={id} />)}
@@ -409,6 +423,8 @@ function AssistantMessage({ m, run, selected, onSelect, flows, onCompare }: { m:
       <div className="mt-3 flex flex-wrap items-center gap-1 border-t border-line pt-2" onClick={(e) => e.stopPropagation()}>
         <Button variant="ghost" size="icon" className={cn("h-7 w-7", rating === 1 && "text-emerald-400")} title="Boa resposta" onClick={() => rate(1)}><ThumbsUp className="h-3.5 w-3.5" /></Button>
         <Button variant="ghost" size="icon" className={cn("h-7 w-7", rating === -1 && "text-rose-400")} title="Resposta ruim" onClick={() => rate(-1)}><ThumbsDown className="h-3.5 w-3.5" /></Button>
+        <CopyButton text={o?.resposta_simples || m.content} title="Copiar resposta" label="Copiar resposta" />
+        {o?.resposta_tecnica && <CopyButton text={o.resposta_tecnica} title="Copiar resposta técnica" label="Copiar técnica" />}
         <div className="ml-auto flex items-center gap-1.5">
           <ArrowLeftRight className="h-3.5 w-3.5 text-text-dim" />
           <TargetSelect value={cmpTarget ?? { flowId: null, useProduction: false }} flows={flows} onChange={setCmpTarget} className="h-7 w-48 text-xs" />

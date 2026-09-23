@@ -39,6 +39,22 @@ export const api = {
   },
 };
 
+/** GET de texto puro (ex.: transcricao em Markdown). */
+export async function getText(path: string): Promise<string> {
+  const res = await fetch(`/api/v1${path}`, { credentials: "include" });
+  const text = await res.text();
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try {
+      msg = JSON.parse(text).error ?? msg;
+    } catch {
+      /* corpo nao-JSON */
+    }
+    throw new ApiError(res.status, msg);
+  }
+  return text;
+}
+
 export const qs = (o: Record<string, string | number | boolean | undefined | null>) => {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(o)) if (v !== undefined && v !== null && v !== "") p.set(k, String(v));

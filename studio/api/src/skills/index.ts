@@ -46,11 +46,13 @@ export const SKILLS: SkillDef[] = [
     description: "Busca híbrida na base de conhecimento, restrita às bases configuradas no nó. Devolve trechos com documento, página e score.",
     input: z.object({ consulta: z.string().min(2), bases: z.array(z.string()).optional(), top_k: z.number().int().min(1).max(20).optional() }),
     llmTool: true,
-    async run(i, { node }) {
+    async run(i, { node, ctx }) {
       const k = node.data.knowledge;
       const spaces = scopeSpaces(i.bases, node);
       if (!spaces.length) return { resultados: [], aviso: "nó sem bases de conhecimento configuradas" };
       const r = await kb.search({ query: i.consulta, spaces, top_k: i.top_k ?? k.topK, min_trust: k.minTrust || undefined, as_of: k.asOf || undefined });
+      ctx.kbDocIds ??= new Set();
+      for (const p of r.results) ctx.kbDocIds.add(p.document_id);
       return {
         resultados: r.results.map((p) => ({
           document_id: p.document_id,
@@ -67,10 +69,15 @@ export const SKILLS: SkillDef[] = [
   def({
     id: "buscar_documento_kb",
     name: "Abrir documento da KB",
-    description: "Abre o documento completo da KB pelo id devolvido por buscar_kb.",
+    description: "Abre o documento completo da KB. Use SOMENTE um document_id que apareceu nas evidências ou num resultado de buscar_kb; nunca invente um id.",
     input: z.object({ document_id: z.number().int() }),
     llmTool: true,
-    async run(i, { node }) {
+    async run(i, { node, ctx }) {
+      // O modelo inventa id (0, 1...) quando a busca veio vazia: recusa aqui,
+      // sem ir a KB, e diz o que fazer.
+      if (!ctx.kbDocIds?.has(i.document_id)) {
+        return { erro: `document_id ${i.document_id} não veio de nenhuma busca nesta execução. Chame buscar_kb primeiro e use um id dos resultados; se não houver resultado útil, siga sem abrir documento.` };
+      }
       const doc = await kb.fetchDocument(i.document_id);
       const space = String(doc.space ?? doc.space_slug ?? "");
       if (space && node.data.knowledge.spaces.length && !node.data.knowledge.spaces.includes(space)) {

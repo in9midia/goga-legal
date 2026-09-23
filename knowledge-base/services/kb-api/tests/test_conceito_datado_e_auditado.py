@@ -20,6 +20,7 @@ confiança. O que está travado aqui:
 from __future__ import annotations
 
 import datetime
+import json
 
 import pytest
 
@@ -37,10 +38,23 @@ def conceito(frontmatter: str) -> okf.Concept:
 
 
 def test_data_sem_aspas_vem_do_yaml_como_date_e_sai_em_iso():
-    # `de: 1990-09-11` sem aspas: o PyYAML converte sozinho para datetime.date.
+    # `de: 1990-09-11` sem aspas: o PyYAML converte sozinho para datetime.date,
+    # e o parser devolve em ISO ja no `meta` (que vai inteiro para JSONB).
     c = conceito("type: Norma\nvigencia:\n  de: 1990-09-11\n  ate: null")
-    assert isinstance(c.meta["vigencia"]["de"], datetime.date)
+    assert c.meta["vigencia"]["de"] == "1990-09-11"
     assert c.vigencia == {"de": "1990-09-11", "ate": ""}
+
+
+def test_data_em_chave_extra_nao_quebra_o_jsonb():
+    # Regressao: `consultado_em` e `verified[].at` sem aspas derrubavam a
+    # ingestao com "Object of type date is not JSON serializable".
+    c = conceito(
+        "type: Norma\nfonte:\n  consultado_em: 2026-09-22\n"
+        "verified:\n  - by: machine\n    at: 2026-09-22"
+    )
+    json.dumps(c.meta)
+    assert c.meta["fonte"]["consultado_em"] == "2026-09-22"
+    assert c.meta["verified"][0]["at"] == "2026-09-22"
 
 
 def test_data_com_aspas_sai_igual_a_data_sem_aspas():

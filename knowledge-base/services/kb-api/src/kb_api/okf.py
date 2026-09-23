@@ -387,7 +387,23 @@ def _yaml(texto: str) -> dict | None:
         # conceito OKF, e segue pelo caminho comum.
         log.info("frontmatter nao e YAML valido (%s); tratando como Markdown comum", exc)
         return None
-    return dados if isinstance(dados, dict) else None
+    return _sem_datas(dados) if isinstance(dados, dict) else None
+
+
+def _sem_datas(valor: object) -> object:
+    """Datas do YAML em texto ISO, em qualquer profundidade.
+
+    `safe_load` devolve `2026-09-22` sem aspas como `datetime.date`, e o
+    frontmatter inteiro (chaves extras inclusive) vai para uma coluna JSONB --
+    sem isto a ingestao morre em `Object of type date is not JSON serializable`.
+    """
+    if isinstance(valor, dict):
+        return {chave: _sem_datas(item) for chave, item in valor.items()}
+    if isinstance(valor, list):
+        return [_sem_datas(item) for item in valor]
+    if isinstance(valor, date):
+        return valor.isoformat()
+    return valor
 
 
 def _texto(valor: object, limite: int = 0) -> str:

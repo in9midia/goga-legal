@@ -33,6 +33,8 @@ export interface LlmResult {
   costUsd: number;
   modelId: string;
   spanId: string;
+  /** "length" = cortada pelo limite de tokens: o texto esta incompleto. */
+  finishReason?: string;
 }
 
 export async function callLlm(c: LlmCall): Promise<LlmResult> {
@@ -118,7 +120,7 @@ async function callOnce(c: LlmCall, modelRowId: string): Promise<LlmResult> {
       tokensCache,
       costUsd: cost,
     });
-    return { text: result.text, tokensIn, tokensOut, costUsd: cost, modelId: modelRowId, spanId: span.id };
+    return { text: result.text, tokensIn, tokensOut, costUsd: cost, modelId: modelRowId, spanId: span.id, finishReason: result.finishReason };
   } catch (err) {
     await span.fail(err);
     throw err;
@@ -139,7 +141,11 @@ export async function generateJson<S extends z.ZodTypeAny>(
   schemaDef: S,
 ): Promise<{ value: z.infer<S>; result: LlmResult }> {
   const first = await callLlm(c);
-  const parsed = tryParse(first.text, schemaDef);
+  // Resposta cortada pelo limite de tokens nunca e aceita, mesmo que dela se
+  // extraia um JSON: a varredura acharia um objeto interno (um item do
+  // ranking, por exemplo) e ele passaria como se fosse a resposta inteira.
+  const truncated = first.finishReason === "length";
+  const parsed = truncated ? ({ ok: false, error: "resposta cortada pelo limite de tokens" } as const) : tryParse(first.text, schemaDef);
   if (parsed.ok) return { value: parsed.value, result: first };
 
   const repair = await callLlm({
@@ -152,11 +158,13 @@ export async function generateJson<S extends z.ZodTypeAny>(
       { role: "assistant", content: first.text },
       {
         role: "user",
-        content: `Sua resposta não é um JSON válido no formato pedido (${parsed.error}). Responda de novo APENAS com o JSON, sem texto antes ou depois, sem cercas de código.`,
+        content: truncated
+          ? "Sua resposta foi cortada pelo limite de tamanho. Responda de novo APENAS com o JSON, bem mais curto: listas enxutas e textos breves, sem texto antes ou depois, sem cercas de código."
+          : `Sua resposta não é um JSON válido no formato pedido (${parsed.error}). Responda de novo APENAS com o JSON, sem texto antes ou depois, sem cercas de código.`,
       },
     ],
   });
-  const second = tryParse(repair.text, schemaDef);
+  const second = repair.finishReason === "length" ? ({ ok: false, error: "resposta cortada pelo limite de tokens de novo; aumente o maxTokens do nó" } as const) : tryParse(repair.text, schemaDef);
   if (second.ok) {
     return {
       value: second.value,

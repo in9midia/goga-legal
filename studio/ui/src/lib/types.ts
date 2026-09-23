@@ -29,6 +29,20 @@ export interface Model {
   usable?: boolean;
 }
 
+export interface DiscoveredModel {
+  modelId: string;
+  label: string;
+  source: "catalogo" | "nenhum" | "indisponivel";
+  priceInPer1m: number | null;
+  priceOutPer1m: number | null;
+  priceCachePer1m: number | null;
+  contextWindow: number | null;
+  purpose: Model["purpose"] | null;
+  supportsTools: boolean | null;
+  supportsJson: boolean | null;
+  registered: boolean;
+}
+
 export interface Provider {
   id: string;
   name: string;

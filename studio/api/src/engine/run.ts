@@ -4,7 +4,7 @@ import { flowGraphSchema, type FlowGraph } from "../shared/graph.js";
 import { HttpError, notFound } from "../lib/errors.js";
 import type { SessionUser } from "../lib/auth.js";
 import type { RunContext } from "./context.js";
-import { executeTurn, type TurnOutcome } from "./executor.js";
+import { executeTurn, type TurnInput, type TurnOutcome } from "./executor.js";
 import { RunTracer, errorMessage, publish } from "./tracer.js";
 
 export interface RunTarget {
@@ -39,10 +39,11 @@ export async function startTurn(args: {
 }): Promise<{ runId: string; messageId: string }> {
   const target = await resolveTarget(args.target);
   const history = await db
-    .select({ role: schema.message.role, content: schema.message.content })
+    .select({ role: schema.message.role, content: schema.message.content, payload: schema.message.payload })
     .from(schema.message)
     .where(eq(schema.message.sessionId, args.sessionId))
-    .orderBy(asc(schema.message.createdAt));
+    .orderBy(asc(schema.message.createdAt))
+    .then((rows) => rows.map(({ payload, ...m }) => ({ ...m, status: (payload as { status?: string } | null)?.status ?? null })));
   const files = args.fileIds.length
     ? await db
         .select()
@@ -94,7 +95,7 @@ export async function startTurn(args: {
   return { runId: runRow.id, messageId: msg.id };
 }
 
-async function runInBackground(ctx: RunContext, input: { message: string; history: { role: "user" | "assistant"; content: string }[] }, _userMsgId: string) {
+async function runInBackground(ctx: RunContext, input: TurnInput, _userMsgId: string) {
   let outcome: TurnOutcome | null = null;
   let error: string | null = null;
   try {

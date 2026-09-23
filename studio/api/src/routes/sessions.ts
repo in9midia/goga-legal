@@ -8,6 +8,7 @@ import { saveFile, readFileData } from "../files/storage.js";
 import { extractText } from "../files/extract.js";
 import { startTurn } from "../engine/run.js";
 import { channel, hasChannel } from "../engine/tracer.js";
+import { runTranscript, sessionTranscript } from "../engine/transcript.js";
 import type { RunEvent, SpanRecord } from "../shared/graph.js";
 
 const MAX_UPLOAD = 25 * 1024 * 1024;
@@ -48,6 +49,23 @@ export async function sessionRoutes(app: FastifyInstance) {
     const runIds = messages.map((m) => m.runId).filter(Boolean) as string[];
     const runs = runIds.length ? await db.select({ id: schema.run.id, status: schema.run.status, costUsd: schema.run.costUsd, flowName: schema.run.flowName, flowRevision: schema.run.flowRevision, isProduction: schema.run.isProduction }).from(schema.run).where(inArray(schema.run.id, runIds)) : [];
     return { session: s, messages, files: files.map(({ extracted, ...f }) => ({ ...f, extractedChars: extracted?.length ?? 0 })), runs };
+  });
+
+  // Transcricao completa (Markdown) de todas as interacoes e execucoes, para
+  // copiar e revisar fora do Studio. Admin pode exportar conversa de outros.
+  app.get<{ Params: { id: string } }>("/api/v1/sessions/:id/transcript", async (req, reply) => {
+    const me = requireUser(req);
+    if (me.role !== "admin") await ownSession(req.params.id, me.id);
+    const md = await sessionTranscript(req.params.id);
+    if (md === null) throw notFound("conversa");
+    return reply.header("content-type", "text/markdown; charset=utf-8").send(md);
+  });
+
+  app.get<{ Params: { id: string } }>("/api/v1/runs/:id/transcript", async (req, reply) => {
+    requireUser(req);
+    const md = await runTranscript(req.params.id);
+    if (md === null) throw notFound("execução");
+    return reply.header("content-type", "text/markdown; charset=utf-8").send(md);
   });
 
   app.put<{ Params: { id: string } }>("/api/v1/sessions/:id", async (req) => {

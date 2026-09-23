@@ -9,6 +9,7 @@ import { requireAdmin, requireUser } from "../lib/auth.js";
 import { encrypt, decrypt } from "../lib/crypto.js";
 import { badRequest, notFound } from "../lib/errors.js";
 import { buildLanguageModel } from "../llm/models.js";
+import { discoverModels, lookupPrice } from "../llm/catalog.js";
 
 type ProviderRow = typeof schema.provider.$inferSelect;
 // A chave nunca sai da API: so os 4 ultimos caracteres (ADR-0009 da KB).
@@ -110,6 +111,43 @@ export async function providerRoutes(app: FastifyInstance) {
     } catch (err) {
       return { ok: false, ms: Date.now() - t0, error: (err as Error).message.slice(0, 400) };
     }
+  });
+
+  // Os modelos que a chave gravada alcanca, com preco do catalogo do LiteLLM.
+  // Usa sempre o endpoint do PROPRIO cadastro: aceitar outro faria desta rota
+  // um vazador da chave cifrada.
+  app.get<{ Params: { id: string } }>("/api/v1/providers/:id/available-models", async (req) => {
+    requireAdmin(req);
+    const [p] = await db.select().from(schema.provider).where(eq(schema.provider.id, req.params.id));
+    if (!p) throw notFound("provedor");
+    const { models, priceSource } = await discoverModels(p);
+    const existing = new Set((await db.select({ modelId: schema.model.modelId }).from(schema.model).where(eq(schema.model.providerId, p.id))).map((m) => m.modelId));
+    return { priceSource, models: models.map((m) => ({ ...m, registered: existing.has(m.modelId) })) };
+  });
+
+  // Preco de um modelo avulso, para o formulario preencher. Nao grava nada.
+  app.post("/api/v1/models/price-lookup", async (req) => {
+    requireAdmin(req);
+    const b = z.object({ providerId: z.string().uuid(), modelId: z.string().min(1) }).safeParse(req.body);
+    if (!b.success) throw badRequest("dados inválidos", b.error.issues);
+    const [p] = await db.select().from(schema.provider).where(eq(schema.provider.id, b.data.providerId));
+    if (!p) throw notFound("provedor");
+    return lookupPrice(p.kind, b.data.modelId);
+  });
+
+  // Cadastra de uma vez os modelos escolhidos na lista detectada.
+  app.post<{ Params: { id: string } }>("/api/v1/providers/:id/models/import", async (req) => {
+    const me = requireAdmin(req);
+    const b = z.object({ models: z.array(modelBody.omit({ providerId: true, isDefault: true })).min(1) }).safeParse(req.body);
+    if (!b.success) throw badRequest("dados inválidos", b.error.issues);
+    const [p] = await db.select().from(schema.provider).where(eq(schema.provider.id, req.params.id));
+    if (!p) throw notFound("provedor");
+    const existing = new Set((await db.select({ modelId: schema.model.modelId }).from(schema.model).where(eq(schema.model.providerId, p.id))).map((m) => m.modelId));
+    const fresh = b.data.models.filter((m) => !existing.has(m.modelId));
+    if (!fresh.length) return { models: [] };
+    const created = await db.insert(schema.model).values(fresh.map((m) => ({ ...m, providerId: p.id }))).returning();
+    await audit(me, "import", "model", p.id, null, { provider: p.name, models: created.map((m) => m.modelId) });
+    return { models: created };
   });
 
   app.get("/api/v1/models", async (req) => {

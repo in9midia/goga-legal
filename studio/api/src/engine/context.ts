@@ -30,4 +30,6 @@ export interface RunContext {
   maxRunCostUsd: number;
   files: SessionFile[];
   generated: GeneratedDoc[];
+  /** Documentos que alguma busca na KB devolveu nesta execucao. So eles podem ser abertos. */
+  kbDocIds?: Set<number>;
 }

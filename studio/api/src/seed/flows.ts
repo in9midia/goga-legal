@@ -96,7 +96,7 @@ function classifierNode(position: { x: number; y: number }): FlowNode {
     data: data({
       name: p?.name ?? "Classificador",
       prompt: { system: p?.prompt ?? "", outputFormat: "livre", examples: "" },
-      model: { modelId: null, temperature: 0, maxTokens: 1500, timeoutMs: 60000, maxCostUsd: 0.02, fallbackModelId: null },
+      model: { modelId: null, temperature: 0, maxTokens: 4000, timeoutMs: 60000, maxCostUsd: 0.02, fallbackModelId: null },
       routing: {
         routingThreshold: Number(c.routing_threshold ?? 0.55),
         clarifyThreshold: Number(c.clarify_threshold ?? 0.35),

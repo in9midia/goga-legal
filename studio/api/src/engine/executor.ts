@@ -24,7 +24,8 @@ import {
 
 export interface TurnInput {
   message: string;
-  history: { role: "user" | "assistant"; content: string }[];
+  /** `status` so vem nas mensagens do assistente (status do turno que as gerou). */
+  history: { role: "user" | "assistant"; content: string; status?: string | null }[];
 }
 
 export interface SpecialistResult {
@@ -54,6 +55,9 @@ export interface TurnOutcome {
 type Specialty = typeof schema.specialty.$inferSelect;
 
 const HISTORY_TURNS = 6;
+/** Esclarecimentos seguidos antes de o motor rotear com o que tem. */
+const MAX_CLARIFY_STREAK = 2;
+const GENERIC_CLARIFY = "Pode me contar um pouco mais sobre o que aconteceu, com quem (empresa ou órgão) e quando?";
 
 export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<TurnOutcome> {
   const g = ctx.graph;
@@ -85,6 +89,15 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
   const globalRules = [g.settings.globalRules, g.settings.tone && `Tom: ${g.settings.tone}`, `Idioma: ${g.settings.language}`].filter(Boolean).join("\n\n");
   const modelFor = (n: FlowNode) => n.data.model.modelId ?? g.settings.defaultModelId;
   const historyMsgs: ModelMessage[] = input.history.slice(-HISTORY_TURNS).map((h) => ({ role: h.role, content: h.content }));
+  // Esclarecimentos seguidos no fim da conversa e as perguntas ja feitas: sem
+  // isso o classificador pergunta de novo o que o usuario acabou de responder.
+  const assistantTurns = input.history.filter((h) => h.role === "assistant");
+  let clarifyStreak = 0;
+  for (let i = assistantTurns.length - 1; i >= 0 && assistantTurns[i].status === "clarify"; i--) clarifyStreak++;
+  const askedQuestions = assistantTurns.filter((h) => h.status === "clarify").map((h) => h.content.trim());
+  // O relato do caso esta espalhado pelas mensagens do usuario: a busca na KB
+  // precisa dele inteiro, nao so da ultima resposta ("sim, gastei 300 reais").
+  const caseText = [...input.history.filter((h) => h.role === "user").slice(-4).map((h) => h.content), input.message].join("\n").slice(-2000);
 
   const baseCall = (n: FlowNode, parentId: string, name: string, system: string, messages: ModelMessage[]): LlmCall => {
     const modelId = modelFor(n);
@@ -128,7 +141,8 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
     mark(entry.id);
     const ficha = await ctx.tracer.wrap({ kind: "agent", name: entry.data.name, nodeId: entry.id, parentId: root.id, input: { mensagem: input.message } }, async () => {
       const anexos = ctx.files.map((f) => `### Anexo: ${f.name}\n${f.text ? f.text.slice(0, 6000) : "(sem texto extraído)"}`).join("\n\n");
-      const hist = input.history.slice(-HISTORY_TURNS).map((h) => `${h.role === "user" ? "Usuário" : "Goga"}: ${h.content.slice(0, 800)}`).join("\n");
+      // Relato do usuario e o que importa: corte largo. Resposta do Goga, curto.
+      const hist = input.history.slice(-HISTORY_TURNS).map((h) => (h.role === "user" ? `Usuário: ${h.content.slice(0, 6000)}` : `Goga: ${h.content.slice(0, 800)}`)).join("\n");
       return [
         `## Mensagem atual\n${input.message.trim()}`,
         hist && `## Conversa anterior\n${hist}`,
@@ -161,6 +175,11 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
         renderVars(classifier.data.prompt.system, { ...vars, especialidades }) +
         section("Regras globais", globalRules) +
         section("Gatilhos de exclusão (fora de escopo: só detectar e encaminhar)", routing.exclusionTriggers) +
+        section(
+          "Perguntas de esclarecimento já feitas nesta conversa (NÃO repita; considere as respostas do usuário na conversa anterior)",
+          askedQuestions,
+        ) +
+        (clarifyStreak >= MAX_CLARIFY_STREAK ? section("Limite de esclarecimentos", "Já foram feitas perguntas demais. Não peça esclarecimento: classifique com os fatos disponíveis.") : "") +
         rulesOf(classifier) +
         `\n\n## Candidatos\n<<candidatos>>${JSON.stringify(candidateInfo)}<</candidatos>>\n\n` +
         FORMAT.classificador;
@@ -168,8 +187,17 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
       return value;
     });
 
+    // O modelo pode identificar o candidato pelo numero da especialidade (o
+    // prompt do preset pede assim) em vez do nodeId: traduz aqui.
+    cls.ranking = cls.ranking
+      .map((r) => {
+        if (candidates.some((c) => c.id === r.nodeId)) return r;
+        const byNumber = r.especialidade != null ? candidates.find((c) => c.data.specialtyNumber === r.especialidade) : undefined;
+        return byNumber ? { ...r, nodeId: byNumber.id } : r;
+      })
+      .filter((r) => candidates.some((c) => c.id === r.nodeId));
     const scoreOf = new Map(cls.ranking.map((r) => [r.nodeId, r.score]));
-    const ranked = [...cls.ranking].filter((r) => candidates.some((c) => c.id === r.nodeId)).sort((a, b) => b.score - a.score);
+    const ranked = [...cls.ranking].sort((a, b) => b.score - a.score);
     const top = ranked[0]?.score ?? 0;
 
     let selected: FlowNode[] = [];
@@ -180,9 +208,14 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
     } else if (cls.fora_de_escopo) {
       decision = encaminhamento ? "encaminhamento" : "fora_de_escopo_sem_no";
       if (encaminhamento) selected = [encaminhamento];
-    } else if (cls.precisa_esclarecimento || top < routing.clarifyThreshold) {
+    } else if (clarifyStreak >= MAX_CLARIFY_STREAK && top === 0) {
+      // Limite de esclarecimentos atingido e ainda sem ranking: perguntar de
+      // novo so prende o usuario num loop. Falha visivel, com trace.
+      throw new Error("Classificador não produziu ranking utilizável após o limite de esclarecimentos (veja a saída da Classificação no trace).");
+    } else if ((cls.precisa_esclarecimento || top < routing.clarifyThreshold) && clarifyStreak < MAX_CLARIFY_STREAK) {
       decision = "esclarecimento";
     } else {
+      if (cls.precisa_esclarecimento || top < routing.clarifyThreshold) flags.push("esclarecimento_esgotado");
       const above = ranked.filter((r) => r.score >= routing.routingThreshold);
       const pick = (above.length ? above : ranked.slice(0, 1)).slice(0, cls.polo === "reu" && routing.defendantFastPath ? 1 : routing.maxSpecialists);
       selected = pick.map((r) => node(r.nodeId)).filter((n) => n.data.specialtyNumber !== 5 || cls.fora_de_escopo);
@@ -190,7 +223,7 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
       decision = "roteamento";
       if (cls.polo === "reu" && routing.defendantFastPath) flags.push("polo_reu_fast_path");
     }
-    await ctx.tracer.wrap({ kind: "route", name: `Roteamento: ${decision}`, nodeId: classifier.id, parentId: root.id, input: { limiar_roteamento: routing.routingThreshold, limiar_esclarecimento: routing.clarifyThreshold, top } }, async () => ({
+    await ctx.tracer.wrap({ kind: "route", name: `Roteamento: ${decision}`, nodeId: classifier.id, parentId: root.id, input: { limiar_roteamento: routing.routingThreshold, limiar_esclarecimento: routing.clarifyThreshold, top, esclarecimentos_seguidos: clarifyStreak } }, async () => ({
       decisao: decision,
       selecionados: selected.map((n) => ({ nodeId: n.id, nome: n.data.name, score: scoreOf.get(n.id) })),
     }));
@@ -213,7 +246,14 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
       return finish({ status: "blocked", resposta_simples: "Este assunto está fora do que o Goga orienta. Procure a Defensoria Pública, a OAB da sua cidade ou um advogado.", resposta_tecnica: "Fora de escopo e o fluxo não tem nó de Encaminhamento (Ag. 5).", citacoes: [], documentos: [], especialistas: [], classificacao: cls });
     }
     if (decision === "esclarecimento") {
-      const q = cls.pergunta_esclarecimento.trim() || "Pode me contar um pouco mais sobre o que aconteceu, com quem (empresa ou órgão) e quando?";
+      const asked = new Set(askedQuestions);
+      const own = cls.pergunta_esclarecimento.trim();
+      const q =
+        own && !asked.has(own)
+          ? own
+          : !asked.has(GENERIC_CLARIFY)
+            ? GENERIC_CLARIFY
+            : "Há mais algum detalhe importante que eu ainda não sei? Se não houver, responda “não” e eu sigo com a orientação.";
       return finish({ status: "clarify", resposta_simples: q, resposta_tecnica: `Score máximo ${top.toFixed(2)} abaixo do limiar de esclarecimento ${routing.clarifyThreshold} ou lacuna apontada pelo classificador (regra-mãe: uma lacuna por vez).`, citacoes: [], documentos: [], especialistas: [], classificacao: cls });
     }
 
@@ -227,7 +267,7 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
         let evidencias = "";
         if (n.data.knowledge.spaces.length) {
           try {
-            const r = (await runSkill("buscar_kb", { consulta: input.message }, env)) as { resultados: { titulo: string; base: string; pagina: number | null; trecho: string; armadilha: string | null; document_id: number }[] };
+            const r = (await runSkill("buscar_kb", { consulta: caseText }, env)) as { resultados: { titulo: string; base: string; pagina: number | null; trecho: string; armadilha: string | null; document_id: number }[] };
             evidencias = r.resultados
               .filter((p) => !(n.data.knowledge.verifiedOnly && p.armadilha))
               .map((p, i) => `[${i + 1}] ${p.titulo} (base ${p.base}${p.pagina ? `, p. ${p.pagina}` : ""}, doc ${p.document_id})${p.armadilha ? `\n⚠ ARMADILHA: ${p.armadilha}` : ""}\n${p.trecho}`)
