@@ -1,6 +1,6 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { BookOpen, BrainCircuit, ClipboardList, ExternalLink, FlaskConical, History, LibraryBig, LogOut, type LucideIcon, MessagesSquare, Receipt, ShieldCheck, Users, Workflow } from "lucide-react";
+import { BookOpen, BrainCircuit, ClipboardList, ExternalLink, FlaskConical, History, LibraryBig, LogOut, type LucideIcon, MessagesSquare, Plug, Sparkles, Receipt, ShieldCheck, Users, Workflow } from "lucide-react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
@@ -19,6 +19,13 @@ const groups: { label?: string; items: Item[] }[] = [
       { to: "/eval", label: "Avaliação em lote", icon: FlaskConical },
       { to: "/costs", label: "Custos", icon: Receipt },
       { to: "/audit", label: "Auditoria", icon: ClipboardList, admin: true },
+    ],
+  },
+  {
+    label: "Capacidades",
+    items: [
+      { to: "/skills", label: "Skills", icon: Sparkles },
+      { to: "/mcp", label: "Servidores MCP", icon: Plug },
     ],
   },
   { label: "Conhecimento", items: [{ to: "kb", label: "Bases (KB)", icon: LibraryBig, external: true }] },

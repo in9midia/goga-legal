@@ -80,22 +80,61 @@ export const specialty = pgTable("specialty", {
   zone: text("zone").notNull().default("verde"),
 });
 
+// Skills e servidores MCP sao cadastros editaveis. As skills "builtin" tem a
+// implementacao no codigo (skills/index.ts): o seed garante a linha e o
+// esquema de entrada, mas nome, descricao, instrucoes e o liga/desliga sao da
+// curadoria e o seed nao os sobrescreve. `defaults` guarda o texto do codigo
+// para o "restaurar padrao".
 export const skill = pgTable("skill", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   description: text("description").notNull(),
   inputSchema: jsonb("input_schema").notNull(),
-  kind: text("kind").notNull().default("builtin"),
+  kind: text("kind", { enum: ["builtin", "prompt", "http"] }).notNull().default("builtin"),
+  enabled: boolean("enabled").notNull().default(true),
+  llmTool: boolean("llm_tool").notNull().default(true),
+  // Texto injetado no prompt dos agentes que tem a skill. Numa skill "prompt"
+  // e o proprio corpo (o SKILL.md); nas outras, orientacao de uso opcional.
+  instructions: text("instructions").notNull().default(""),
+  // http: { url, method, timeoutMs }
+  config: jsonb("config").notNull().default({}),
+  // Cabecalhos do http (podem ter token), cifrados como a chave de API.
+  secretEnc: text("secret_enc").notNull().default(""),
+  defaults: jsonb("defaults"),
+  source: text("source").notNull().default(""),
+  version: integer("version").notNull().default(1),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const mcpServer = pgTable("mcp_server", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   url: text("url").notNull(),
+  transport: text("transport", { enum: ["http", "sse"] }).notNull().default("http"),
   authMode: text("auth_mode").notNull().default("none"),
+  headersEnc: text("headers_enc").notNull().default(""),
   toolsCache: jsonb("tools_cache").notNull().default([]),
   enabled: boolean("enabled").notNull().default(false),
   description: text("description").notNull().default(""),
+  // "system" = cadastrado pelo seed (a URL do goga-kb acompanha KB_URL).
+  origin: text("origin").notNull().default("custom"),
+  lastError: text("last_error"),
+  checkedAt: timestamp("checked_at", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Modelos de documento (gerar_documento). O seed insere os de
+// seed/templates.json uma vez e nao sobrescreve: o texto e da curadoria. Os do
+// seed nao se excluem (voltariam no proximo boot), so se desativam; o
+// "restaurar padrao" le o arquivo de seed.
+export const docTemplate = pgTable("doc_template", {
+  slug: text("slug").primaryKey(),
+  title: text("title").notNull(),
+  description: text("description").notNull().default(""),
+  fields: jsonb("fields").$type<{ nome: string; rotulo: string; obrigatorio?: boolean }[]>().notNull().default([]),
+  body: text("body").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const flow = pgTable("flow", {

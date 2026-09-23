@@ -9,6 +9,8 @@ import { HttpError } from "./lib/errors.js";
 import { authRoutes } from "./routes/auth.js";
 import { providerRoutes } from "./routes/providers.js";
 import { catalogRoutes } from "./routes/catalog.js";
+import { skillRoutes } from "./routes/skills.js";
+import { mcpRoutes } from "./routes/mcp.js";
 import { flowRoutes } from "./routes/flows.js";
 import { sessionRoutes } from "./routes/sessions.js";
 import { runRoutes } from "./routes/runs.js";
@@ -44,6 +46,8 @@ export async function buildApp() {
   await app.register(authRoutes);
   await app.register(providerRoutes);
   await app.register(catalogRoutes);
+  await app.register(skillRoutes);
+  await app.register(mcpRoutes);
   await app.register(flowRoutes);
   await app.register(sessionRoutes);
   await app.register(runRoutes);

@@ -30,7 +30,10 @@ const ENTITIES: Record<string, string> = {
   provider: "Provedor",
   model: "Modelo",
   specialty: "Especialidade",
+  doc_template: "Modelo de documento",
   user: "Usuário",
+  skill: "Skill",
+  mcp_server: "Servidor MCP",
 };
 
 const ACTIONS: Record<string, [string, Tone]> = {
@@ -43,6 +46,8 @@ const ACTIONS: Record<string, [string, Tone]> = {
   delete: ["excluiu", "bad"],
   publish: ["publicou", "ok"],
   duplicate: ["duplicou", "info"],
+  import: ["instalou", "ok"],
+  reset: ["restaurou padrão", "warn"],
 };
 
 const ALL = "__all";

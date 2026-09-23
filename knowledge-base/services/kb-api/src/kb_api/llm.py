@@ -108,6 +108,9 @@ def _adaptar(corpo: dict, erro: str) -> str:
     if "max_completion_tokens" in erro and "max_tokens" in corpo:
         corpo["max_completion_tokens"] = corpo.pop("max_tokens")
         return "max_tokens virou max_completion_tokens"
+    if "thinking" in erro and "thinking" in corpo:
+        del corpo["thinking"]
+        return "thinking removido (o modelo nao aceita desligar o raciocinio)"
     if "temperature" in erro and "temperature" in corpo:
         # Sem temperatura explicita o modelo usa o default (1). Perde-se o zero
         # que garantia conceito igual para ingestao repetida -- mas metadado
@@ -166,6 +169,14 @@ def _post(
     # corpo. Mandar nos dois lugares faz o Azure recusar com 400.
     if dialeto.modelo_no_corpo:
         corpo["model"] = provedor.model
+    # DeepSeek V4 raciocina por padrao, e o raciocinio sai do MESMO teto de
+    # tokens. Medido na extracao de grafo sobre um trecho de lei de 6000
+    # caracteres: 4000 tokens so de raciocinio, `finish_reason: length`,
+    # `content` vazio e 16 s perdidos por trecho. Sem raciocinio, 2 s e JSON
+    # valido. Extracao estruturada nao ganha nada pensando; se o provedor
+    # recusar o campo, `_adaptar` o retira.
+    if "deepseek" in endpoint.lower():
+        corpo["thinking"] = {"type": "disabled"}
 
     dados_brutos = json.dumps(corpo).encode()
     cabecalhos = {
@@ -227,6 +238,13 @@ def _post(
         log.warning("o provedor de chat devolveu resposta sem `choices`")
         return None, gasto, "o provedor devolveu resposta sem `choices`"
     conteudo = (escolhas[0].get("message") or {}).get("content") or ""
+    if not conteudo and escolhas[0].get("finish_reason") == "length":
+        # O teto acabou antes de sair qualquer resposta -- tipico de modelo de
+        # raciocinio. Sem este aviso a falha so aparece como contador no dashboard.
+        log.warning(
+            "%s esgotou max_tokens=%s sem responder (raciocinio consumiu o teto)",
+            provedor.name, max_tokens,
+        )
     dados = _extrair_json(conteudo)
     erro = "" if dados is not None else f"a resposta nao e um objeto JSON: {conteudo[:200]}"
     return dados, gasto, erro

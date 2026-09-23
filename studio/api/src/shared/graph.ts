@@ -131,6 +131,9 @@ export interface GraphContext {
   activeChatModelIds?: Set<string>;
   kbSpaces?: Set<string> | null; // null = KB fora do ar; nao valida bases
   skills?: Set<string>;
+  disabledSkills?: Set<string>;
+  mcpServers?: Set<string>;
+  disabledMcpServers?: Set<string>;
 }
 
 /** Validacao estrutural (padrao `{errors:[{code,nodeId,message}]}` do agentic-sdlc). */
@@ -233,6 +236,13 @@ export function validateGraph(graph: FlowGraph, ctx: GraphContext = {}): GraphEr
     if (ctx.skills) {
       for (const s of n.data.tools.skills) {
         if (!ctx.skills.has(s)) errors.push({ code: "skill_missing", nodeId: n.id, message: `"${n.data.name}": skill "${s}" desconhecida.` });
+        else if (ctx.disabledSkills?.has(s)) errors.push({ code: "skill_disabled", nodeId: n.id, message: `"${n.data.name}": skill "${s}" está desativada.` });
+      }
+    }
+    if (ctx.mcpServers) {
+      for (const server of new Set(n.data.tools.mcp.map((m) => m.split(":")[0]))) {
+        if (!ctx.mcpServers.has(server)) errors.push({ code: "mcp_missing", nodeId: n.id, message: `"${n.data.name}": servidor MCP "${server}" não existe.` });
+        else if (ctx.disabledMcpServers?.has(server)) errors.push({ code: "mcp_disabled", nodeId: n.id, message: `"${n.data.name}": servidor MCP "${server}" está desabilitado.` });
       }
     }
   }

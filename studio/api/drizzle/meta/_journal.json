@@ -8,6 +8,20 @@
       "when": 1790115250362,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790124250328,
+      "tag": "0001_skills_mcp_editaveis",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790126350763,
+      "tag": "0002_modelos_documento",
+      "breakpoints": true
     }
   ]
 }

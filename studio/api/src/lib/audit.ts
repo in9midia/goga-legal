@@ -4,7 +4,7 @@ import type { SessionUser } from "./auth.js";
 // Campos que nunca entram no diff da auditoria. A chave cifrada nao e segredo em
 // claro, mas o log de auditoria e lido por mais gente que o banco, e o diff so
 // precisa dizer "a chave foi alterada".
-const REDACT = new Set(["apiKeyEnc", "api_key_enc", "passwordHash", "password_hash", "apiKey"]);
+const REDACT = new Set(["apiKeyEnc", "api_key_enc", "passwordHash", "password_hash", "apiKey", "secretEnc", "headersEnc"]);
 
 function redact(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(redact);

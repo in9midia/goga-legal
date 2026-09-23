@@ -394,3 +394,16 @@ def test_testar_nunca_levanta(monkeypatch):
     monkeypatch.setattr(llm.urllib.request, "urlopen", explode)
     ok, erro, _ = llm.testar(_provedor("openai"))
     assert ok is False and "rede" in erro
+
+
+def test_deepseek_desliga_o_raciocinio(monkeypatch):
+    """Raciocinio consome o teto de tokens e devolvia `content` vazio no grafo."""
+    from kb_api import llm
+
+    visto = _captura(monkeypatch, _OK)
+    llm._post(_provedor("openai", endpoint="https://api.deepseek.com"), [{"role": "user", "content": "x"}], 600)
+    assert visto["body"]["thinking"] == {"type": "disabled"}
+
+    visto = _captura(monkeypatch, _OK)
+    llm._post(_provedor("openai"), [{"role": "user", "content": "x"}], 600)
+    assert "thinking" not in visto["body"]

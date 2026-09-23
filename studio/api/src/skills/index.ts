@@ -1,16 +1,21 @@
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { z } from "zod";
-import type { FlowNode } from "../shared/graph.js";
+import { db, schema } from "../db/index.js";
+import { flowNodeSchema, flowSettingsSchema, type FlowNode } from "../shared/graph.js";
 import type { RunContext } from "../engine/context.js";
+import { decrypt } from "../lib/crypto.js";
 import * as kb from "../kb/client.js";
 import { callTool } from "../mcp/client.js";
-import { seedChecklists, seedTemplates } from "../seed/files.js";
+import { seedChecklists } from "../seed/files.js";
+import { activeTemplates } from "../files/templates.js";
 import { saveFile } from "../files/storage.js";
 import { renderTemplate, toDocx, toPdf } from "../files/documents.js";
 import { calcularCorrecao, calcularPrazo, elegibilidadeJuizado, PRAZOS, type TipoPrazo } from "./legal.js";
 import { getIndices, latest } from "./indices.js";
 import { verifyCitations } from "./citations.js";
 import { checkCompliance } from "./compliance.js";
+
+export type SkillRow = typeof schema.skill.$inferSelect;
 
 export interface SkillEnv {
   ctx: RunContext;
@@ -39,6 +44,7 @@ function scopeSpaces(requested: string[] | undefined, node: FlowNode): string[] 
   return r.length ? r : allowed;
 }
 
+/** Skills com implementacao no codigo ("builtin"). Texto e liga/desliga vem do banco. */
 export const SKILLS: SkillDef[] = [
   def({
     id: "buscar_kb",
@@ -170,9 +176,10 @@ export const SKILLS: SkillDef[] = [
     }),
     llmTool: false,
     async run(i, { ctx }) {
-      const tpl = seedTemplates().find((t) => t.slug === i.modelo);
-      if (!tpl) return { erro: "modelo desconhecido", modelos: seedTemplates().map((t) => t.slug) };
-      const { text, missing } = renderTemplate(tpl.corpo_markdown, { data: new Date().toLocaleDateString("pt-BR"), ...i.campos });
+      const all = await activeTemplates();
+      const tpl = all.find((t) => t.slug === i.modelo);
+      if (!tpl) return { erro: "modelo desconhecido ou desativado", modelos: all.map((t) => t.slug) };
+      const { text, missing } = renderTemplate(tpl.body, { data: new Date().toLocaleDateString("pt-BR"), ...i.campos });
       const base = tpl.slug;
       const out: { fileId: string; name: string }[] = [];
       if (i.formato !== "pdf") {
@@ -185,7 +192,7 @@ export const SKILLS: SkillDef[] = [
         ctx.generated.push({ fileId: f.id, name: f.name, mime: f.mime, template: base });
         out.push({ fileId: f.id, name: f.name });
       }
-      return { modelo: tpl.titulo, arquivos: out, campos_faltantes: missing };
+      return { modelo: tpl.title, arquivos: out, campos_faltantes: missing };
     },
   }),
   def({
@@ -202,26 +209,103 @@ export const SKILLS: SkillDef[] = [
 ];
 
 export const skillById = new Map(SKILLS.map((s) => [s.id, s]));
+export const BUILTIN_IDS = new Set(SKILLS.map((s) => s.id));
+
+/** Precisam de uma execucao de verdade (anexos, arquivos gerados): nao testam isoladas. */
+export const UNTESTABLE = new Set(["ler_anexo", "gerar_documento"]);
+
+export async function loadSkills(): Promise<Map<string, SkillRow>> {
+  return new Map((await db.select().from(schema.skill)).map((r) => [r.id, r]));
+}
+
+async function rowsOf(ctx: RunContext) {
+  ctx.skills ??= await loadSkills();
+  return ctx.skills;
+}
+
+/** Skills do no que existem e estao ligadas. Desligar uma skill a tira de todos os agentes. */
+export async function activeSkills(ctx: RunContext, node: FlowNode): Promise<SkillRow[]> {
+  const rows = await rowsOf(ctx);
+  return node.data.tools.skills.map((id) => rows.get(id)).filter((r): r is SkillRow => !!r?.enabled);
+}
+
+export async function hasSkill(ctx: RunContext, node: FlowNode, id: string) {
+  return (await activeSkills(ctx, node)).some((r) => r.id === id);
+}
+
+/** Bloco do prompt com as instrucoes das skills ativas do no (corpo das skills "prompt"). */
+export async function skillsPrompt(ctx: RunContext, node: FlowNode): Promise<string> {
+  const parts = (await activeSkills(ctx, node))
+    .filter((r) => r.instructions.trim())
+    .map((r) => `### ${r.name} (${r.id})\n${r.instructions.trim()}`);
+  return parts.length ? `\n\n## Skills\n${parts.join("\n\n")}` : "";
+}
+
+/** Executa a skill sem trace. `runSkill` e o teste isolado passam por aqui. */
+async function execSkill(row: SkillRow | undefined, id: string, input: unknown, env: SkillEnv): Promise<unknown> {
+  const code = skillById.get(id);
+  if (code && (!row || row.kind === "builtin")) return code.run(code.input.parse(input), env);
+  if (!row) throw new Error(`skill desconhecida: ${id}`);
+  if (row.kind === "http") return callHttpSkill(row, input);
+  // Skill de instrucoes nao executa: o texto dela vai no prompt.
+  return { instrucoes: row.instructions };
+}
+
+export function skillHeaders(row: Pick<SkillRow, "secretEnc">): Record<string, string> {
+  return row.secretEnc ? (JSON.parse(decrypt(row.secretEnc)) as Record<string, string>) : {};
+}
+
+async function callHttpSkill(row: SkillRow, input: unknown): Promise<unknown> {
+  const cfg = row.config as { url?: string; method?: string; timeoutMs?: number };
+  if (!cfg.url) throw new Error(`skill "${row.id}" sem URL configurada`);
+  const method = (cfg.method ?? "POST").toUpperCase();
+  const url = new URL(cfg.url);
+  if (method === "GET") for (const [k, v] of Object.entries((input ?? {}) as Record<string, unknown>)) url.searchParams.set(k, typeof v === "string" ? v : JSON.stringify(v));
+  const res = await fetch(url, {
+    method,
+    headers: { ...(method === "GET" ? {} : { "content-type": "application/json" }), ...skillHeaders(row) },
+    body: method === "GET" ? undefined : JSON.stringify(input ?? {}),
+    signal: AbortSignal.timeout(cfg.timeoutMs ?? 15_000),
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0, 500)}`);
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text.slice(0, 20_000);
+  }
+}
 
 /** Executa uma skill como span `tool` do trace. */
 export async function runSkill(id: string, input: unknown, env: SkillEnv): Promise<unknown> {
-  const s = skillById.get(id);
-  if (!s) throw new Error(`skill desconhecida: ${id}`);
-  return env.ctx.tracer.wrap({ kind: id.includes("kb") ? "kb" : "tool", name: `skill · ${s.name}`, parentId: env.parentId, nodeId: env.node.id, input }, async () => s.run(s.input.parse(input), env));
+  const row = (await rowsOf(env.ctx)).get(id);
+  if (!row && !skillById.has(id)) throw new Error(`skill desconhecida: ${id}`);
+  // O nome do span leva o id, e nao o nome de exibicao: o nome e editavel e as
+  // estatisticas de uso agregam por ele.
+  return env.ctx.tracer.wrap({ kind: id.includes("kb") ? "kb" : "tool", name: `skill · ${id}`, parentId: env.parentId, nodeId: env.node.id, input }, async () => execSkill(row, id, input, env));
 }
 
-/** Tools para o modelo: skills marcadas como `llmTool` + tools MCP do no. */
-export function toolsFor(env: SkillEnv, mcpTools: { server: string; name: string; description?: string; inputSchema: Record<string, unknown> }[] = []): ToolSet {
+/** Teste isolado (tela de skills): no ficticio com as bases pedidas, sem trace nem arquivos. */
+export async function testSkill(row: SkillRow, input: unknown, spaces: string[]) {
+  if (UNTESTABLE.has(row.id)) throw new Error("esta skill depende de uma conversa (anexos ou arquivos gerados); teste pelo Simulador");
+  const node = flowNodeSchema.parse({ id: "teste", type: "specialist", data: { name: "Teste de skill", knowledge: { spaces }, tools: { skills: [row.id] } } });
+  const ctx = { skills: new Map([[row.id, row]]), files: [], generated: [], graph: { nodes: [node], edges: [], settings: flowSettingsSchema.parse({}) } } as unknown as RunContext;
+  return execSkill(row, row.id, input, { ctx, node, parentId: null });
+}
+
+/** Tools para o modelo: skills ligadas com `llmTool` + tools MCP do no. */
+export async function toolsFor(env: SkillEnv, mcpTools: { server: string; name: string; description?: string; inputSchema: Record<string, unknown> }[] = []): Promise<ToolSet> {
   const set: ToolSet = {};
-  for (const id of env.node.data.tools.skills) {
-    const s = skillById.get(id);
-    if (!s?.llmTool) continue;
-    set[id] = tool({
-      description: s.description,
-      inputSchema: s.input,
+  for (const row of await activeSkills(env.ctx, env.node)) {
+    if (!row.llmTool || row.kind === "prompt") continue;
+    const code = skillById.get(row.id);
+    if (row.kind === "builtin" && !code) continue;
+    set[row.id] = tool({
+      description: row.description,
+      inputSchema: row.kind === "builtin" ? code!.input : jsonSchemaOf(row.inputSchema as Record<string, unknown>),
       execute: async (input: unknown) => {
         try {
-          return await runSkill(id, input, env);
+          return await runSkill(row.id, input, env);
         } catch (err) {
           // Erro volta ao modelo como resultado, nao como excecao: ele pode
           // corrigir o argumento (data em formato errado e o caso tipico).
@@ -265,7 +349,7 @@ export function skillCatalog() {
     name: s.name,
     description: s.description,
     inputSchema: z.toJSONSchema(s.input, { unrepresentable: "any" }),
-    kind: "builtin",
+    kind: "builtin" as const,
     llmTool: s.llmTool,
   }));
 }

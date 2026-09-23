@@ -13,6 +13,8 @@ import { ProvidersPage } from "./pages/admin/Providers";
 import { UsersPage } from "./pages/admin/Users";
 import { CatalogsPage } from "./pages/admin/Catalogs";
 import { EvalPage } from "./pages/Eval";
+import { SkillsPage } from "./pages/Skills";
+import { McpPage } from "./pages/Mcp";
 
 function Gate() {
   const { user, loading } = useAuth();
@@ -43,6 +45,8 @@ const router = createBrowserRouter([
           { path: "admin/providers", element: <ProvidersPage /> },
           { path: "admin/users", element: <UsersPage /> },
           { path: "admin/catalogs", element: <CatalogsPage /> },
+          { path: "skills", element: <SkillsPage /> },
+          { path: "mcp", element: <McpPage /> },
           { path: "*", element: <Navigate to="/simulator" replace /> },
         ],
       },

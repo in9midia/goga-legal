@@ -93,22 +93,102 @@ export interface Specialty {
   escalationRules: string[];
   phase: number;
   zone: string;
+  /** "system" = veio do seed (não se exclui, restaura padrão); "custom" = criada no Studio. */
+  origin: "system" | "custom";
 }
+
+export interface TemplateField {
+  nome: string;
+  rotulo: string;
+  obrigatorio?: boolean;
+}
+
+export interface DocTemplate {
+  slug: string;
+  title: string;
+  description: string;
+  fields: TemplateField[];
+  body: string;
+  enabled: boolean;
+  updatedAt: string;
+  origin: "system" | "custom";
+  /** Campos {{...}} encontrados no corpo. */
+  placeholders: string[];
+}
+
+export type SkillKind = "builtin" | "prompt" | "http";
 
 export interface Skill {
   id: string;
   name: string;
   description: string;
   inputSchema: unknown;
+  kind: SkillKind;
+  enabled: boolean;
+  llmTool: boolean;
+  instructions: string;
+  config: { url?: string; method?: string; timeoutMs?: number };
+  defaults: { name: string; description: string } | null;
+  source: string;
+  version: number;
+  updatedAt: string;
+  headerNames: string[];
+  testable: boolean;
+  usage30d?: { calls: number; errors: number };
+  flowCount?: number;
+}
+
+export interface McpTool {
+  name: string;
+  description?: string;
+  inputSchema?: unknown;
 }
 
 export interface McpServer {
   id: string;
   name: string;
   url: string;
+  transport: "http" | "sse";
   enabled: boolean;
   description: string;
-  toolsCache: { name: string; description?: string }[];
+  origin: "system" | "custom";
+  toolsCache: McpTool[];
+  headerNames: string[];
+  lastError: string | null;
+  checkedAt: string | null;
+  updatedAt: string;
+  flowCount?: number;
+}
+
+export interface FlowUse {
+  id: string;
+  name: string;
+  nodes: string[];
+  production: boolean;
+}
+
+export interface UsageStats {
+  days: number;
+  calls: number;
+  errors: number;
+  runs: number;
+  avgMs: number | null;
+  p95Ms: number | null;
+  lastAt: string | null;
+  daily: { day: string; calls: number; errors: number }[];
+  byName: { name: string; calls: number; errors: number; avgMs: number | null }[];
+  recentErrors: { runId: string; name: string; error: string | null; input: unknown; at: string }[];
+}
+
+export interface AuditEntry {
+  id: string;
+  actorEmail: string;
+  action: string;
+  entity: string;
+  entityId: string | null;
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+  at: string;
 }
 
 export interface KbSpace {

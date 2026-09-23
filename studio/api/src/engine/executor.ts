@@ -2,10 +2,10 @@ import type { ModelMessage } from "ai";
 import { db, schema } from "../db/index.js";
 import type { FlowGraph, FlowNode } from "../shared/graph.js";
 import { callLlm, generateJson, type LlmCall } from "../llm/call.js";
-import { runSkill, toolsFor } from "../skills/index.js";
+import { hasSkill, runSkill, skillsPrompt, toolsFor } from "../skills/index.js";
 import { checkCompliance } from "../skills/compliance.js";
 import type { CitationCheck } from "../skills/citations.js";
-import { seedTemplates } from "../seed/files.js";
+import { activeTemplates } from "../files/templates.js";
 import { listTools } from "../mcp/client.js";
 import type { RunContext } from "./context.js";
 import { errorMessage } from "./tracer.js";
@@ -25,7 +25,7 @@ import {
 export interface TurnInput {
   message: string;
   /** `status` so vem nas mensagens do assistente (status do turno que as gerou). */
-  history: { role: "user" | "assistant"; content: string; status?: string | null }[];
+  history: { role: "user" | "assistant"; content: string; status?: string | null; anexos?: string[] }[];
 }
 
 export interface SpecialistResult {
@@ -84,6 +84,7 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
   const path = () => ({ nodes: [...visited], edges: [...usedEdges] });
   const flags: string[] = [];
   const specialties = new Map<number, Specialty>((await db.select().from(schema.specialty)).map((s) => [s.number, s]));
+  const templates = await activeTemplates();
 
   const root = await ctx.tracer.start({ kind: "run", name: "Execução", input: { mensagem: input.message, anexos: ctx.files.map((f) => f.name) } });
   const globalRules = [g.settings.globalRules, g.settings.tone && `Tom: ${g.settings.tone}`, `Idioma: ${g.settings.language}`].filter(Boolean).join("\n\n");
@@ -119,7 +120,8 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
       maxCostUsd: n.data.model.maxCostUsd,
     };
   };
-  const rulesOf = (n: FlowNode) =>
+  const rulesOf = async (n: FlowNode) =>
+    (await skillsPrompt(ctx, n)) +
     section("Guardrails deste agente", n.data.rules.guardrails) +
     section("Escalonar para humano quando", n.data.rules.escalation) +
     section("Zona permitida", n.data.rules.zone === "amarela" ? "verde e amarela (orientação com ressalvas)" : "somente verde (orientação geral)");
@@ -142,7 +144,7 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
     const ficha = await ctx.tracer.wrap({ kind: "agent", name: entry.data.name, nodeId: entry.id, parentId: root.id, input: { mensagem: input.message } }, async () => {
       const anexos = ctx.files.map((f) => `### Anexo: ${f.name}\n${f.text ? f.text.slice(0, 6000) : "(sem texto extraído)"}`).join("\n\n");
       // Relato do usuario e o que importa: corte largo. Resposta do Goga, curto.
-      const hist = input.history.slice(-HISTORY_TURNS).map((h) => (h.role === "user" ? `Usuário: ${h.content.slice(0, 6000)}` : `Goga: ${h.content.slice(0, 800)}`)).join("\n");
+      const hist = input.history.slice(-HISTORY_TURNS).map((h) => (h.role === "user" ? `Usuário: ${h.content.slice(0, 6000)}${h.anexos?.length ? ` [anexou: ${h.anexos.join(", ")}]` : ""}` : `Goga: ${h.content.slice(0, 800)}`)).join("\n");
       return [
         `## Mensagem atual\n${input.message.trim()}`,
         hist && `## Conversa anterior\n${hist}`,
@@ -180,7 +182,7 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
           askedQuestions,
         ) +
         (clarifyStreak >= MAX_CLARIFY_STREAK ? section("Limite de esclarecimentos", "Já foram feitas perguntas demais. Não peça esclarecimento: classifique com os fatos disponíveis.") : "") +
-        rulesOf(classifier) +
+        (await rulesOf(classifier)) +
         `\n\n## Candidatos\n<<candidatos>>${JSON.stringify(candidateInfo)}<</candidatos>>\n\n` +
         FORMAT.classificador;
       const { value } = await generateJson(baseCall(classifier, span.id, "Classificação", system, [...historyMsgs, { role: "user", content: ficha }]), classifierSchema);
@@ -281,13 +283,13 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
           renderVars(n.data.prompt.system, vars) +
           `\n\nEspecialidade: ${n.data.name}` +
           section("Regras globais", globalRules) +
-          rulesOf(n) +
+          (await rulesOf(n)) +
           section("Evidências da base de conhecimento", evidencias || "(nenhuma evidência recuperada)") +
           (prior?.parecer ? section(`Parecer anterior (${prior.name})`, JSON.stringify(prior.parecer)) : "") +
           (n.data.prompt.examples ? section("Exemplos", n.data.prompt.examples) : "") +
           "\n\n" +
           (n.data.prompt.outputFormat === "parecer" ? FORMAT.parecer : "");
-        const call = { ...baseCall(n, span.id, `Parecer · ${n.data.name}`, system, [{ role: "user", content: ficha }] as ModelMessage[]), tools: toolsFor(env, mcpTools), maxSteps: 6 };
+        const call = { ...baseCall(n, span.id, `Parecer · ${n.data.name}`, system, [{ role: "user", content: ficha }] as ModelMessage[]), tools: await toolsFor(env, mcpTools), maxSteps: 6 };
         let parecer: Parecer;
         if (n.data.prompt.outputFormat === "parecer") {
           parecer = (await generateJson(call, parecerSchema)).value;
@@ -296,7 +298,7 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
           parecer = parecerSchema.parse({ especialidade: n.data.name, resumo_fatos: r.text });
         }
         let citacoes: CitationCheck[] = [];
-        if (n.data.tools.skills.includes("verificar_citacao")) {
+        if (await hasSkill(ctx, n, "verificar_citacao")) {
           const txt = parecer.fundamentos.map((f) => f.citacao).join("\n");
           citacoes = ((await runSkill("verificar_citacao", { texto: txt }, env)) as { citacoes: CitationCheck[] }).citacoes;
           const st = new Map(citacoes.map((c) => [c.citacao, c.status]));
@@ -347,10 +349,10 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
         const system =
           renderVars(consolidator.data.prompt.system, { ...vars, pareceres }) +
           section("Regras globais", globalRules) +
-          rulesOf(consolidator) +
+          (await rulesOf(consolidator)) +
           section("Pareceres dos especialistas", pareceres) +
           section("Citações conferidas", allCitations.map((c) => `${c.citacao}: ${c.status}${c.bloqueada ? " (NÃO CITAR)" : ""}`)) +
-          section("Modelos de documento disponíveis", seedTemplates().map((t) => `${t.slug}: ${t.titulo} (campos: ${t.campos.map((c) => c.nome).join(", ")})`)) +
+          section("Modelos de documento disponíveis", templates.map((t) => `${t.slug}: ${t.title} (campos: ${t.fields.map((c) => c.nome).join(", ")})`)) +
           section("Correções exigidas pelo Compliance", feedback) +
           section("Disclaimer obrigatório (termine a resposta simples com ele)", g.settings.disclaimer) +
           "\n\n" +
@@ -381,7 +383,7 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
         const system =
           renderVars(compliance.data.prompt.system, vars) +
           section("Regras globais", globalRules) +
-          rulesOf(compliance) +
+          (await rulesOf(compliance)) +
           section("Resultado das checagens determinísticas", det.map((d) => `${d.ok ? "OK" : "FALHOU"} ${d.check}: ${d.detalhe}`)) +
           "\n\n" +
           FORMAT.compliance;
@@ -411,8 +413,8 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
     }
 
     // ── Documentos pedidos ───────────────────────────────────────────────
-    if (status === "ok" && finalAnswer.documentos_solicitados.length && consolidator.data.tools.skills.includes("gerar_documento")) {
-      const valid = new Set(seedTemplates().map((t) => t.slug));
+    if (status === "ok" && finalAnswer.documentos_solicitados.length && (await hasSkill(ctx, consolidator, "gerar_documento"))) {
+      const valid = new Set(templates.map((t) => t.slug));
       for (const slug of finalAnswer.documentos_solicitados.filter((s) => valid.has(s)).slice(0, 3)) {
         await runSkill("gerar_documento", { modelo: slug, campos: finalAnswer.campos_documento, formato: "ambos" }, { ctx, node: consolidator, parentId: root.id }).catch((err) => flags.push(`documento_falhou:${slug}:${errorMessage(err)}`));
       }

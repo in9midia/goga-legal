@@ -167,11 +167,12 @@ export async function runRoutes(app: FastifyInstance) {
   // ── Auditoria ───────────────────────────────────────────────────────
   app.get("/api/v1/audit", async (req) => {
     requireAdmin(req);
-    const q = z.object({ entity: z.string().optional(), actor: z.string().optional(), from: z.string().optional(), to: z.string().optional(), limit: z.coerce.number().int().max(500).default(200) }).parse(req.query);
+    const q = z.object({ entity: z.string().optional(), entityId: z.string().optional(), actor: z.string().optional(), from: z.string().optional(), to: z.string().optional(), limit: z.coerce.number().int().max(500).default(200) }).parse(req.query);
     const { from, to } = dateRange(q.from, q.to);
     const a = schema.auditLog;
     const where: SQL[] = [gte(a.at, from), lte(a.at, to)];
     if (q.entity) where.push(eq(a.entity, q.entity));
+    if (q.entityId) where.push(eq(a.entityId, q.entityId));
     if (q.actor) where.push(sql`${a.actorEmail} ILIKE ${"%" + q.actor + "%"}`);
     const rows = await db.select().from(a).where(and(...where)).orderBy(desc(a.at)).limit(q.limit);
     return { entries: rows };

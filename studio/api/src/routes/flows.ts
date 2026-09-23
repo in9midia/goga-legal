@@ -7,7 +7,6 @@ import { requireAdmin, requireUser } from "../lib/auth.js";
 import { badRequest, conflict, HttpError, notFound } from "../lib/errors.js";
 import { flowGraphSchema, validateGraph, type FlowGraph } from "../shared/graph.js";
 import { spaceSlugs } from "../kb/client.js";
-import { SKILLS } from "../skills/index.js";
 import { emptyGraph } from "../seed/flows.js";
 import { defaultModelId } from "../llm/models.js";
 
@@ -19,7 +18,18 @@ async function graphContext() {
   return {
     activeChatModelIds: new Set(models.filter((m) => m.active && m.pActive && m.purpose === "chat").map((m) => m.id)),
     kbSpaces: await spaceSlugs(),
-    skills: new Set(SKILLS.map((s) => s.id)),
+    ...(await catalogContext()),
+  };
+}
+
+async function catalogContext() {
+  const skills = await db.select({ id: schema.skill.id, enabled: schema.skill.enabled }).from(schema.skill);
+  const servers = await db.select({ id: schema.mcpServer.id, enabled: schema.mcpServer.enabled }).from(schema.mcpServer);
+  return {
+    skills: new Set(skills.map((s) => s.id)),
+    disabledSkills: new Set(skills.filter((s) => !s.enabled).map((s) => s.id)),
+    mcpServers: new Set(servers.map((s) => s.id)),
+    disabledMcpServers: new Set(servers.filter((s) => !s.enabled).map((s) => s.id)),
   };
 }
 

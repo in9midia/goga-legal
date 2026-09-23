@@ -5,6 +5,7 @@ import { hashPassword } from "../lib/auth.js";
 import { encrypt } from "../lib/crypto.js";
 import { audit } from "../lib/audit.js";
 import { skillCatalog } from "../skills/index.js";
+import { seedTemplates } from "./files.js";
 import { buildFlow, FULL_CHAINS, FULL_FLOW, PHASE1_CHAINS, PHASE1_FLOW, specialtySeeds } from "./flows.js";
 import { config as cfg } from "../config.js";
 
@@ -52,20 +53,20 @@ export async function seed(log: Log = console.log) {
   await ensureProvider("Google Gemini", "gemini", cfg.geminiKey, log);
   await ensureProvider("Simulado", "mock", "", log);
 
-  // Catalogos fixos: skills e MCP sao sempre regravados a partir do codigo
-  // (a lista e do sistema, nao editavel). Especialidades so entram se faltarem:
-  // elas SAO editaveis na tela e o seed nao pode desfazer a curadoria.
+  // Skills do codigo: a linha e o esquema de entrada sao do codigo (a
+  // implementacao depende deles), o resto e curadoria e o seed so preenche na
+  // primeira vez. `defaults` acompanha o codigo para o "restaurar padrao".
   for (const s of skillCatalog()) {
-    await db.insert(schema.skill).values(s).onConflictDoUpdate({ target: schema.skill.id, set: { name: s.name, description: s.description, inputSchema: s.inputSchema } });
+    const defaults = { name: s.name, description: s.description };
+    await db
+      .insert(schema.skill)
+      .values({ ...s, defaults, source: "sistema" })
+      .onConflictDoUpdate({ target: schema.skill.id, set: { inputSchema: s.inputSchema, llmTool: s.llmTool, kind: "builtin", defaults, source: "sistema" } });
   }
-  const mcp = [
-    { id: "goga-kb", name: "Goga KB", url: `${config.kbUrl}/mcp`, enabled: true, description: "Base de conhecimento do Goga: search, fetch, list_spaces." },
-    { id: "lexml", name: "LexML", url: "https://www.lexml.gov.br/", enabled: false, description: "Legislação federal (fora do MVP)." },
-    { id: "stj-jurisprudencia", name: "STJ Jurisprudência", url: "https://scon.stj.jus.br/", enabled: false, description: "Pesquisa de jurisprudência do STJ (fora do MVP)." },
-  ];
-  for (const m of mcp) {
-    await db.insert(schema.mcpServer).values(m).onConflictDoUpdate({ target: schema.mcpServer.id, set: { name: m.name, url: m.url, description: m.description } });
-  }
+  // MCP do sistema: so a URL do goga-kb segue a configuracao (KB_URL muda
+  // entre dev e cluster); o resto o administrador edita na tela.
+  const kbMcp = { id: "goga-kb", name: "Goga KB", url: `${config.kbUrl}/mcp`, enabled: true, description: "Base de conhecimento do Goga: search, fetch, list_spaces.", origin: "system" };
+  await db.insert(schema.mcpServer).values(kbMcp).onConflictDoUpdate({ target: schema.mcpServer.id, set: { url: kbMcp.url, origin: "system" } });
   let added = 0;
   for (const s of specialtySeeds()) {
     const r = await db
@@ -91,6 +92,18 @@ export async function seed(log: Log = console.log) {
     added += r.length;
   }
   if (added) log(`${added} especialidade(s) semeada(s)`);
+
+  // Modelos de documento: so os que ainda nao existem (o texto e da curadoria).
+  let tpls = 0;
+  for (const t of seedTemplates()) {
+    const r = await db
+      .insert(schema.docTemplate)
+      .values({ slug: t.slug, title: t.titulo, description: t.descricao ?? "", fields: t.campos, body: t.corpo_markdown })
+      .onConflictDoNothing()
+      .returning({ slug: schema.docTemplate.slug });
+    tpls += r.length;
+  }
+  if (tpls) log(`${tpls} modelo(s) de documento semeado(s)`);
 
   // Fluxos seed: so no banco vazio de fluxos.
   const [{ flows }] = await db.select({ flows: sql<number>`count(*)::int` }).from(schema.flow);

@@ -1,52 +1,41 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { BookOpen, ChevronDown, ChevronRight, FileText, Loader2, Lock, Plug, Search, Wrench } from "lucide-react";
-import { api } from "@/lib/api";
+import { BookOpen, Copy, Eye, FileText, Loader2, Plus, RotateCcw, Search, Trash2, Wand2, X } from "lucide-react";
+import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import type { KbSpace, McpServer, Skill, Specialty } from "@/lib/types";
+import type { DocTemplate, FlowUse, KbSpace, Specialty, TemplateField } from "@/lib/types";
+import { useSkillList } from "@/pages/Skills";
 import { Page } from "@/Layout";
-import { DividerLabel, Empty, ErrorBox, Field, JsonView, LinesInput, Loading, MultiSelect, PageHeader, Pill } from "@/components/common";
+import { DividerLabel, Empty, ErrorBox, Field, LinesInput, Loading, MultiSelect, PageHeader, Pill } from "@/components/common";
+import { FlowsUsing } from "@/components/capabilities";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-
-interface Template {
-  slug: string;
-  titulo: string;
-  descricao?: string;
-  campos: { nome: string; rotulo: string; obrigatorio?: boolean }[];
-  tamanho: number;
-}
-
-const useSkills = () => useQuery({ queryKey: ["catalog", "skills"], queryFn: () => api.get<{ skills: Skill[] }>("/catalog/skills").then((r) => r.skills) });
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 
 export function CatalogsPage() {
   return (
     <Page>
-      <PageHeader icon={<BookOpen />} title="Catálogos" description="As peças com que os fluxos são montados: especialidades jurídicas (com prompt, bases e skills padrão), skills e servidores MCP disponíveis, e modelos de documento." />
+      <PageHeader
+        icon={<BookOpen />}
+        title="Catálogos"
+        description="Especialidades jurídicas (com prompt, bases e skills padrão) e modelos de documento. Os que vêm do sistema podem ser editados e restaurados; os criados aqui também podem ser excluídos. Skills e servidores MCP têm área própria, em Capacidades."
+      />
       <Tabs defaultValue="specialties">
         <TabsList>
           <TabsTrigger value="specialties">Especialidades</TabsTrigger>
-          <TabsTrigger value="skills">Skills</TabsTrigger>
-          <TabsTrigger value="mcp">MCP</TabsTrigger>
           <TabsTrigger value="templates">Modelos de documento</TabsTrigger>
         </TabsList>
         <TabsContent value="specialties" className="mt-4">
           <SpecialtiesTab />
-        </TabsContent>
-        <TabsContent value="skills" className="mt-4">
-          <SkillsTab />
-        </TabsContent>
-        <TabsContent value="mcp" className="mt-4">
-          <McpTab />
         </TabsContent>
         <TabsContent value="templates" className="mt-4">
           <TemplatesTab />
@@ -56,17 +45,55 @@ export function CatalogsPage() {
   );
 }
 
-const FixedNote = () => (
-  <div className="mb-4 flex items-center gap-2 rounded-md border border-line bg-ink-900 px-3 py-2 text-xs text-text-muted">
-    <Lock className="h-3.5 w-3.5" /> Lista fixa do sistema: definida no código do Studio, não editável por aqui.
-  </div>
-);
+const OriginPill = ({ origin }: { origin: "system" | "custom" }) => (origin === "custom" ? <Pill tone="info">criada no Studio</Pill> : null);
+
+/** Confirmacao de exclusao / restauracao, compartilhada pelos dois editores. */
+function Confirm({ open, onOpenChange, title, description, action, destructive, onConfirm }: { open: boolean; onOpenChange: (o: boolean) => void; title: string; description: string; action: string; destructive?: boolean; onConfirm: () => void }) {
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{title}</AlertDialogTitle>
+          <AlertDialogDescription>{description}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancelar</AlertDialogCancel>
+          <AlertDialogAction variant={destructive ? "destructive" : "default"} onClick={onConfirm}>
+            {action}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
 
 // ── Especialidades ────────────────────────────────────────────────────
 
+type SpecDraft = Omit<Specialty, "id" | "number" | "origin"> & { number?: number };
+
+const EMPTY_SPEC: SpecDraft = {
+  name: "",
+  area: "",
+  cluster: "",
+  role: "specialist",
+  routable: true,
+  scope: "",
+  defaultPrompt: "",
+  defaultSpaces: [],
+  defaultSkills: [],
+  routingHints: { keywords: [], examples: [] },
+  escalationRules: [],
+  phase: 1,
+  zone: "verde",
+};
+
+/** Aberto no painel: uma especialidade existente, ou um rascunho novo (vazio ou copia). */
+type SpecOpen = { spec: Specialty } | { draft: SpecDraft };
+
 function SpecialtiesTab() {
+  const { isAdmin } = useAuth();
   const [search, setSearch] = useState("");
-  const [open, setOpen] = useState<Specialty | null>(null);
+  const [open, setOpen] = useState<SpecOpen | null>(null);
   const q = useQuery({ queryKey: ["catalog", "specialties"], queryFn: () => api.get<{ specialties: Specialty[] }>("/catalog/specialties").then((r) => r.specialties) });
 
   const groups = useMemo(() => {
@@ -76,15 +103,23 @@ function SpecialtiesTab() {
     for (const x of list) m.set(x.cluster || "Sem agrupamento", [...(m.get(x.cluster || "Sem agrupamento") ?? []), x]);
     return [...m.entries()];
   }, [q.data, search]);
+  const clusters = useMemo(() => [...new Set((q.data ?? []).map((x) => x.cluster).filter(Boolean))].sort(), [q.data]);
 
   if (q.isLoading) return <Loading />;
   if (q.error) return <ErrorBox error={q.error} />;
 
   return (
     <div className="space-y-4">
-      <div className="relative max-w-sm">
-        <Search className="absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-text-dim" />
-        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por nome, área, escopo…" className="h-8 pl-8 text-sm" />
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative max-w-sm flex-1">
+          <Search className="absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-text-dim" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por nome, área, escopo…" className="h-8 pl-8 text-sm" />
+        </div>
+        {isAdmin && (
+          <Button size="sm" className="ml-auto" onClick={() => setOpen({ draft: EMPTY_SPEC })}>
+            <Plus /> Nova especialidade
+          </Button>
+        )}
       </div>
       {groups.length === 0 ? (
         <Empty>Nenhuma especialidade encontrada.</Empty>
@@ -109,11 +144,12 @@ function SpecialtiesTab() {
                 </TableHeader>
                 <TableBody>
                   {items.map((s) => (
-                    <TableRow key={s.id} className="cursor-pointer" onClick={() => setOpen(s)}>
+                    <TableRow key={s.id} className="cursor-pointer" onClick={() => setOpen({ spec: s })}>
                       <TableCell className="pl-4 text-text-dim tabular-nums">{s.number}</TableCell>
                       <TableCell className="font-medium">
-                        {s.name}
-                        {s.role !== "specialist" && <span className="ml-2 text-xs text-text-dim">{s.role}</span>}
+                        <span className="mr-2">{s.name}</span>
+                        {s.role !== "specialist" && <span className="mr-2 text-xs text-text-dim">{s.role}</span>}
+                        <OriginPill origin={s.origin} />
                       </TableCell>
                       <TableCell className="text-text-muted">{s.area || "—"}</TableCell>
                       <TableCell className="text-right tabular-nums">{s.phase}</TableCell>
@@ -130,75 +166,159 @@ function SpecialtiesTab() {
       )}
       <Sheet open={!!open} onOpenChange={(o) => !o && setOpen(null)}>
         <SheetContent side="right" className="w-full gap-0 sm:max-w-2xl">
-          {open && <SpecialtyEditor key={open.id} spec={open} onClose={() => setOpen(null)} />}
+          {open && (
+            <SpecialtyEditor
+              key={"spec" in open ? open.spec.id : `new-${open.draft.name}`}
+              spec={"spec" in open ? open.spec : null}
+              draft={"spec" in open ? open.spec : open.draft}
+              clusters={clusters}
+              onDuplicate={(d) => setOpen({ draft: d })}
+              onClose={() => setOpen(null)}
+            />
+          )}
         </SheetContent>
       </Sheet>
     </div>
   );
 }
 
-function SpecialtyEditor({ spec, onClose }: { spec: Specialty; onClose: () => void }) {
+function SpecialtyEditor({ spec, draft, clusters, onDuplicate, onClose }: { spec: Specialty | null; draft: SpecDraft; clusters: string[]; onDuplicate: (d: SpecDraft) => void; onClose: () => void }) {
   const { isAdmin } = useAuth();
   const qc = useQueryClient();
   const ro = !isAdmin;
+  const creating = !spec;
   const [f, setF] = useState({
-    name: spec.name,
-    scope: spec.scope,
-    defaultPrompt: spec.defaultPrompt,
-    defaultSpaces: spec.defaultSpaces,
-    defaultSkills: spec.defaultSkills,
-    keywords: spec.routingHints?.keywords ?? [],
-    examples: spec.routingHints?.examples ?? [],
-    escalationRules: spec.escalationRules,
-    zone: spec.zone,
-    phase: String(spec.phase),
-    routable: spec.routable,
+    number: spec ? String(spec.number) : draft.number ? String(draft.number) : "",
+    name: draft.name,
+    area: draft.area,
+    cluster: draft.cluster,
+    role: draft.role,
+    scope: draft.scope,
+    defaultPrompt: draft.defaultPrompt,
+    defaultSpaces: draft.defaultSpaces,
+    defaultSkills: draft.defaultSkills,
+    keywords: draft.routingHints?.keywords ?? [],
+    examples: draft.routingHints?.examples ?? [],
+    escalationRules: draft.escalationRules,
+    zone: draft.zone,
+    phase: String(draft.phase),
+    routable: draft.routable,
   });
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((s) => ({ ...s, [k]: v }));
+  const [confirm, setConfirm] = useState<null | "delete" | "reset">(null);
 
   const spaces = useQuery({ queryKey: ["kb-spaces-list"], queryFn: () => api.get<{ available: boolean; spaces: KbSpace[]; error?: string }>("/kb/spaces"), staleTime: 60_000 });
-  const skills = useSkills();
+  const detail = useQuery({ queryKey: ["catalog", "specialty", spec?.id], queryFn: () => api.get<{ flows: FlowUse[] }>(`/catalog/specialties/${spec!.id}`), enabled: !!spec });
+  const flows = detail.data?.flows;
+  const skills = useSkillList();
   const spaceOpts = (spaces.data?.spaces ?? []).map((s) => ({ value: s.slug, label: s.name ?? s.label ?? s.slug, hint: s.slug }));
-  const skillOpts = (skills.data ?? []).map((s) => ({ value: s.id, label: s.name, hint: s.description }));
+  const skillOpts = (skills.data ?? []).map((s) => ({ value: s.id, label: s.enabled ? s.name : `${s.name} (desativada)`, hint: s.description }));
   const kbDown = spaces.data && !spaces.data.available;
+
+  const payload = () => ({
+    name: f.name.trim(),
+    area: f.area.trim(),
+    cluster: f.cluster.trim(),
+    scope: f.scope,
+    defaultPrompt: f.defaultPrompt,
+    defaultSpaces: f.defaultSpaces,
+    defaultSkills: f.defaultSkills,
+    routingHints: { keywords: f.keywords, examples: f.examples },
+    escalationRules: f.escalationRules,
+    zone: f.zone,
+    phase: Math.max(1, Math.round(Number(f.phase) || 1)),
+    routable: f.routable,
+  });
+  const refresh = () => qc.invalidateQueries({ queryKey: ["catalog"] }).then(() => qc.invalidateQueries({ queryKey: ["specialties"] }));
 
   const save = useMutation({
     mutationFn: () =>
-      api.put(`/catalog/specialties/${spec.id}`, {
-        name: f.name.trim(),
-        scope: f.scope,
-        defaultPrompt: f.defaultPrompt,
-        defaultSpaces: f.defaultSpaces,
-        defaultSkills: f.defaultSkills,
-        routingHints: { keywords: f.keywords, examples: f.examples },
-        escalationRules: f.escalationRules,
-        zone: f.zone,
-        phase: Math.max(1, Math.round(Number(f.phase) || 1)),
-        routable: f.routable,
-      }),
+      creating
+        ? api.post("/catalog/specialties", { ...payload(), role: f.role, number: f.number.trim() ? Number(f.number) : undefined })
+        : api.put(`/catalog/specialties/${spec.id}`, payload()),
     onSuccess: () => {
-      toast.success("Especialidade salva");
-      qc.invalidateQueries({ queryKey: ["catalog", "specialties"] });
+      toast.success(creating ? "Especialidade criada" : "Especialidade salva");
+      refresh();
       onClose();
     },
+  });
+  const reset = useMutation({
+    mutationFn: () => api.post(`/catalog/specialties/${spec!.id}/reset`),
+    onSuccess: () => {
+      toast.success("Padrão restaurado");
+      refresh();
+      onClose();
+    },
+  });
+  const del = useMutation({
+    mutationFn: () => api.del(`/catalog/specialties/${spec!.id}`),
+    onSuccess: () => {
+      toast.success("Especialidade excluída");
+      refresh();
+      onClose();
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Falha ao excluir"),
   });
 
   return (
     <>
       <SheetHeader className="border-b border-line">
         <SheetTitle className="text-base">
-          <span className="mr-2 text-text-dim tabular-nums">#{spec.number}</span>
-          {spec.name}
+          {creating ? (
+            "Nova especialidade"
+          ) : (
+            <>
+              <span className="mr-2 text-text-dim tabular-nums">#{spec.number}</span>
+              {spec.name}
+            </>
+          )}
         </SheetTitle>
         <SheetDescription className="text-xs">
-          {[spec.cluster, spec.area].filter(Boolean).join(" · ")}
+          {creating
+            ? "Depois de criada, ela aparece no editor de fluxos para ser ligada a um nó especialista."
+            : [spec.cluster, spec.area, spec.origin === "custom" ? "criada no Studio" : "do sistema"].filter(Boolean).join(" · ")}
           {ro && " · somente leitura (apenas administradores editam)"}
         </SheetDescription>
       </SheetHeader>
       <div className="flex-1 space-y-4 overflow-y-auto p-4">
-        <Field label="Nome">
-          <Input value={f.name} onChange={(e) => set("name", e.target.value)} disabled={ro} />
-        </Field>
+        {!!flows?.length && (
+          <div className="rounded-md border border-line bg-ink-900 px-3 py-2 text-xs text-text-muted">
+            Usada em {flows.length} fluxo(s){flows.some((x) => x.production) && ", inclusive o de produção"}. Escopo e dicas de roteamento valem na próxima execução; prompt, bases e skills padrão só entram em nós criados a partir daqui.
+          </div>
+        )}
+        <div className="grid gap-4 sm:grid-cols-[6rem_1fr]">
+          <Field label="Nº" hint={creating ? "Vazio = próximo livre." : undefined}>
+            <Input inputMode="numeric" value={f.number} onChange={(e) => set("number", e.target.value.replace(/\D/g, ""))} disabled={!creating || ro} placeholder="auto" className="tabular-nums" />
+          </Field>
+          <Field label="Nome">
+            <Input value={f.name} onChange={(e) => set("name", e.target.value)} disabled={ro} autoFocus={creating} />
+          </Field>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Field label="Área">
+            <Input value={f.area} onChange={(e) => set("area", e.target.value)} disabled={ro} placeholder="ex.: Consumidor" />
+          </Field>
+          <Field label="Agrupamento">
+            <Input value={f.cluster} onChange={(e) => set("cluster", e.target.value)} disabled={ro} list="spec-clusters" placeholder="ex.: contratual" />
+            <datalist id="spec-clusters">
+              {clusters.map((c) => (
+                <option key={c} value={c} />
+              ))}
+            </datalist>
+          </Field>
+          <Field label="Papel">
+            <Select value={f.role} onValueChange={(v) => set("role", v)} disabled={!creating || ro}>
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="specialist">especialista</SelectItem>
+                <SelectItem value="support">apoio</SelectItem>
+                {!["specialist", "support"].includes(f.role) && <SelectItem value={f.role}>{f.role}</SelectItem>}
+              </SelectContent>
+            </Select>
+          </Field>
+        </div>
         <Field label="Escopo" hint="O que esta especialidade cobre (e o que não cobre). Usado pelo classificador.">
           <Textarea value={f.scope} onChange={(e) => set("scope", e.target.value)} rows={3} disabled={ro} className="text-sm" />
         </Field>
@@ -255,107 +375,61 @@ function SpecialtyEditor({ spec, onClose }: { spec: Specialty; onClose: () => vo
         <Field label="Regras de escalonamento" hint="Quando encaminhar para advogado humano. Uma por linha.">
           <LinesInput value={f.escalationRules} onChange={(v) => set("escalationRules", v)} rows={4} disabled={ro} />
         </Field>
-        <ErrorBox error={save.error} />
+        {spec && (
+          <Field label="Fluxos que usam">
+            <FlowsUsing flows={flows} what="esta especialidade" />
+          </Field>
+        )}
+        <ErrorBox error={save.error ?? reset.error} />
       </div>
       {!ro && (
-        <SheetFooter className="flex-row justify-end border-t border-line">
-          <Button variant="ghost" onClick={onClose}>
-            Cancelar
-          </Button>
-          <Button onClick={() => save.mutate()} disabled={!f.name.trim() || save.isPending}>
-            {save.isPending && <Loader2 className="animate-spin" />} Salvar
-          </Button>
+        <SheetFooter className="flex-row flex-wrap items-center border-t border-line">
+          {spec && (
+            <>
+              <Button variant="ghost" size="sm" onClick={() => onDuplicate({ ...payload(), role: f.role, name: `${f.name.trim()} (cópia)` })}>
+                <Copy /> Duplicar
+              </Button>
+              {spec.origin === "system" ? (
+                <Button variant="ghost" size="sm" onClick={() => setConfirm("reset")} disabled={reset.isPending}>
+                  <RotateCcw /> Restaurar padrão
+                </Button>
+              ) : (
+                <Button variant="ghost" size="sm" className="text-rose-300 hover:text-rose-200" onClick={() => setConfirm("delete")} disabled={del.isPending}>
+                  <Trash2 /> Excluir
+                </Button>
+              )}
+            </>
+          )}
+          <div className="ml-auto flex gap-2">
+            <Button variant="ghost" onClick={onClose}>
+              Cancelar
+            </Button>
+            <Button onClick={() => save.mutate()} disabled={!f.name.trim() || save.isPending}>
+              {save.isPending && <Loader2 className="animate-spin" />} {creating ? "Criar" : "Salvar"}
+            </Button>
+          </div>
         </SheetFooter>
       )}
-    </>
-  );
-}
-
-// ── Skills ────────────────────────────────────────────────────────────
-
-function SkillsTab() {
-  const q = useSkills();
-  if (q.isLoading) return <Loading />;
-  if (q.error) return <ErrorBox error={q.error} />;
-  return (
-    <>
-      <FixedNote />
-      {!q.data?.length ? (
-        <Empty icon={<Wrench />}>Nenhuma skill cadastrada.</Empty>
-      ) : (
-        <div className="grid gap-3 md:grid-cols-2">
-          {q.data.map((s) => (
-            <div key={s.id} className="rounded-[10px] border border-line bg-ink-900 p-4">
-              <div className="flex items-center gap-2">
-                <Wrench className="h-3.5 w-3.5 text-text-muted" />
-                <span className="text-sm font-medium">{s.name}</span>
-                <span className="font-mono text-[0.7rem] text-text-dim">{s.id}</span>
-              </div>
-              <p className="mt-1.5 text-xs leading-relaxed text-text-muted">{s.description}</p>
-              <SchemaToggle value={s.inputSchema} />
-            </div>
-          ))}
-        </div>
-      )}
-    </>
-  );
-}
-
-function SchemaToggle({ value }: { value: unknown }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <Collapsible open={open} onOpenChange={setOpen} className="mt-2">
-      <CollapsibleTrigger className="flex items-center gap-1 text-xs text-text-muted hover:text-text">
-        {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />} esquema de entrada
-      </CollapsibleTrigger>
-      <CollapsibleContent className="mt-2">
-        <JsonView value={value} maxHeight={280} />
-      </CollapsibleContent>
-    </Collapsible>
-  );
-}
-
-// ── MCP ───────────────────────────────────────────────────────────────
-
-function McpTab() {
-  const q = useQuery({ queryKey: ["catalog", "mcp"], queryFn: () => api.get<{ servers: McpServer[] }>("/catalog/mcp").then((r) => r.servers) });
-  if (q.isLoading) return <Loading label="consultando servidores MCP…" />;
-  if (q.error) return <ErrorBox error={q.error} />;
-  return (
-    <>
-      <FixedNote />
-      {!q.data?.length ? (
-        <Empty icon={<Plug />}>Nenhum servidor MCP cadastrado.</Empty>
-      ) : (
-        <div className="space-y-3">
-          {q.data.map((s) => (
-            <div key={s.id} className="rounded-[10px] border border-line bg-ink-900 p-4">
-              <div className="flex flex-wrap items-center gap-2">
-                <Plug className="h-3.5 w-3.5 text-text-muted" />
-                <span className="text-sm font-medium">{s.name}</span>
-                <span className="font-mono text-[0.7rem] text-text-dim">{s.id}</span>
-                {s.enabled ? <Pill tone="ok">habilitado</Pill> : <Pill>desabilitado</Pill>}
-              </div>
-              {s.description && <p className="mt-1.5 text-xs text-text-muted">{s.description}</p>}
-              <div className="mt-1 font-mono text-[0.72rem] break-all text-text-dim">{s.url}</div>
-              <div className="mt-3">
-                <div className="mb-1.5 text-xs text-text-muted">Ferramentas ({s.toolsCache?.length ?? 0})</div>
-                {!s.toolsCache?.length ? (
-                  <div className="text-xs text-text-dim">{s.enabled ? "Nenhuma ferramenta listada (servidor fora do ar?)." : "Servidor desabilitado."}</div>
-                ) : (
-                  <ul className="grid gap-1.5 sm:grid-cols-2">
-                    {s.toolsCache.map((t) => (
-                      <li key={t.name} className="rounded-md border border-line-soft bg-ink-950 px-2.5 py-1.5">
-                        <div className="font-mono text-[0.72rem] text-text">{t.name}</div>
-                        {t.description && <div className="line-clamp-2 text-[0.7rem] text-text-dim">{t.description}</div>}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
+      {spec && (
+        <>
+          <Confirm
+            open={confirm === "reset"}
+            onOpenChange={(o) => !o && setConfirm(null)}
+            title={`Restaurar o padrão de "${spec.name}"?`}
+            description="Todos os campos voltam ao conteúdo do seed do sistema. O histórico da auditoria guarda a versão atual."
+            action="Restaurar"
+            onConfirm={() => reset.mutate()}
+          />
+          <Confirm
+            open={confirm === "delete"}
+            onOpenChange={(o) => !o && setConfirm(null)}
+            title={`Excluir "${spec.name}"?`}
+            description={flows?.length ? `Ela está ligada a nós em ${flows.length} fluxo(s); a exclusão será recusada até desvinculá-los.` : "Nenhum fluxo usa esta especialidade."}
+            action="Excluir"
+            destructive
+            onConfirm={() => del.mutate()}
+          />
+        </>
       )}
     </>
   );
@@ -363,17 +437,39 @@ function McpTab() {
 
 // ── Modelos de documento ──────────────────────────────────────────────
 
+type TplDraft = Pick<DocTemplate, "slug" | "title" | "description" | "fields" | "body" | "enabled">;
+
+const EMPTY_TPL: TplDraft = {
+  slug: "",
+  title: "",
+  description: "",
+  enabled: true,
+  fields: [{ nome: "nome_usuario", rotulo: "Nome do usuário", obrigatorio: true }],
+  body: "# Título do documento\n\nEu, **{{nome_usuario}}**, venho por meio deste…\n\n- item de lista\n\n{{data}}\n",
+};
+
+type TplOpen = { tpl: DocTemplate } | { draft: TplDraft };
+
 function TemplatesTab() {
-  const q = useQuery({ queryKey: ["catalog", "templates"], queryFn: () => api.get<{ templates: Template[]; checklists: string[] }>("/catalog/templates") });
+  const { isAdmin } = useAuth();
+  const [open, setOpen] = useState<TplOpen | null>(null);
+  const q = useQuery({ queryKey: ["catalog", "templates"], queryFn: () => api.get<{ templates: DocTemplate[]; checklists: string[] }>("/catalog/templates") });
   if (q.isLoading) return <Loading />;
   if (q.error) return <ErrorBox error={q.error} />;
   const templates = q.data?.templates ?? [];
   const checklists = q.data?.checklists ?? [];
   return (
-    <>
-      <FixedNote />
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-xs text-text-muted">O consolidador vê os modelos ativos e pede os que servem ao caso; a skill “Gerar documento” preenche os campos e gera DOCX e PDF.</p>
+        {isAdmin && (
+          <Button size="sm" className="ml-auto" onClick={() => setOpen({ draft: EMPTY_TPL })}>
+            <Plus /> Novo modelo
+          </Button>
+        )}
+      </div>
       {templates.length === 0 ? (
-        <Empty icon={<FileText />}>Nenhum modelo de documento carregado.</Empty>
+        <Empty icon={<FileText />}>Nenhum modelo de documento cadastrado.</Empty>
       ) : (
         <div className="rounded-[10px] border border-line bg-ink-900">
           <Table>
@@ -386,22 +482,26 @@ function TemplatesTab() {
             </TableHeader>
             <TableBody>
               {templates.map((t) => (
-                <TableRow key={t.slug}>
+                <TableRow key={t.slug} className="cursor-pointer" onClick={() => setOpen({ tpl: t })}>
                   <TableCell className="max-w-md pl-4 whitespace-normal">
-                    <div className="font-medium">{t.titulo}</div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={t.enabled ? "font-medium" : "font-medium text-text-dim line-through"}>{t.title}</span>
+                      {!t.enabled && <Pill>desativado</Pill>}
+                      <OriginPill origin={t.origin} />
+                    </div>
                     <div className="font-mono text-[0.7rem] text-text-dim">{t.slug}</div>
-                    {t.descricao && <div className="mt-0.5 text-xs text-text-muted">{t.descricao}</div>}
+                    {t.description && <div className="mt-0.5 text-xs text-text-muted">{t.description}</div>}
                   </TableCell>
                   <TableCell className="whitespace-normal">
                     <div className="flex flex-wrap gap-1">
-                      {t.campos.map((c) => (
+                      {t.fields.map((c) => (
                         <Pill key={c.nome} tone={c.obrigatorio ? "info" : "neutral"} title={c.obrigatorio ? "obrigatório" : "opcional"}>
                           {c.rotulo}
                         </Pill>
                       ))}
                     </div>
                   </TableCell>
-                  <TableCell className="pr-4 text-right text-text-muted tabular-nums">{t.tamanho.toLocaleString("pt-BR")} caracteres</TableCell>
+                  <TableCell className="pr-4 text-right text-text-muted tabular-nums">{t.body.length.toLocaleString("pt-BR")} caracteres</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -409,14 +509,252 @@ function TemplatesTab() {
         </div>
       )}
       {checklists.length > 0 && (
-        <div className="mt-4">
-          <DividerLabel>Checklists de documentos · {checklists.length}</DividerLabel>
+        <div>
+          <DividerLabel>Checklists de documentos (skill “Checklist documental”) · {checklists.length}</DividerLabel>
           <div className="flex flex-wrap gap-1.5">
             {checklists.map((c) => (
               <Pill key={c}>{c}</Pill>
             ))}
           </div>
         </div>
+      )}
+      <Sheet open={!!open} onOpenChange={(o) => !o && setOpen(null)}>
+        <SheetContent side="right" className="w-full gap-0 sm:max-w-3xl">
+          {open && (
+            <TemplateEditor
+              key={"tpl" in open ? open.tpl.slug : `new-${open.draft.slug}`}
+              tpl={"tpl" in open ? open.tpl : null}
+              draft={"tpl" in open ? open.tpl : open.draft}
+              onDuplicate={(d) => setOpen({ draft: d })}
+              onClose={() => setOpen(null)}
+            />
+          )}
+        </SheetContent>
+      </Sheet>
+    </div>
+  );
+}
+
+const PLACEHOLDER_RE = /\{\{\s*([a-z0-9_]+)\s*\}\}/gi;
+const placeholdersOf = (body: string) => [...new Set([...body.matchAll(PLACEHOLDER_RE)].map((m) => m[1]))];
+/** {{data}} e preenchido pelo gerador; nao precisa ser campo. */
+const AUTO_FIELDS = new Set(["data"]);
+const humanize = (s: string) => {
+  const t = s.replace(/_+/g, " ").trim();
+  return t.charAt(0).toUpperCase() + t.slice(1);
+};
+const slugify = (s: string) =>
+  s
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 63);
+
+function TemplateEditor({ tpl, draft, onDuplicate, onClose }: { tpl: DocTemplate | null; draft: TplDraft; onDuplicate: (d: TplDraft) => void; onClose: () => void }) {
+  const { isAdmin } = useAuth();
+  const qc = useQueryClient();
+  const ro = !isAdmin;
+  const creating = !tpl;
+  const [f, setF] = useState<TplDraft>({ ...draft, fields: draft.fields.map((x) => ({ ...x })) });
+  const [slugTouched, setSlugTouched] = useState(!!draft.slug);
+  const set = <K extends keyof TplDraft>(k: K, v: TplDraft[K]) => setF((s) => ({ ...s, [k]: v }));
+  const setField = (i: number, patch: Partial<TemplateField>) => set("fields", f.fields.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+  const [confirm, setConfirm] = useState<null | "delete" | "reset">(null);
+  const [previewing, setPreviewing] = useState(false);
+
+  const inBody = placeholdersOf(f.body);
+  const declared = new Set(f.fields.map((x) => x.nome));
+  const undeclared = inBody.filter((p) => !declared.has(p) && !AUTO_FIELDS.has(p));
+  const unused = f.fields.map((x) => x.nome).filter((n) => n && !inBody.includes(n));
+
+  const detect = () => set("fields", [...f.fields, ...undeclared.map((nome) => ({ nome, rotulo: humanize(nome), obrigatorio: true }))]);
+
+  const payload = () => ({ title: f.title.trim(), description: f.description.trim(), fields: f.fields.filter((x) => x.nome.trim()).map((x) => ({ ...x, nome: x.nome.trim(), rotulo: x.rotulo.trim() || humanize(x.nome) })), body: f.body, enabled: f.enabled });
+  const refresh = () => qc.invalidateQueries({ queryKey: ["catalog", "templates"] });
+  const done = (msg: string) => () => {
+    toast.success(msg);
+    refresh();
+    onClose();
+  };
+
+  const save = useMutation({
+    mutationFn: () => (creating ? api.post("/catalog/templates", { ...payload(), slug: f.slug }) : api.put(`/catalog/templates/${tpl.slug}`, payload())),
+    onSuccess: done(creating ? "Modelo criado" : "Modelo salvo"),
+  });
+  const reset = useMutation({ mutationFn: () => api.post(`/catalog/templates/${tpl!.slug}/reset`), onSuccess: done("Padrão restaurado") });
+  const del = useMutation({
+    mutationFn: () => api.del(`/catalog/templates/${tpl!.slug}`),
+    onSuccess: done("Modelo excluído"),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Falha ao excluir"),
+  });
+
+  // Previa: o mesmo gerador do gerar_documento, com o rotulo de cada campo no lugar do valor.
+  const preview = async () => {
+    setPreviewing(true);
+    const tab = window.open("", "_blank");
+    try {
+      const values = Object.fromEntries(f.fields.filter((x) => x.nome).map((x) => [x.nome, `‹${x.rotulo || x.nome}›`]));
+      const res = await fetch("/api/v1/catalog/templates/preview", { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ body: f.body, values, format: "pdf" }) });
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error ?? `HTTP ${res.status}`);
+      const url = URL.createObjectURL(await res.blob());
+      if (tab) tab.location.href = url;
+      else window.open(url, "_blank");
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (e) {
+      tab?.close();
+      toast.error(`Prévia falhou: ${(e as Error).message}`);
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  return (
+    <>
+      <SheetHeader className="border-b border-line">
+        <SheetTitle className="text-base">{creating ? "Novo modelo de documento" : tpl.title}</SheetTitle>
+        <SheetDescription className="text-xs">
+          {creating ? "Depois de criado e ativo, o consolidador passa a poder pedi-lo." : [tpl.slug, tpl.origin === "custom" ? "criado no Studio" : "do sistema"].join(" · ")}
+          {ro && " · somente leitura (apenas administradores editam)"}
+        </SheetDescription>
+      </SheetHeader>
+      <div className="flex-1 space-y-4 overflow-y-auto p-4">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Título">
+            <Input
+              value={f.title}
+              onChange={(e) => {
+                set("title", e.target.value);
+                if (creating && !slugTouched) set("slug", slugify(e.target.value));
+              }}
+              disabled={ro}
+              autoFocus={creating}
+            />
+          </Field>
+          <Field label="Identificador" hint={creating ? "Minúsculas, números e hífen. É o nome que o consolidador usa; não muda depois." : undefined}>
+            <Input
+              value={f.slug}
+              onChange={(e) => {
+                setSlugTouched(true);
+                set("slug", e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""));
+              }}
+              disabled={!creating || ro}
+              className="font-mono text-sm"
+            />
+          </Field>
+        </div>
+        <Field label="Descrição" hint="Quando usar este modelo. O consolidador lê o título; a descrição ajuda a curadoria.">
+          <Input value={f.description} onChange={(e) => set("description", e.target.value)} disabled={ro} />
+        </Field>
+        <div className="flex items-center gap-2">
+          <Switch id="tpl-enabled" checked={f.enabled} onCheckedChange={(v) => set("enabled", v)} disabled={ro} />
+          <Label htmlFor="tpl-enabled" className="text-xs text-text-muted">
+            Ativo (oferecido ao consolidador e aceito pelo “Gerar documento”)
+          </Label>
+        </div>
+        <Field
+          label="Corpo"
+          hint={
+            <>
+              Markdown simples: <code># título</code>, <code>## seção</code>, <code>- lista</code>, <code>**negrito**</code>. Campos como <code>{"{{nome_do_campo}}"}</code>; <code>{"{{data}}"}</code> é preenchido com a data de hoje. Campo sem valor sai como [NOME_DO_CAMPO].
+            </>
+          }
+        >
+          <Textarea value={f.body} onChange={(e) => set("body", e.target.value)} rows={18} disabled={ro} className="font-mono text-[0.75rem] leading-relaxed" />
+        </Field>
+
+        <div>
+          <div className="mb-2 flex items-center gap-2">
+            <Label className="text-xs">Campos</Label>
+            <span className="text-[0.72rem] text-text-dim">O consolidador preenche os campos a partir da conversa; os obrigatórios que faltarem são avisados.</span>
+          </div>
+          <div className="space-y-2">
+            {f.fields.map((c, i) => (
+              <div key={i} className="grid grid-cols-[1fr_1.4fr_auto_auto] items-center gap-2">
+                <Input value={c.nome} onChange={(e) => setField(i, { nome: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "_") })} placeholder="nome_do_campo" disabled={ro} className="h-8 font-mono text-xs" />
+                <Input value={c.rotulo} onChange={(e) => setField(i, { rotulo: e.target.value })} placeholder="Rótulo" disabled={ro} className="h-8 text-sm" />
+                <label className="flex items-center gap-1.5 text-xs text-text-muted">
+                  <Checkbox checked={!!c.obrigatorio} onCheckedChange={(v) => setField(i, { obrigatorio: v === true })} disabled={ro} /> obrigatório
+                </label>
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => set("fields", f.fields.filter((_, j) => j !== i))} disabled={ro} aria-label="Remover campo">
+                  <X />
+                </Button>
+              </div>
+            ))}
+          </div>
+          {!ro && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Button variant="outline" size="sm" onClick={() => set("fields", [...f.fields, { nome: "", rotulo: "", obrigatorio: false }])}>
+                <Plus /> Campo
+              </Button>
+              {undeclared.length > 0 && (
+                <Button variant="outline" size="sm" onClick={detect}>
+                  <Wand2 /> Adicionar os {undeclared.length} campo(s) do corpo
+                </Button>
+              )}
+            </div>
+          )}
+          {(undeclared.length > 0 || unused.length > 0) && (
+            <div className="mt-2 space-y-1 text-[0.72rem] text-amber-300">
+              {undeclared.length > 0 && <div>No corpo, sem cadastro como campo: {undeclared.join(", ")}</div>}
+              {unused.length > 0 && <div>Campos que o corpo não usa: {unused.join(", ")}</div>}
+            </div>
+          )}
+        </div>
+        <ErrorBox error={save.error ?? reset.error} />
+      </div>
+      <SheetFooter className="flex-row flex-wrap items-center border-t border-line">
+        <Button variant="ghost" size="sm" onClick={preview} disabled={!f.body.trim() || previewing}>
+          {previewing ? <Loader2 className="animate-spin" /> : <Eye />} Prévia PDF
+        </Button>
+        {!ro && tpl && (
+          <>
+            <Button variant="ghost" size="sm" onClick={() => onDuplicate({ ...payload(), slug: `${tpl.slug}-copia`.slice(0, 63), title: `${f.title.trim()} (cópia)`, enabled: false })}>
+              <Copy /> Duplicar
+            </Button>
+            {tpl.origin === "system" ? (
+              <Button variant="ghost" size="sm" onClick={() => setConfirm("reset")} disabled={reset.isPending}>
+                <RotateCcw /> Restaurar padrão
+              </Button>
+            ) : (
+              <Button variant="ghost" size="sm" className="text-rose-300 hover:text-rose-200" onClick={() => setConfirm("delete")} disabled={del.isPending}>
+                <Trash2 /> Excluir
+              </Button>
+            )}
+          </>
+        )}
+        {!ro && (
+          <div className="ml-auto flex gap-2">
+            <Button variant="ghost" onClick={onClose}>
+              Cancelar
+            </Button>
+            <Button onClick={() => save.mutate()} disabled={!f.title.trim() || !f.body.trim() || (creating && f.slug.length < 2) || save.isPending}>
+              {save.isPending && <Loader2 className="animate-spin" />} {creating ? "Criar" : "Salvar"}
+            </Button>
+          </div>
+        )}
+      </SheetFooter>
+      {tpl && (
+        <>
+          <Confirm
+            open={confirm === "reset"}
+            onOpenChange={(o) => !o && setConfirm(null)}
+            title={`Restaurar o padrão de "${tpl.title}"?`}
+            description="Título, descrição, campos e corpo voltam ao seed do sistema e o modelo fica ativo. O histórico da auditoria guarda a versão atual."
+            action="Restaurar"
+            onConfirm={() => reset.mutate()}
+          />
+          <Confirm
+            open={confirm === "delete"}
+            onOpenChange={(o) => !o && setConfirm(null)}
+            title={`Excluir "${tpl.title}"?`}
+            description="O consolidador deixa de poder pedi-lo. Documentos já gerados não são afetados."
+            action="Excluir"
+            destructive
+            onConfirm={() => del.mutate()}
+          />
+        </>
       )}
     </>
   );

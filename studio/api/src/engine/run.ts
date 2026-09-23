@@ -38,18 +38,29 @@ export async function startTurn(args: {
   target: RunTarget;
 }): Promise<{ runId: string; messageId: string }> {
   const target = await resolveTarget(args.target);
-  const history = await db
-    .select({ role: schema.message.role, content: schema.message.content, payload: schema.message.payload })
+  const rows = await db
+    .select({ role: schema.message.role, content: schema.message.content, payload: schema.message.payload, attachments: schema.message.attachments })
     .from(schema.message)
     .where(eq(schema.message.sessionId, args.sessionId))
-    .orderBy(asc(schema.message.createdAt))
-    .then((rows) => rows.map(({ payload, ...m }) => ({ ...m, status: (payload as { status?: string } | null)?.status ?? null })));
-  const files = args.fileIds.length
+    .orderBy(asc(schema.message.createdAt));
+  // Anexo vale para a conversa inteira, nao so para o turno em que foi enviado:
+  // o usuario manda o PDF, o Goga pergunta algo e so a resposta seguinte chega
+  // ao especialista que precisa ler o arquivo.
+  const priorIds = rows.filter((m) => m.role === "user").flatMap((m) => m.attachments ?? []);
+  const allIds = [...new Set([...priorIds, ...args.fileIds])];
+  const sessionFiles = allIds.length
     ? await db
         .select()
         .from(schema.file)
-        .where(and(inArray(schema.file.id, args.fileIds), eq(schema.file.sessionId, args.sessionId)))
+        .where(and(inArray(schema.file.id, allIds), eq(schema.file.sessionId, args.sessionId)))
     : [];
+  const nameOf = new Map(sessionFiles.map((f) => [f.id, f.name]));
+  const history = rows.map(({ payload, attachments, ...m }) => ({
+    ...m,
+    status: (payload as { status?: string } | null)?.status ?? null,
+    anexos: m.role === "user" ? (attachments ?? []).flatMap((id) => nameOf.get(id) ?? []) : [],
+  }));
+  const files = sessionFiles.filter((f) => args.fileIds.includes(f.id));
 
   const [runRow] = await db
     .insert(schema.run)
@@ -85,7 +96,7 @@ export async function startTurn(args: {
     tokensIn: 0,
     tokensOut: 0,
     maxRunCostUsd: target.graph.settings.maxRunCostUsd || 0.5,
-    files: files.map((f) => ({ id: f.id, name: f.name, mime: f.mime, text: f.extractedText ?? "" })),
+    files: sessionFiles.map((f) => ({ id: f.id, name: f.name, mime: f.mime, text: f.extractedText ?? "" })),
     generated: [],
   };
 

@@ -2,7 +2,9 @@ import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Trash2 } from "lucide-react";
 import { DETERMINISTIC_CHECKS, NODE_TYPE_LABEL, type FlowNode, type FlowSettings, type NodeData } from "@shared/graph";
 import { api } from "@/lib/api";
-import type { KbSpace, McpServer, Model, Skill, Specialty } from "@/lib/types";
+import type { KbSpace, Model, Specialty } from "@/lib/types";
+import { useSkillList } from "@/pages/Skills";
+import { useMcpList } from "@/pages/Mcp";
 import { Field, LinesInput, MultiSelect, Pill } from "@/components/common";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -20,8 +22,8 @@ const NONE = "__none__";
 export function useCatalogs() {
   const models = useQuery({ queryKey: ["models"], queryFn: () => api.get<{ models: Model[] }>("/models").then((r) => r.models) });
   const specialties = useQuery({ queryKey: ["specialties"], queryFn: () => api.get<{ specialties: Specialty[] }>("/catalog/specialties").then((r) => r.specialties) });
-  const skills = useQuery({ queryKey: ["skills"], queryFn: () => api.get<{ skills: Skill[] }>("/catalog/skills").then((r) => r.skills) });
-  const mcp = useQuery({ queryKey: ["mcp"], queryFn: () => api.get<{ servers: McpServer[] }>("/catalog/mcp").then((r) => r.servers), staleTime: 60_000 });
+  const skills = useSkillList();
+  const mcp = useMcpList();
   const kb = useQuery({ queryKey: ["kb-spaces"], queryFn: () => api.get<{ available: boolean; spaces: KbSpace[]; error?: string }>("/kb/spaces"), staleTime: 60_000 });
   return { models, specialties, skills, mcp, kb };
 }
@@ -206,10 +208,10 @@ export function NodeInspector({ node, cats, onChange, onDelete, readOnly, errors
           </TabsContent>
 
           <TabsContent value="tools" className="space-y-4">
-            <Field label="Skills" hint="Lista fixa do sistema. buscar_kb e verificar_citacao o motor executa sozinho; calcular_*, elegibilidade, anexos e checklist o modelo chama como ferramenta.">
-              <MultiSelect options={(cats.skills.data ?? []).map((s) => ({ value: s.id, label: s.name, hint: s.id }))} value={d.tools.skills} onChange={(v) => set("tools", { ...d.tools, skills: v })} disabled={readOnly} />
+            <Field label="Skills" hint={<>Cadastradas em <a href="/skills" target="_blank" rel="noreferrer" className="underline">Skills</a>. As de instruções entram no prompt; as ferramentas o modelo chama; buscar_kb e verificar_citacao o motor executa sozinho. Desativadas não rodam.</>}>
+              <MultiSelect options={(cats.skills.data ?? []).map((s) => ({ value: s.id, label: s.enabled ? s.name : `${s.name} (desativada)`, hint: s.id }))} value={d.tools.skills} onChange={(v) => set("tools", { ...d.tools, skills: v })} disabled={readOnly} />
             </Field>
-            <Field label="MCP" hint="Ferramentas dos servidores MCP (lista fixa). A busca do goga-kb é recortada às bases do nó.">
+            <Field label="MCP" hint={<>Ferramentas dos <a href="/mcp" target="_blank" rel="noreferrer" className="underline">servidores MCP</a> habilitados. A busca do goga-kb é recortada às bases do nó.</>}>
               <MultiSelect options={mcpOptions} value={d.tools.mcp} onChange={(v) => set("tools", { ...d.tools, mcp: v })} disabled={readOnly} />
             </Field>
           </TabsContent>

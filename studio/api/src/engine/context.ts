@@ -1,5 +1,6 @@
 import type { FlowGraph } from "../shared/graph.js";
 import type { RunTracer } from "./tracer.js";
+import type { SkillRow } from "../skills/index.js";
 
 export interface SessionFile {
   id: string;
@@ -32,4 +33,6 @@ export interface RunContext {
   generated: GeneratedDoc[];
   /** Documentos que alguma busca na KB devolveu nesta execucao. So eles podem ser abertos. */
   kbDocIds?: Set<number>;
+  /** Cadastro de skills lido uma vez por execucao (edicao no meio nao muda o turno). */
+  skills?: Map<string, SkillRow>;
 }
