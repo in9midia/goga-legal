@@ -12,6 +12,8 @@ studio/
 
 ## Rodar em desenvolvimento
 
+Passo a passo completo, com a KB, e como parar e reiniciar: [README da raiz](../README.md#rodar-em-desenvolvimento).
+
 ```bash
 docker compose -f studio/docker-compose.dev.yml up -d   # Postgres do Studio na porta 5442
 cp studio/api/.env.example studio/api/.env              # preencha STUDIO_SECRET_KEY e STUDIO_ADMIN_PASSWORD
