@@ -118,7 +118,12 @@ export async function runAssistantTurn(args: {
 
   // 1. Pendencias do turno anterior viram resultado de ferramenta.
   const last = [...rows].reverse().find((r) => r.role === "assistant");
-  const pending = ((last?.parts ?? []) as Part[]).filter((p): p is Extract<Part, { type: "ask" | "approval" }> => (p.type === "ask" || p.type === "approval") && p.status === "pending");
+  const answered = new Set(
+    ((last?.llm ?? []) as ModelMessage[]).flatMap((m) => (m.role === "tool" ? m.content.filter((c) => c.type === "tool-result").map((c) => c.toolCallId) : [])),
+  );
+  const pending = ((last?.parts ?? []) as Part[]).filter(
+    (p): p is Extract<Part, { type: "ask" | "approval" }> => (p.type === "ask" || p.type === "approval") && p.status === "pending" && !answered.has(p.id),
+  );
   if (last && pending.length) {
     const results: ToolModelMessage["content"] = [];
     for (const p of pending) {
@@ -256,6 +261,12 @@ export async function runAssistantTurn(args: {
             persist(true);
           } else if (p?.type === "display") {
             put({ type: "error", text: `exibir: ${msg}` });
+          } else if (p?.type === "ask" || p?.type === "approval") {
+            // Entrada invalida: o SDK ja gravou o erro como resultado; nao pode
+            // ficar "pending", senao o proximo turno responde a chamada de novo.
+            p.status = "skipped";
+            emit({ type: "part", part: p });
+            persist(true);
           }
           break;
         }
