@@ -5,3 +5,4 @@ node_modules/
 dist/
 studio/api/data/
 *.tsbuildinfo
+graphify-out/
