@@ -90,6 +90,19 @@ scores. Sinônimo de chunk no texto para humanos.
 **Evidência** — o contrato da busca. O serviço devolve trechos, nunca resposta
 gerada. Quem redige é o modelo de quem perguntou.
 
+**Armazenamento** (externo) — de onde uma base pode sincronizar uma pasta. Hoje
+só o Google Drive, por conta de serviço. Tabela `storage_connection`. **Não
+confundir com o object store** (`storage.py`), que é para onde o bruto vai; o
+armazenamento é de onde o arquivo vem.
+
+**Pasta sincronizada** — uma pasta de um armazenamento ligada a uma base
+(`storage_sync`). A cada rodada, o que está nela entra, o que muda vira versão
+nova e o que sai dela sai da base. Ver [ADR-0029](adr/0029-pasta-sincronizada-de-armazenamento-externo.md).
+
+**Origem** (de documento) — manual (`document.sync_id` nulo) ou uma pasta
+sincronizada. Versionamento, deduplicação e remoção só olham documentos da
+mesma origem: é o que garante que a sincronização nunca toca num upload manual.
+
 ## Busca
 
 **Braço vetorial** — similaridade por embedding, distância cosseno via pgvector.

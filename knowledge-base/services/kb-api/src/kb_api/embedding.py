@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import requests
@@ -225,7 +226,14 @@ def _espera_429(resposta, tentativa: int) -> float:
     return min(ESPERA_429_MAX_SECONDS, max(pedido, 5.0 * 2 ** (tentativa - 1)))
 
 
-def embed(texts: list[str], operation: str = "index", space: str = "") -> EmbedResult:
+def embed(
+    texts: list[str],
+    operation: str = "index",
+    space: str = "",
+    prontos: list[list[float]] | None = None,
+    modelo_prontos: str = "",
+    ao_lote: Callable[[int, list[list[float]], str], None] | None = None,
+) -> EmbedResult:
     """Vetoriza os textos com o provedor do Espaco, contando o gasto.
 
     `operation` diz de ONDE veio a chamada (`index`, `search`, `chunking`) e e
@@ -236,6 +244,13 @@ def embed(texts: list[str], operation: str = "index", space: str = "") -> EmbedR
     Passar o Espaco errado aqui nao daria erro nenhum: vetorizaria com o modelo
     de outra base e a busca so ficaria pior -- por isso todo chamador o informa
     explicitamente, em vez de existir um "Espaco corrente" implicito.
+
+    `prontos` sao os vetores dos primeiros textos, ja devolvidos numa tentativa
+    anterior (ver `retomada.py`); a chamada recomeca do primeiro texto sem
+    vetor. So valem se `modelo_prontos` for o modelo do provedor de AGORA: a
+    retomada tipica e depois de trocar a licenca, e se junto trocou o modelo,
+    misturar os dois no mesmo documento degradaria a busca sem erro nenhum.
+    `ao_lote(inicio, vetores, modelo)` e chamado a cada lote que volta.
     """
     if not texts:
         return EmbedResult([], 0, 0, "")
@@ -243,14 +258,24 @@ def embed(texts: list[str], operation: str = "index", space: str = "") -> EmbedR
     provedor = providers.padrao("embedding", space)
     started = time.perf_counter()
     vectors: list[list[float]] = []
+    if prontos and modelo_prontos == provedor.model:
+        vectors = list(prontos[: len(texts)])
+    elif prontos:
+        log.info(
+            "descartando %s vetores da tentativa anterior: eram de '%s', o provedor agora e '%s'",
+            len(prontos), modelo_prontos, provedor.model,
+        )
+    retomado = len(vectors)
     tokens = 0
     estimados = 0
     try:
-        for start in range(0, len(texts), BATCH_SIZE):
+        for start in range(retomado, len(texts), BATCH_SIZE):
             batch = texts[start : start + BATCH_SIZE]
             if operation == "index":
                 progresso.avancar(
-                    "embedding", start, len(texts), f"{start} de {len(texts)} trechos"
+                    "embedding", start, len(texts),
+                    f"{start} de {len(texts)} trechos"
+                    + (f" (retomado do trecho {retomado})" if retomado else ""),
                 )
             batch_vectors, batch_tokens, batch_estimados = _post(batch, provedor, operation)
             if len(batch_vectors) != len(batch):
@@ -259,6 +284,8 @@ def embed(texts: list[str], operation: str = "index", space: str = "") -> EmbedR
                     f"{len(batch)} textos"
                 )
             vectors.extend(batch_vectors)
+            if ao_lote is not None:
+                ao_lote(start, batch_vectors, provedor.model)
             tokens += batch_tokens
             estimados += batch_estimados
 

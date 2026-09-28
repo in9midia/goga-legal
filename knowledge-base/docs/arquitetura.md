@@ -10,7 +10,7 @@ esta stack foi espelhada.
 | Peça | Requisito | O que resolve |
 |---|---|---|
 | **Postgres + pgvector** | ING-10, FUN-12 | índice único com busca vetorial (`<=>`) e lexical (`tsvector`) na mesma transação; metadados de Espaço e tags por chunk, independentes dos vetores |
-| **MinIO** | ING-02, FUN-12 | documento bruto preservado intacto, para auditoria e reprocessamento com outra técnica. Em produção troca para OCI Object Storage (mesmo SigV4) |
+| **Object storage** (MinIO, AWS S3 ou OCI) | ING-02, FUN-12 | documento bruto preservado intacto, para auditoria e reprocessamento com outra técnica. Qual dos três é `S3_PROVIDER`, mesmo cliente SigV4 ([ADR-0030](adr/0030-aws-s3-como-alternativa-ao-minio.md)). O k3d local usa a OCI desde 2026-09-28; o MinIO do cluster ficou como cópia |
 | **Memgraph** | ING-12, BUS-04 | grafo de termos como representação auxiliar, com travessia como método de acesso complementar. **Ligado por padrão** desde que a onda 1 deu a evidência que a especificação pedia. ⚠ a instância de dev é compartilhada: ver armadilha 27 |
 | **Docling** | ING-03, ING-04 | documento canônico em Markdown, layout-aware, tabelas preservadas — o artefato do qual tudo o que a busca vê deriva |
 | **tesseract (OCR)** | ING-04 | texto de dentro das imagens, que o requisito chama de *captioning de imagens*. Em manual de processo a instrução está no print de tela, não no parágrafo — sem OCR esse conteúdo não existe para a busca |
@@ -26,6 +26,7 @@ esta stack foi espelhada.
 | **`kb_api/query.py`** | BUS-02 | melhoria de query em dois pontos independentes: reescrita do **texto** (`rewrite`, `step_back`) e substituição do **vetor** (HyDE, que embeda um parágrafo hipotético junto da pergunta). Vem desligada: medida num conjunto difícil, subiu a média harmônica de 0,340 para 0,661 e derrubou as falhas de 9 para 2, mas cada uma custa uma ida ao modelo por busca |
 | **`kb_api/benchmark.py`** + Ragas | FUN-07 | avaliação offline de verdade: perguntas geradas do conteúdo (diretas ou difíceis) ou cadastradas à mão, execução em segundo plano com progresso, e as cinco métricas do Ragas separadas entre recuperador e gerador. É o que transforma "parece melhor" em número comparável entre versões |
 | **`kb_api/retry.py`** | ING-06 (parcial) | retentativa automática do que falhou por motivo **recuperável**, com backoff de 5 a 720 min. O erro definitivo (arquivo protegido, nenhum extrator produziu texto) sai da fila na hora: insistir nele só gastaria OCR |
+| **`kb_api/retomada.py`** | ING-06 (parcial) | ponto de retomada no object store: extração, conceito, corte e os lotes de vetores já prontos. A tentativa seguinte do mesmo conteúdo e do mesmo corte recomeça do primeiro trecho sem vetor; troca de modelo de embedding descarta os vetores |
 | **Keycloak do Goga** | FUN-10 | OAuth2/OIDC do projeto (`kc.localtest.me:8481` no local, realm `goga-interno`); quatro grupos sob `/goga`, declarados no import do realm (ADR-0023) |
 | **`space_grant`** | FUN-08, FUN-09 | escopo por chamador resolvido no servidor, por grupo, object id do EntraID ou e-mail |
 | **`search_run`** | FUN-06 | telemetria por execução: técnica de cada etapa, latência, tokens — devolvida na própria chamada |
@@ -40,7 +41,7 @@ arquivo (PDF/DOCX/PPTX/XLSX/TXT)
    │
    │ 1. POST /v1/spaces/<slug>/documents
    ▼
-MinIO  ──►  <space>/<sha[:2]>/<sha>/<nome>          bruto INTACTO (ING-02)
+bucket ──►  <space>/<sha[:2]>/<sha>/<nome>          bruto INTACTO (ING-02)
    │
    │ 2. extração
    ▼

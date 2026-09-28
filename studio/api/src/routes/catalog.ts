@@ -4,7 +4,8 @@ import { z } from "zod";
 import { db, schema } from "../db/index.js";
 import { audit } from "../lib/audit.js";
 import { requireAdmin, requireUser } from "../lib/auth.js";
-import { badRequest, conflict, notFound } from "../lib/errors.js";
+import { badRequest, conflict, HttpError, notFound } from "../lib/errors.js";
+import { readFileData } from "../files/storage.js";
 import { flowsUsing } from "../lib/usage.js";
 import * as kb from "../kb/client.js";
 import { config } from "../config.js";
@@ -229,6 +230,92 @@ export async function catalogRoutes(app: FastifyInstance) {
     } catch (err) {
       return { available: false, uiUrl: config.kbUiUrl, error: (err as Error).message, spaces: [] };
     }
+  });
+
+  // ── gestao da KB ────────────────────────────────────────────────────
+  // Leitura para todos; escrita so admin, auditada aqui (a KB roda sem auth no
+  // MVP e nao saberia quem foi). Erro da KB volta com o status dela.
+  const kbCall = async <T>(fn: () => Promise<T>): Promise<T> => {
+    try {
+      return await fn();
+    } catch (err) {
+      const msg = (err as Error).message;
+      const m = /^KB (\d{3})/.exec(msg);
+      throw new HttpError(m ? Number(m[1]) : 502, m ? msg : `KB indisponível: ${msg}`);
+    }
+  };
+  const slugOk = z.string().regex(/^[a-z0-9][a-z0-9_-]{1,62}$/, "slug: minúsculas, números, - e _ (2 a 63 caracteres)");
+
+  app.get<{ Params: { slug: string } }>("/api/v1/kb/spaces/:slug/documents", async (req) => {
+    requireUser(req);
+    return kbCall(() => kb.listDocuments(req.params.slug));
+  });
+
+  app.post("/api/v1/kb/spaces", async (req) => {
+    const me = requireAdmin(req);
+    const b = z.object({ slug: slugOk, label: z.string().trim().max(120).optional(), description: z.string().max(2000).optional() }).safeParse(req.body);
+    if (!b.success) throw badRequest("dados inválidos", b.error.issues);
+    if ((await kbCall(() => kb.listSpaces(true))).some((s) => s.slug === b.data.slug)) throw conflict(`a base ${b.data.slug} já existe`);
+    const r = await kbCall(() => kb.createSpace(b.data));
+    await audit(me, "create", "kb_space", b.data.slug, null, b.data);
+    return { space: r };
+  });
+
+  app.delete<{ Params: { slug: string } }>("/api/v1/kb/spaces/:slug", async (req) => {
+    const me = requireAdmin(req);
+    const before = (await kbCall(() => kb.listSpaces(true))).find((s) => s.slug === req.params.slug);
+    if (!before) throw notFound(`base ${req.params.slug}`);
+    const r = await kbCall(() => kb.deleteSpace(req.params.slug));
+    await audit(me, "delete", "kb_space", req.params.slug, before, null);
+    return r;
+  });
+
+  // O arquivo ja esta no Studio (anexo do Assistente, do simulador ou enviado
+  // pelo CLI dos agentes em /agent/files): so repassa para a fila da KB.
+  app.post<{ Params: { slug: string } }>("/api/v1/kb/spaces/:slug/documents", async (req) => {
+    const me = requireAdmin(req);
+    const b = z.object({ fileIds: z.array(z.string().uuid()).min(1).max(50) }).safeParse(req.body);
+    if (!b.success) throw badRequest("informe fileIds (ids de arquivos enviados ao Studio)", b.error.issues);
+    const out: Record<string, unknown>[] = [];
+    for (const id of b.data.fileIds) {
+      const [f] = await db.select().from(schema.file).where(eq(schema.file.id, id));
+      if (!f) {
+        out.push({ fileId: id, erro: "arquivo não encontrado no Studio" });
+        continue;
+      }
+      try {
+        const r = await kb.uploadDocument(req.params.slug, { name: f.name, mime: f.mime, data: await readFileData(f) });
+        out.push({ fileId: id, arquivo: f.name, ...r });
+        await audit(me, "upload", "kb_document", `${req.params.slug}/${f.name}`, null, { space: req.params.slug, filename: f.name, size: f.size, sha256: f.sha256, runId: r.run_id });
+      } catch (err) {
+        out.push({ fileId: id, arquivo: f.name, erro: (err as Error).message });
+      }
+    }
+    return { space: req.params.slug, enviados: out };
+  });
+
+  app.delete<{ Params: { id: string } }>("/api/v1/kb/documents/:id", async (req) => {
+    const me = requireAdmin(req);
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) throw badRequest("id do documento é um número");
+    const r = await kbCall(() => kb.deleteDocument(id));
+    await audit(me, "delete", "kb_document", String(id), r, null);
+    return r;
+  });
+
+  app.post<{ Params: { id: string } }>("/api/v1/kb/documents/:id/reprocess", async (req) => {
+    const me = requireAdmin(req);
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) throw badRequest("id do documento é um número");
+    const r = await kbCall(() => kb.reprocessDocument(id));
+    await audit(me, "reprocess", "kb_document", String(id), null, { status: r.status });
+    return r;
+  });
+
+  app.get("/api/v1/kb/ingest-runs", async (req) => {
+    requireUser(req);
+    const q = z.object({ space: z.string().optional(), status: z.string().optional(), limit: z.coerce.number().int().min(1).max(200).default(30) }).parse(req.query);
+    return kbCall(() => kb.ingestRuns(q));
   });
 
   app.post("/api/v1/kb/search", async (req) => {

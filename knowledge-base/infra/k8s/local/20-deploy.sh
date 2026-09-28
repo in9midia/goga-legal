@@ -214,6 +214,51 @@ else
   kubectl -n "$NS" delete configmap kb-ui-config --ignore-not-found >/dev/null 2>&1 || true
 fi
 
+# ── object storage: MinIO (padrao), AWS S3 ou OCI Object Storage ────────────
+#
+# Com S3_PROVIDER=aws ou oci no .env, o kb-api passa a gravar e ler o bruto no
+# bucket da nuvem. O MinIO continua de pe de proposito: ele e a ORIGEM da migracao
+# (30-migrar-storage.sh), e derruba-lo antes de conferir a copia seria perder
+# o acervo inteiro com um comando.
+#
+# ⚠ Virar para a AWS sem migrar antes deixa todo documento ja ingerido sem
+# bruto: busca continua funcionando (o indice esta no Postgres), mas "ver o
+# original" e reprocessar falham. Ordem certa em docs/operacao.md.
+S3_PROVIDER_ENV="$(env_val S3_PROVIDER)"; S3_PROVIDER_ENV="${S3_PROVIDER_ENV:-minio}"
+case "$S3_PROVIDER_ENV" in
+  minio)
+    echo "== storage: MinIO do cluster (S3_PROVIDER=minio)"
+    kubectl -n "$NS" delete secret storage-secret --ignore-not-found >/dev/null 2>&1 || true
+    ;;
+  aws|oci)
+    S3_BUCKET_ENV="$(env_val S3_BUCKET)"
+    S3_REGION_ENV="$(env_val S3_REGION)"
+    if [[ -z "$S3_BUCKET_ENV" || -z "$S3_REGION_ENV" \
+          || -z "$(env_val S3_ACCESS_KEY)" || -z "$(env_val S3_SECRET_KEY)" ]]; then
+      echo "!! S3_PROVIDER=$S3_PROVIDER_ENV pede S3_BUCKET, S3_REGION, S3_ACCESS_KEY e S3_SECRET_KEY no .env"
+      exit 1
+    fi
+    # Sem namespace (e sem endpoint explicito) o endpoint do compat nao existe.
+    if [[ "$S3_PROVIDER_ENV" == "oci" && -z "$(env_val S3_NAMESPACE)$(env_val S3_ENDPOINT)" ]]; then
+      echo "!! S3_PROVIDER=oci pede S3_NAMESPACE no .env (oci os ns get)"
+      exit 1
+    fi
+    echo "== storage: $S3_PROVIDER_ENV bucket=$S3_BUCKET_ENV regiao=$S3_REGION_ENV"
+    # So as chaves preenchidas entram: chave vazia no segredo SOBRESCREVERIA o
+    # padrao do codigo com vazio (ex.: S3_ENDPOINT vazio no lugar do regional).
+    args=()
+    for chave in S3_PROVIDER S3_NAMESPACE S3_BUCKET S3_REGION S3_ACCESS_KEY S3_SECRET_KEY \
+                 S3_SESSION_TOKEN S3_ENDPOINT S3_ADDRESSING S3_CREATE_BUCKET \
+                 S3_SSE S3_SSE_KMS_KEY_ID; do
+      valor="$(env_val "$chave")"
+      [[ -n "$valor" ]] && args+=("--from-literal=$chave=$valor")
+    done
+    kubectl -n "$NS" create secret generic storage-secret "${args[@]}" \
+      --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+    ;;
+  *) echo "!! S3_PROVIDER=$S3_PROVIDER_ENV invalido. Use minio, aws ou oci."; exit 1 ;;
+esac
+
 # ── ngrok: tunel publico, opcional ─────────────────────────────────────────
 # `http://localhost:8890` so existe nesta maquina. Sem tunel, conectar o editor
 # no MCP e uma demonstracao de uma pessoa so -- nao da para mostrar ao time nem

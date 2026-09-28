@@ -222,7 +222,7 @@ Um segundo fluxo seed **"Goga — Fase 1 (zona verde)"**: só 14, 15, 16, 17, 19
 ### 5.3 Provedores e modelos (seed)
 
 - **DeepSeek:** `deepseek-chat` (padrão chat), `deepseek-reasoner`. Chave de `DEEPSEEK_API_KEY` no primeiro boot.
-- **Google Gemini:** `gemini-embedding-001` (embedding, 3072) e `gemini-2.5-flash` (visão, para extrair texto de anexos escaneados/imagens). Chave de `GEMINI_API_KEY`.
+- **Google Gemini:** `gemini-embedding-001` (embedding, 3072) e `gemini-3.6-flash` (visão, para extrair texto de anexos escaneados/imagens). Chave de `GEMINI_API_KEY`.
 - Preços preenchidos no seed a partir das páginas oficiais **na data da implementação**, editáveis na UI.
 
 ### 5.4 População da KB

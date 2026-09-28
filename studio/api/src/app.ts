@@ -16,6 +16,7 @@ import { sessionRoutes } from "./routes/sessions.js";
 import { runRoutes } from "./routes/runs.js";
 import { batchRoutes } from "./routes/batch.js";
 import { assistantRoutes } from "./routes/assistant.js";
+import { agentRoutes } from "./routes/agent.js";
 
 export async function buildApp() {
   const app = Fastify({ logger: { level: config.isProd ? "info" : "warn" }, bodyLimit: 5 * 1024 * 1024, trustProxy: true });
@@ -31,6 +32,7 @@ export async function buildApp() {
   });
   await app.register(multipart);
   app.decorateRequest("user", null);
+  app.decorateRequest("viaToken", false);
   app.addHook("preHandler", async (req) => {
     await loadUser(req);
   });
@@ -54,5 +56,6 @@ export async function buildApp() {
   await app.register(runRoutes);
   await app.register(batchRoutes);
   await app.register(assistantRoutes);
+  await app.register(agentRoutes);
   return app;
 }

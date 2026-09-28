@@ -36,6 +36,20 @@
       "when": 1790175154894,
       "tag": "0004_assistente_status",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790190934557,
+      "tag": "0005_tokens_api",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790191479540,
+      "tag": "0006_login_agente",
+      "breakpoints": true
     }
   ]
 }

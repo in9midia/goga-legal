@@ -8,5 +8,6 @@
 !studio/api/src
 !studio/api/drizzle
 !studio/api/seed
+!studio/api/agent-skill
 !knowledge-base/content/evaluation
 studio/api/src/**/*.test.ts

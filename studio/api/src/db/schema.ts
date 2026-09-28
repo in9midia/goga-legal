@@ -30,6 +30,43 @@ export const appSession = pgTable("app_session", {
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
 });
 
+// Token de API pessoal: agentes externos (Claude Code, Codex, Gemini CLI)
+// operam o Studio como a pessoa que criou o token, com o mesmo papel e a mesma
+// auditoria. So o hash fica no banco; o token aparece uma vez, na criacao.
+export const apiToken = pgTable(
+  "api_token",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => appUser.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    tokenHash: text("token_hash").notNull().unique(),
+    prefix: text("prefix").notNull(),
+    createdAt: createdAt(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (t) => [index("api_token_user_idx").on(t.userId)],
+);
+
+// Login de agente pelo navegador (fluxo tipo "device code"): o CLI abre um
+// pedido, a pessoa autoriza logada no Studio e o CLI, que consulta com o
+// segredo `device_hash`, recebe um token novo. O token so e gerado nessa
+// consulta: nada em claro fica guardado aqui.
+export const agentLogin = pgTable("agent_login", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  deviceHash: text("device_hash").notNull().unique(),
+  userCode: text("user_code").notNull().unique(),
+  client: text("client").notNull(),
+  status: text("status", { enum: ["pending", "approved", "denied", "consumed"] }).notNull().default("pending"),
+  userId: uuid("user_id").references(() => appUser.id, { onDelete: "cascade" }),
+  expiresInDays: integer("expires_in_days"),
+  createdAt: createdAt(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+});
+
 export const provider = pgTable("provider", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),

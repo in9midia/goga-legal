@@ -62,3 +62,5 @@ tentativa idêntica.
 | [0026](0026-auditoria-do-conceito-registrada.md) | A conferência do conceito fica registrada: contra o quê, quando e por quem |
 | [0027](0027-armadilha-chega-com-o-aviso-colado.md) | Conteúdo que engana quem lê rápido chega com o aviso colado |
 | [0028](0028-gemini-pela-camada-compativel.md) | Gemini entra pela camada compatível, e o uso não reportado entra como estimativa |
+| [0029](0029-pasta-sincronizada-de-armazenamento-externo.md) | Uma pasta do Google Drive pode ser espelhada numa base, sem tocar no upload manual |
+| [0030](0030-aws-s3-como-alternativa-ao-minio.md) | O bruto pode ficar no AWS S3 ou na OCI em vez do MinIO, e a migração só copia |

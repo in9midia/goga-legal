@@ -392,9 +392,12 @@ function ModelDialog({ providerId, model, onClose, onSaved }: { providerId: stri
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((s) => ({ ...s, [k]: v }));
   const num = (s: string) => Number(s.replace(",", ".")) || 0;
   // Sugestoes para o campo de ID; se a listagem falhar, o campo continua livre.
+  // Mesma chave do ImportModelsDialog: o cache guarda a resposta inteira e
+  // cada tela recorta o que usa em `select`, senao uma le o formato da outra.
   const avail = useQuery({
     queryKey: ["available-models", providerId],
-    queryFn: () => api.get<{ models: DiscoveredModel[] }>(`/providers/${providerId}/available-models`).then((r) => r.models),
+    queryFn: () => api.get<AvailableModels>(`/providers/${providerId}/available-models`),
+    select: (r) => r.models,
     retry: false,
     staleTime: 5 * 60_000,
   });
@@ -543,12 +546,14 @@ function ModelDialog({ providerId, model, onClose, onSaved }: { providerId: stri
   );
 }
 
+type AvailableModels = { models: DiscoveredModel[]; priceSource: "ok" | "indisponivel" };
+
 const priceOrDash = (n: number | null) => (n === null ? "—" : `$${n.toLocaleString("pt-BR", { maximumFractionDigits: 4 })}`);
 
 function ImportModelsDialog({ provider, onClose, onSaved }: { provider: Provider; onClose: () => void; onSaved: () => void }) {
   const q = useQuery({
     queryKey: ["available-models", provider.id],
-    queryFn: () => api.get<{ models: DiscoveredModel[]; priceSource: "ok" | "indisponivel" }>(`/providers/${provider.id}/available-models`),
+    queryFn: () => api.get<AvailableModels>(`/providers/${provider.id}/available-models`),
     retry: false,
   });
   const [filter, setFilter] = useState("");

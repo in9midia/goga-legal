@@ -125,7 +125,7 @@ def test_recuperacao_esquece_o_documento_antigo_no_grafo(monkeypatch):
 
     esquecidos = []
     monkeypatch.setattr(retry, "_carga_de_gente", lambda: 0)
-    monkeypatch.setattr(retry, "_da_vez", lambda: [(7, "rh", "ferias.pdf", "raw/ferias.pdf")])
+    monkeypatch.setattr(retry, "_da_vez", lambda: [(7, "rh", "ferias.pdf", "raw/ferias.pdf", None, "")])
     monkeypatch.setattr(retry.storage, "get", lambda k: b"conteudo")
     monkeypatch.setattr(retry.graph, "forget_document", lambda i: esquecidos.append(i))
     monkeypatch.setattr(retry, "PAUSA_ENTRE_DOCUMENTOS", 0)

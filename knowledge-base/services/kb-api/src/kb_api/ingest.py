@@ -24,13 +24,42 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import graph, okf, progresso, providers, representations, storage, wiki
+from . import graph, okf, progresso, providers, representations, retomada, storage, wiki
 from .chunking import ChunkConfig, plan
 from .db import as_vector, conn, jsonb
 from .embedding import embed
 from .extract import ExtractionError, extract, page_of_offset
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class Origem:
+    """De qual pasta sincronizada o documento veio (`sync.py`).
+
+    `None` no lugar de uma `Origem` e o upload manual. A distincao existe para
+    a sincronizacao nunca tocar no que foi enviado a mao: versionamento,
+    deduplicacao e remocao olham SO documentos da mesma origem (ver a migracao
+    0022). `ref` e o id do arquivo no armazenamento externo, que sobrevive a
+    renomear e mover -- o nome nao serviria de identidade.
+    """
+
+    sync_id: int
+    ref: str
+
+
+def escopo_da_origem(origem: Origem | None, alias: str = "") -> tuple[str, tuple]:
+    """O pedaco de WHERE que separa documentos por origem, e os parametros.
+
+    Manual casa so com manual (`sync_id IS NULL`), e sincronizado casa so com o
+    MESMO arquivo remoto. Sem isto, subir `contrato.pdf` a mao desativava o
+    `contrato.pdf` que veio do Drive, e vice-versa -- o versionamento era so
+    pelo nome.
+    """
+    prefixo = f"{alias}." if alias else ""
+    if origem is None:
+        return f"{prefixo}sync_id IS NULL", ()
+    return f"{prefixo}sync_id = %s AND {prefixo}source_ref = %s", (origem.sync_id, origem.ref)
 
 
 @dataclass
@@ -144,7 +173,9 @@ def _run_close(run_id: int | None, result: IngestResult) -> None:
         log.warning("nao consegui fechar o log de ingestao %s: %s", run_id, exc)
 
 
-def enfileirar(space_slug: str, filename: str, data: bytes, principal: str) -> dict[str, Any]:
+def enfileirar(
+    space_slug: str, filename: str, data: bytes, principal: str, origem: Origem | None = None,
+) -> dict[str, Any]:
     """Guarda o bruto e poe o arquivo na fila. Quem processa e `fila.py`.
 
     O bruto vai para o object store AGORA, e nao no worker: e ele que torna a
@@ -159,11 +190,13 @@ def enfileirar(space_slug: str, filename: str, data: bytes, principal: str) -> d
         cur.execute(
             """
             INSERT INTO ingest_run
-                (space_slug, filename, size_bytes, principal, status, raw_key, queued_at)
-            VALUES (%s,%s,%s,%s,'queued',%s, now())
+                (space_slug, filename, size_bytes, principal, status, raw_key, queued_at,
+                 sync_id, source_ref)
+            VALUES (%s,%s,%s,%s,'queued',%s, now(), %s, %s)
             RETURNING id
             """,
-            (space_slug, filename, len(data), principal, raw_key),
+            (space_slug, filename, len(data), principal, raw_key,
+             origem.sync_id if origem else None, origem.ref if origem else ""),
         )
         run_id = cur.fetchone()[0]
         cur.execute(
@@ -179,7 +212,7 @@ def enfileirar(space_slug: str, filename: str, data: bytes, principal: str) -> d
 
 def ingest_document(
     space_slug: str, filename: str, data: bytes, principal: str = "", force: bool = False,
-    run_id: int | None = None,
+    run_id: int | None = None, origem: Origem | None = None,
 ) -> IngestResult:
     """Ingestao de um documento, do bruto ao indice.
 
@@ -194,7 +227,7 @@ def ingest_document(
     relator = progresso.iniciar(run_id)
     try:
         progresso.etapa("iniciado", f"processando {filename}")
-        resultado = _ingest_document(space_slug, filename, data, started, force)
+        resultado = _ingest_document(space_slug, filename, data, started, force, origem)
     except Exception as exc:  # noqa: BLE001
         progresso.etapa("falhou", str(exc)[:500])
         progresso.encerrar(relator)
@@ -215,6 +248,7 @@ def ingest_document(
                 mimetypes.guess_type(filename)[0] or "application/octet-stream",
                 len(data),
                 f"{space_slug}/{content_sha[:2]}/{content_sha}/{filename}", str(exc),
+                origem,
             )
         except Exception as registro:  # noqa: BLE001
             log.warning("falha ao registrar %s para retentativa: %s", filename, registro)
@@ -238,10 +272,13 @@ def ingest_document(
 
 
 def _ingest_document(
-    space_slug: str, filename: str, data: bytes, started: float, force: bool = False
+    space_slug: str, filename: str, data: bytes, started: float, force: bool = False,
+    origem: Origem | None = None,
 ) -> IngestResult:
     content_sha = hashlib.sha256(data).hexdigest()
     mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    # Deduplicacao e versionamento so dentro da mesma origem (ver `Origem`).
+    escopo, escopo_params = escopo_da_origem(origem)
 
     # --- no-op quando o conteudo ja esta indexado ---
     #
@@ -261,12 +298,12 @@ def _ingest_document(
     if not force:
         with conn() as connection, connection.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT id, extractor FROM document
                  WHERE space_slug = %s AND content_sha = %s AND active
-                   AND status = 'indexed'
+                   AND status = 'indexed' AND {escopo}
                 """,
-                (space_slug, content_sha),
+                (space_slug, content_sha, *escopo_params),
             )
             existing = cur.fetchone()
     if existing:
@@ -283,37 +320,12 @@ def _ingest_document(
     raw_key = f"{space_slug}/{content_sha[:2]}/{content_sha}/{filename}"
     storage.put(raw_key, data, mime)
 
-    # --- 2. canonico ---
-    progresso.etapa("extracao")
-    try:
-        extracted = extract(data, filename)
-    except ExtractionError as exc:
-        document_id = _registrar_falha(
-            space_slug, filename, content_sha, mime, len(data), raw_key, str(exc)
-        )
-        return IngestResult(
-            document_id=document_id,
-            filename=filename,
-            status="failed",
-            error=str(exc),
-            total_ms=int((time.perf_counter() - started) * 1000),
-        )
-
-    # --- 3. chunks pai/filho ---
-    #
-    # O canonico GRAVADO guarda a figura como marca (`<!-- figura fig-1 -->`), e
-    # nao como link. O link precisa do id do documento e da rota da API, e
-    # gravar isso no texto teria dois custos: acoplaria o artefato ao layout de
-    # rotas de hoje, e qualquer reescrita depois deslocaria os offsets que dao a
-    # pagina de cada trecho. O link e assunto de LEITURA -- quem monta e o
-    # fetch_document (search.py), na hora de servir.
-    canonical = extracted.markdown
-
     # O motor de corte vem do ESPACO, nao de uma configuracao global: e o que
     # permite duas bases com estrategias diferentes convivendo na mesma
     # instalacao, cada uma com o corte que o formato dos documentos dela pede.
     # Junto vem o conjunto de REPRESENTACOES ativas, que decide o fan-out do
-    # passo 6.
+    # passo 6. Le ANTES da extracao porque a configuracao de corte e parte da
+    # assinatura do ponto de retomada.
     with conn() as connection, connection.cursor() as cur:
         cur.execute(
             "SELECT chunking, representations FROM space WHERE slug = %s", (space_slug,)
@@ -322,21 +334,84 @@ def _ingest_document(
     chunk_cfg = ChunkConfig.from_space(linha[0] if linha else None)
     ativas = representations.Ativacao.from_space(linha[1] if linha else None)
 
-    # --- conceito OKF: lido quando vem escrito, derivado quando nao vem ---
+    # --- ponto de retomada (ver retomada.py) ---
     #
-    # Fica AQUI, e nao dentro de `chunking.plan()`, por dois motivos: a
-    # derivacao e uma chamada de rede que custa dinheiro por documento, e o
-    # corte precisa continuar testavel sem provedor de IA nenhum. A politica de
-    # qual conceito ganha esta em `okf.resolve`.
-    progresso.etapa("corte")
-    concept = (
-        okf.resolve(canonical, filename, chunk_cfg.okf_types, extracted.title, space_slug)
-        if chunk_cfg.okf
-        else None
-    )
+    # Falha no embedding (licenca expirada, cota) nao e do documento: a
+    # tentativa seguinte le a extracao, o conceito e o corte da anterior, e o
+    # embedding recomeca do primeiro trecho sem vetor.
+    #
+    # EXCETO no reprocessamento de um documento que esta INDEXADO: quem pede
+    # isso quer refazer (extrator novo, OCR ligado), e um ponto de retomada que
+    # sobrou de uma limpeza que falhou devolveria a extracao velha em silencio.
+    assinatura = retomada.assinatura({**chunk_cfg.to_dict(), "okf": chunk_cfg.okf})
+    preparo = None
+    if force:
+        with conn() as connection, connection.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT 1 FROM document
+                 WHERE space_slug = %s AND content_sha = %s AND active
+                   AND status <> 'failed' AND {escopo}
+                """,
+                (space_slug, content_sha, *escopo_params),
+            )
+            ja_indexado = cur.fetchone() is not None
+    else:
+        ja_indexado = False
+    if not ja_indexado:
+        preparo = retomada.carregar(space_slug, content_sha, assinatura)
 
-    chunk_plan = plan(canonical, chunk_cfg, concept=concept, space=space_slug)
-    progresso.avancar("corte", 1, 1, f"{len(chunk_plan.parents)} trechos pai")
+    if preparo is not None:
+        extracted, concept, chunk_plan = preparo.extracted, preparo.concept, preparo.chunk_plan
+        token = preparo.token
+        progresso.etapa("extracao", "retomado: extração e corte da tentativa anterior")
+        progresso.etapa("corte", f"retomado: {len(chunk_plan.parents)} trechos pai")
+    else:
+        # --- 2. canonico ---
+        progresso.etapa("extracao")
+        try:
+            extracted = extract(data, filename)
+        except ExtractionError as exc:
+            document_id = _registrar_falha(
+                space_slug, filename, content_sha, mime, len(data), raw_key, str(exc), origem
+            )
+            return IngestResult(
+                document_id=document_id,
+                filename=filename,
+                status="failed",
+                error=str(exc),
+                total_ms=int((time.perf_counter() - started) * 1000),
+            )
+
+        # --- 3. chunks pai/filho ---
+        #
+        # --- conceito OKF: lido quando vem escrito, derivado quando nao vem ---
+        #
+        # Fica AQUI, e nao dentro de `chunking.plan()`, por dois motivos: a
+        # derivacao e uma chamada de rede que custa dinheiro por documento, e o
+        # corte precisa continuar testavel sem provedor de IA nenhum. A politica
+        # de qual conceito ganha esta em `okf.resolve`.
+        progresso.etapa("corte")
+        concept = (
+            okf.resolve(
+                extracted.markdown, filename, chunk_cfg.okf_types, extracted.title, space_slug
+            )
+            if chunk_cfg.okf
+            else None
+        )
+        chunk_plan = plan(extracted.markdown, chunk_cfg, concept=concept, space=space_slug)
+        progresso.avancar("corte", 1, 1, f"{len(chunk_plan.parents)} trechos pai")
+        token = retomada.guardar(
+            space_slug, content_sha, assinatura, extracted, concept, chunk_plan
+        )
+
+    # O canonico GRAVADO guarda a figura como marca (`<!-- figura fig-1 -->`), e
+    # nao como link. O link precisa do id do documento e da rota da API, e
+    # gravar isso no texto teria dois custos: acoplaria o artefato ao layout de
+    # rotas de hoje, e qualquer reescrita depois deslocaria os offsets que dao a
+    # pagina de cada trecho. O link e assunto de LEITURA -- quem monta e o
+    # fetch_document (search.py), na hora de servir.
+    canonical = extracted.markdown
     child_texts = [child.content for parent in chunk_plan.parents for child in parent.children]
 
     okf_alvos = okf.link_targets(concept) if concept else []
@@ -348,8 +423,25 @@ def _ingest_document(
     titulo = (concept.title if concept else "") or extracted.title or filename
 
     # --- 4. embedding do filho ---
-    progresso.etapa("embedding", f"{len(child_texts)} trechos para vetorizar")
-    embedded = embed(child_texts, "index", space_slug) if child_texts else None
+    #
+    # Cada lote que volta vai para o ponto de retomada: se o provedor cair no
+    # lote 280 de 300, a proxima tentativa comeca no 280.
+    prontos, modelo_prontos = (
+        retomada.vetores(space_slug, content_sha, token, len(child_texts))
+        if preparo is not None else ([], "")
+    )
+    progresso.etapa(
+        "embedding",
+        f"{len(child_texts)} trechos para vetorizar"
+        + (f"; {len(prontos)} já vetorizados na tentativa anterior" if prontos else ""),
+    )
+    embedded = embed(
+        child_texts, "index", space_slug,
+        prontos=prontos, modelo_prontos=modelo_prontos,
+        ao_lote=lambda inicio, lote, modelo: retomada.gravar_lote(
+            space_slug, content_sha, token, modelo, inicio, lote
+        ),
+    ) if child_texts else None
     vectors = embedded.vectors if embedded else []
     embed_tokens = embedded.tokens if embedded else 0
 
@@ -357,15 +449,24 @@ def _ingest_document(
     progresso.etapa("gravacao")
     with conn() as connection:
         with connection.cursor() as cur:
+            # Arquivo sincronizado versiona pelo id remoto, e nao pelo nome:
+            # renomear no Drive continua sendo o mesmo documento, e dois
+            # `ata.pdf` em subpastas diferentes sao documentos diferentes.
+            chave_versao, chave_params = (
+                ("filename=%s AND sync_id IS NULL", (filename,))
+                if origem is None
+                else (escopo, escopo_params)
+            )
             cur.execute(
-                "SELECT COALESCE(MAX(version), 0) FROM document WHERE space_slug=%s AND filename=%s",
-                (space_slug, filename),
+                "SELECT COALESCE(MAX(version), 0) FROM document WHERE space_slug=%s AND "
+                + chave_versao,
+                (space_slug, *chave_params),
             )
             version = (cur.fetchone()[0] or 0) + 1
             cur.execute(
-                "UPDATE document SET active = FALSE WHERE space_slug=%s AND filename=%s AND active"
-                " RETURNING id",
-                (space_slug, filename),
+                "UPDATE document SET active = FALSE WHERE space_slug=%s AND active AND "
+                + chave_versao + " RETURNING id",
+                (space_slug, *chave_params),
             )
             # Os ids que acabaram de sair de circulacao. O grafo deles precisa
             # sair junto, e o `RETURNING` e o unico momento em que eles sao
@@ -377,8 +478,8 @@ def _ingest_document(
                 INSERT INTO document
                     (space_slug, filename, title, content_sha, mime, size_bytes,
                      raw_key, canonical_md, extractor, chunk_engine, chunk_enrichment,
-                     version, pages, okf, status, indexed_at)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'indexed',now())
+                     version, pages, okf, status, indexed_at, sync_id, source_ref)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'indexed',now(),%s,%s)
                 RETURNING id
                 """,
                 (
@@ -387,6 +488,7 @@ def _ingest_document(
                     extracted.extractor, chunk_cfg.engine, chunk_cfg.enrichment,
                     version, extracted.pages,
                     jsonb(concept.to_dict() if concept else {}),
+                    origem.sync_id if origem else None, origem.ref if origem else "",
                 ),
             )
             document_id = cur.fetchone()[0]
@@ -467,6 +569,10 @@ def _ingest_document(
                      figura.ocr_text, image_key, len(figura.data)),
                 )
         connection.commit()
+
+    # Depois do commit: antes dele, uma falha na gravacao ainda precisa do
+    # ponto de retomada.
+    retomada.limpar(space_slug, content_sha)
 
     # --- 5. grafo, auxiliar ---
     #
@@ -619,7 +725,7 @@ def classificar_erro(mensagem: str) -> str:
 
 def _registrar_falha(
     space_slug: str, filename: str, content_sha: str, mime: str, tamanho: int,
-    raw_key: str, erro: str,
+    raw_key: str, erro: str, origem: Origem | None = None,
 ) -> int | None:
     """Grava (ou atualiza) o documento que falhou, com o plano de retentativa.
 
@@ -638,16 +744,17 @@ def _registrar_falha(
     as duas ativas por um instante.
     """
     tipo = classificar_erro(erro)
+    escopo, escopo_params = escopo_da_origem(origem)
     try:
         with conn() as connection, connection.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT id, retry_count FROM document
                  WHERE space_slug = %s AND content_sha = %s AND active
-                   AND status = 'failed'
+                   AND status = 'failed' AND {escopo}
                  ORDER BY id DESC LIMIT 1
                 """,
-                (space_slug, content_sha),
+                (space_slug, content_sha, *escopo_params),
             )
             existente = cur.fetchone()
 
@@ -657,14 +764,17 @@ def _registrar_falha(
                     """
                     INSERT INTO document
                         (space_slug, filename, title, content_sha, mime, size_bytes,
-                         raw_key, status, error, error_kind, retry_count, next_retry_at)
+                         raw_key, status, error, error_kind, retry_count, next_retry_at,
+                         sync_id, source_ref)
                     VALUES (%s,%s,%s,%s,%s,%s,%s,'failed',%s,%s,0,
                             CASE WHEN %s::int IS NULL THEN NULL
-                                 ELSE now() + (%s || ' minutes')::interval END)
+                                 ELSE now() + (%s || ' minutes')::interval END,
+                            %s,%s)
                     RETURNING id
                     """,
                     (space_slug, filename, filename, content_sha, mime, tamanho,
-                     raw_key, erro[:500], tipo, espera, espera),
+                     raw_key, erro[:500], tipo, espera, espera,
+                     origem.sync_id if origem else None, origem.ref if origem else ""),
                 )
             else:
                 document_id, tentativas = existente
@@ -696,6 +806,67 @@ def _registrar_falha(
     except Exception as exc:  # noqa: BLE001
         log.warning("nao consegui registrar a falha de %s: %s", filename, exc)
         return None
+
+
+def remover_documento(document_id: int) -> dict[str, Any] | None:
+    """Remove o documento: trechos, vetores, figuras, no do grafo e o bruto.
+
+    `None` quando o documento nao existe. Compartilhado pela rota de remocao e
+    pela sincronizacao, que remove o que saiu da pasta.
+
+    O bruto sai por ultimo e a falha nele NAO desfaz o resto: um objeto orfao no
+    bucket e barato, enquanto um documento meio removido -- fora da listagem mas
+    ainda respondendo na busca -- e um vazamento.
+
+    ⚠ O objeto so sai se NENHUM outro documento aponta para ele. A chave e
+    `<espaco>/<sha>/<nome>`, entao o mesmo arquivo enviado a mao e vindo do
+    Drive divide o bruto (e as figuras, que sao por sha). Apagar sem conferir
+    faria a sincronizacao tirar o original de um upload manual -- que ela
+    promete nunca tocar -- e o reprocessamento dele passaria a falhar com
+    "bruto sumiu".
+    """
+    with conn() as connection, connection.cursor() as cur:
+        cur.execute(
+            "SELECT space_slug, filename, raw_key FROM document WHERE id = %s",
+            (document_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        space_slug, filename, raw_key = row
+
+        cur.execute(
+            "SELECT image_key FROM document_figure WHERE document_id = %s AND image_key <> ''",
+            (document_id,),
+        )
+        chaves = [linha[0] for linha in cur.fetchall()]
+        # chunk, chunk_embedding e document_figure caem por ON DELETE CASCADE.
+        cur.execute("DELETE FROM document WHERE id = %s", (document_id,))
+        # Depois do DELETE, o que ainda aponta para as chaves e de outro documento.
+        cur.execute(
+            "SELECT raw_key FROM document WHERE raw_key = ANY(%s)"
+            " UNION SELECT image_key FROM document_figure WHERE image_key = ANY(%s)",
+            ([raw_key], chaves),
+        )
+        em_uso = {linha[0] for linha in cur.fetchall()}
+        connection.commit()
+
+    graph.forget_document(document_id)
+
+    perdidos = 0
+    for chave in [raw_key, *chaves]:
+        if not chave or chave in em_uso:
+            continue
+        try:
+            storage.delete(chave)
+        except Exception as exc:  # noqa: BLE001
+            perdidos += 1
+            log.warning("objeto %s nao removido: %s", chave, exc)
+
+    return {
+        "removed": document_id, "filename": filename, "space": space_slug,
+        "orphan_objects": perdidos,
+    }
 
 
 def ensure_space(

@@ -29,6 +29,10 @@ spec:
             # Criado pelo 20-deploy.sh quando o Keycloak sobe; SOBRESCREVE o
             # KB_KEYCLOAK_ISSUER vazio do config → liga a auth.
             - configMapRef: { name: keycloak-config, optional: true }
+            # Criado pelo 20-deploy.sh quando o .env pede S3_PROVIDER=aws;
+            # SOBRESCREVE o S3_* do MinIO no config. Segredo, e nao configmap,
+            # porque leva a chave da AWS. Por ultimo: em envFrom, o ultimo vence.
+            - secretRef: { name: storage-secret, optional: true }
           ports:
             - { containerPort: 8080, name: http }
           startupProbe:

@@ -17,6 +17,9 @@ export default defineConfig({
   },
   server: {
     fs: { allow: [".."] },
-    proxy: { "/api": { target: process.env.STUDIO_API ?? "http://localhost:8787", changeOrigin: false } },
+    proxy: {
+      "/api": { target: process.env.STUDIO_API ?? "http://localhost:8787", changeOrigin: false },
+      "/skills": { target: process.env.STUDIO_API ?? "http://localhost:8787", changeOrigin: false },
+    },
   },
 });

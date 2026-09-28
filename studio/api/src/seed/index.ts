@@ -25,7 +25,7 @@ const MODELS = {
     // gemini-embedding-001 nao aparece mais na pagina de precos (so o
     // "Gemini Embedding 2"); 0,15 e o ultimo preco publicado. Editavel na tela.
     { modelId: "gemini-embedding-001", label: "Gemini Embedding 001 (3072)", purpose: "embedding", priceInPer1m: 0.15, priceOutPer1m: 0, priceCachePer1m: 0, contextWindow: 2048, isDefault: true, supportsTools: false, supportsJson: false },
-    { modelId: "gemini-2.5-flash", label: "Gemini 2.5 Flash (visão)", purpose: "vision", priceInPer1m: 0.3, priceOutPer1m: 2.5, priceCachePer1m: 0.03, contextWindow: 1_048_576, isDefault: true },
+    { modelId: "gemini-3.6-flash", label: "Gemini 3.6 Flash (visão)", purpose: "vision", priceInPer1m: 0.75, priceOutPer1m: 3.75, priceCachePer1m: 0.075, contextWindow: 1_048_576, isDefault: true },
   ],
   mock: [{ modelId: "goga-simulado", label: "Simulado (offline, sem custo)", purpose: "chat", priceInPer1m: 0, priceOutPer1m: 0, priceCachePer1m: 0, contextWindow: 128_000, isDefault: false }],
 } as const;

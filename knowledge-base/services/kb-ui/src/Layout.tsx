@@ -5,6 +5,7 @@ import {
   Brain,
   ChartColumn,
   Cpu,
+  HardDrive,
   History,
   Home,
   ListOrdered,
@@ -62,6 +63,9 @@ const NAV_GROUPS: { label?: string; adminOnly?: boolean; items: NavItem[] }[] = 
       { to: '/acessos', label: 'Acessos', icon: Users },
       { to: '/modelos-ia', label: 'Modelos de IA', icon: Brain },
       { to: '/uso-ia', label: 'Uso de IA', icon: ChartColumn },
+      // Só a credencial. A pasta se escolhe na base (Documentos > Gerenciar),
+      // pelo mesmo motivo que tirou as telas por base do menu.
+      { to: '/armazenamentos', label: 'Armazenamentos', icon: HardDrive },
       // Benchmark saiu daqui junto com as outras telas por base. Continua só
       // para administrador — gerar perguntas e rodar uma execução GASTAM IA, e
       // a API barra pelo mesmo motivo —, mas o caminho agora é o card da base,

@@ -566,6 +566,44 @@ quando não há nada rodando, porque consulta de contagem em base grande não é
 graça. Antes disso a tela mostrava 40 documentos e 639 trechos enquanto a API já
 tinha 44 e 660: números velhos, sem nada indicando que estavam velhos.
 
+### Sincronizar uma pasta do Google Drive
+
+Duas etapas, em dois lugares:
+
+1. **Administração > Armazenamentos**: cadastre a conta de serviço do Google
+   (colando o JSON da chave ou escolhendo o arquivo). A tela recusa na hora o
+   JSON que não é de conta de serviço e a chave que não abre, e **Testar** faz
+   uma chamada real ao Drive. Depois do cadastro ela mostra o **e-mail da conta**,
+   com botão de copiar: é com ele que a pasta precisa ser compartilhada no Drive
+   (leitor basta). Esquecer esse passo é o erro mais comum.
+2. **Documentos > Gerenciar**, na base: **Sincronizar pasta** abre o seletor,
+   que navega pelo que foi compartilhado com a conta (e pelos Drives
+   compartilhados). Também aceita colar o link da pasta. Escolha o intervalo e se
+   as subpastas entram.
+
+A primeira rodada começa em seguida e os arquivos passam pela **fila de
+ingestão** como qualquer upload. Na base, cada pasta mostra o estado (em dia,
+N na fila, sincronizando, erro), o resumo da última rodada e os botões
+**Sincronizar agora**, **Pausar**, **Arquivos** (o que cada arquivo virou:
+indexado, na fila, ignorado por formato ou tamanho, erro ao baixar) e remover.
+
+O que a sincronização faz, e o que não faz:
+
+- arquivo alterado no Drive vira **versão nova** do mesmo documento; renomeado
+  ou movido dentro da pasta só troca de nome, sem reprocessar;
+- arquivo apagado, levado para a lixeira ou para fora da pasta **sai da base**;
+- Documento, Planilha e Apresentação do Google entram exportados como .docx,
+  .xlsx e .pptx; atalhos são ignorados;
+- **documento enviado à mão nunca é tocado**, nem com o mesmo nome nem com o
+  mesmo conteúdo de um arquivo da pasta. Na lista, os sincronizados levam a
+  etiqueta **Drive**;
+- remover na tela um documento sincronizado não o tira do Drive: ele **volta**
+  na próxima rodada. A tela avisa antes;
+- se a pasta deixar de ser alcançável (descompartilhada, apagada), a rodada
+  para com erro e **não remove nada**;
+- remover a sincronização pergunta se os documentos ficam (e passam a valer
+  como enviados à mão) ou saem junto.
+
 ### Benchmark: quão boa é a resposta
 
 A tela **Benchmark** (Administração) responde a pergunta que a telemetria não
@@ -759,6 +797,22 @@ Erro **definitivo** não entra nessa fila. Arquivo protegido por senha, corrompi
 ou do qual nenhum extrator tirou texto não melhora com insistência — insistir só
 gastaria OCR. Ele aparece no log como falha e espera uma pessoa.
 
+**A nova tentativa continua de onde a anterior parou.** A extração, o conceito OKF,
+o corte e cada lote de vetores já devolvido ficam guardados no object store, ao
+lado do bruto (`retomada.py`). Se o embedding caiu no trecho 280 de 300 (licença
+do provedor expirada, cota estourada), a tentativa seguinte, automática ou pelo
+**Reprocessar** do documento com falha, pula docling, conceito e corte e só
+vetoriza do trecho 280 em diante. A fila mostra "retomado" nas etapas puladas.
+
+O que faz recomeçar do zero, de propósito:
+
+- mudar a configuração de corte do Espaço (os trechos seriam outros);
+- trocar o **modelo** de embedding: os vetores prontos são descartados, porque
+  dois modelos no mesmo documento degradam a busca sem erro nenhum;
+- reprocessar um documento que está **indexado**: quem pede isso quer refazer.
+
+O ponto de retomada é apagado quando a versão nova é gravada.
+
 Duas coisas que a rota `/v1/retry` responde e que valem para operar:
 
 - **`next_retry_at` nulo quer dizer "parou de tentar"**, não "esperando a vez". É
@@ -835,6 +889,65 @@ VITE_KEYCLOAK_REALM=goga-interno \
 VITE_KEYCLOAK_CLIENT_ID=kb-ui \
 npm run dev        # http://localhost:3010, com proxy para o cluster
 ```
+
+## Trocar o MinIO pelo AWS S3 ou pela OCI
+
+O original de cada documento fica no MinIO do cluster por padrão. Ele pode ficar
+num bucket do AWS S3 ou do OCI Object Storage em vez disso ([ADR-0030](adr/0030-aws-s3-como-alternativa-ao-minio.md)).
+É um ou outro: o kb-api lê e grava num só.
+
+**Antes:** crie o bucket na conta (a aplicação não cria bucket na AWS) e um
+usuário IAM com `s3:ListBucket` no bucket e `s3:GetObject`, `s3:PutObject` e
+`s3:DeleteObject` nos objetos dele.
+
+**Na OCI:** crie o bucket **privado** (`--public-access-type NoPublicAccess`),
+anote o namespace (`oci os ns get`) e gere uma Customer Secret Key para o
+usuário. No `.env`: `S3_PROVIDER=oci`, `S3_NAMESPACE`, `S3_REGION` (ex.:
+`sa-saopaulo-1`), `S3_BUCKET`, e a chave em `S3_ACCESS_KEY`/`S3_SECRET_KEY`.
+Chave recém-criada leva alguns minutos para valer: até lá a resposta é
+`SignatureDoesNotMatch ... secret key could not be found`.
+
+**A virada, na ordem:**
+
+1. preencha o bloco "Object storage" do `.env` com `S3_PROVIDER=aws` (ou `oci`), bucket,
+   região e a chave. **Não** rode o deploy ainda;
+2. `infra/k8s/local/10-build-image.sh`, para a imagem ter o migrador;
+3. `infra/k8s/local/30-migrar-storage.sh --dry-run` diz quantos objetos e
+   quantos bytes vai copiar, sem gravar nada;
+4. `infra/k8s/local/30-migrar-storage.sh --verificar` copia do MinIO para o bucket
+   e compara as duas listagens no fim. Pode rodar com o sistema no ar;
+5. pare o kb-api (`kubectl -n stack-knowledge-base scale deploy/kb-api --replicas=0`)
+   e rode o passo 4 de novo. Ele pula o que já foi e copia só o que entrou no
+   meio. Parar o serviço é mais simples que esperar a fila esvaziar: o original
+   de cada item da fila já foi gravado no upload e vai junto na cópia, e o
+   deploy do passo 6 devolve a réplica;
+6. `./start-k8s-local.sh` (ou `20-deploy.sh`). O deploy cria o segredo
+   `storage-secret` e o kb-api reinicia apontando para o S3;
+7. confira na tela **Stack**: o object store deve mostrar `provider: aws` e o
+   mesmo número de objetos da migração (`provider: oci` na OCI). Abra "ver o original" de um documento
+   antigo.
+
+O MinIO continua de pé depois da virada, com o acervo intacto: a migração
+**nunca apaga** nada. Voltar atrás é pôr `S3_PROVIDER=minio` e rodar o deploy
+(o que tiver sido ingerido no S3 depois da virada fica só lá). Desligar o MinIO
+é decisão manual, depois de alguns dias de operação no S3.
+
+O migrador também roda fora do script, para outras origens (inclusive
+`KB_STORAGE_BACKEND=filesystem`):
+
+```bash
+DEST_S3_BUCKET=... DEST_S3_REGION=... DEST_S3_ACCESS_KEY=... DEST_S3_SECRET_KEY=... \
+  python -m kb_api.migrar_storage --verificar [--prefixo <espaco>/] [--paralelo 8]
+```
+
+| Sintoma | Causa |
+|---|---|
+| `o bucket X fica em us-east-2, mas S3_REGION=sa-east-1` | região errada no `.env` |
+| `sem permissao no bucket X (HTTP 403)` | chave inválida, falta `s3:ListBucket`, ou bucket de outra conta |
+| `o bucket X nao existe` | crie na conta; ou `S3_CREATE_BUCKET=true` se a chave puder criar |
+| `faltando N` no `--verificar` | houve falha de cópia acima no log; rode de novo |
+| `Broken pipe` / `Remote end closed connection` em PDF grande | muitos uploads grandes ao mesmo tempo para o link de subida; rode de novo com `--paralelo 2` |
+| kb-api virado continua mostrando `endpoint: http://minio:9000` | `S3_ENDPOINT` explícito em algum configmap vence o padrão do provedor; ele não pode estar no `config.yaml` |
 
 ## Carga em massa
 

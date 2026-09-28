@@ -8,7 +8,7 @@ import { costOf, resolveModel } from "../llm/models.js";
 import { readFileData } from "../files/storage.js";
 import { errorMessage } from "../engine/tracer.js";
 import { assistantSystem } from "./prompt.js";
-import { ASK_TOOL, SENSITIVE, StudioApi, buildTools, clipStr, type ToolCtx } from "./tools.js";
+import { ASK_TOOL, SENSITIVE, StudioApi, buildTools, clipStr, type Credentials, type ToolCtx } from "./tools.js";
 
 // Um turno do Assistente: resolve o que ficou pendente no turno anterior
 // (resposta a uma pergunta, aprovacao de acao sensivel), grava a mensagem do
@@ -96,7 +96,7 @@ async function hydrate(messages: ModelMessage[], vision: boolean): Promise<Model
 
 export async function runAssistantTurn(args: {
   app: FastifyInstance;
-  cookie: string;
+  auth: Credentials;
   user: SessionUser;
   sessionId: string;
   content: string;
@@ -112,7 +112,7 @@ export async function runAssistantTurn(args: {
   const resolved = await resolveModel(session.modelId);
   if (resolved.row.purpose === "embedding") throw new HttpError(400, "Modelo de embedding não conversa; escolha um modelo de chat.");
   const vision = resolved.provider.kind === "gemini" || resolved.row.purpose === "vision";
-  const ctx: ToolCtx = { api: new StudioApi(args.app, args.cookie), user };
+  const ctx: ToolCtx = { api: new StudioApi(args.app, args.auth), user };
 
   const rows = await db.select().from(schema.assistantMessage).where(eq(schema.assistantMessage.sessionId, session.id)).orderBy(asc(schema.assistantMessage.createdAt));
 

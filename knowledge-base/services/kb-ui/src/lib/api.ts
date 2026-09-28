@@ -44,6 +44,12 @@ import type {
   SpaceAi,
   SpacesResponse,
   StackInfo,
+  StorageConnection,
+  StorageFolder,
+  StorageKind,
+  StorageSync,
+  StorageTest,
+  SyncItem,
   WikiIndex,
   WikiPage,
 } from './types';
@@ -437,4 +443,63 @@ export const kb = {
   connections: () => api.get<{ connections: Connection[] }>('/connections').then((r) => r.data),
 
   revokeConnection: (id: number) => api.delete(`/connections/${id}`).then((r) => r.data),
+
+  // ── armazenamentos externos (só admin) ──
+  storages: () =>
+    api
+      .get<{ kinds: StorageKind[]; storages: StorageConnection[] }>('/storages')
+      .then((r) => r.data),
+
+  createStorage: (body: { kind: string; label: string; credential: string }) =>
+    api.post<StorageConnection>('/storages', body).then((r) => r.data),
+
+  /** `credential` vazia = mantém a que já está lá (a tela nunca a mostra). */
+  updateStorage: (id: number, body: { label?: string; credential?: string }) =>
+    api.put<StorageConnection>(`/storages/${id}`, body).then((r) => r.data),
+
+  removeStorage: (id: number) => api.delete(`/storages/${id}`).then((r) => r.data),
+
+  testStorage: (id: number) => api.post<StorageTest>(`/storages/${id}/test`).then((r) => r.data),
+
+  /** Sem `parent`: o que foi compartilhado com a conta, mais os Drives compartilhados. */
+  storageFolders: (id: number, parent?: string) =>
+    api
+      .get<{ parent: string | null; client_email: string; folders: StorageFolder[] }>(
+        `/storages/${id}/folders`,
+        { params: { parent: parent || undefined } },
+      )
+      .then((r) => r.data),
+
+  syncs: (space?: string) =>
+    api
+      .get<{ syncs: StorageSync[] }>('/syncs', { params: { space: space || undefined } })
+      .then((r) => r.data.syncs),
+
+  createSync: (
+    space: string,
+    body: { connection_id: number; folder: string; recursive: boolean; interval_minutes: number },
+  ) =>
+    // A criação confere a pasta no Drive antes de gravar: pode levar alguns segundos.
+    api
+      .post<StorageSync>(`/spaces/${encodeURIComponent(space)}/syncs`, body, { timeout: 120_000 })
+      .then((r) => r.data),
+
+  updateSync: (
+    id: number,
+    body: { enabled?: boolean; recursive?: boolean; interval_minutes?: number },
+  ) => api.put<StorageSync>(`/syncs/${id}`, body).then((r) => r.data),
+
+  runSync: (id: number) => api.post<StorageSync>(`/syncs/${id}/run`).then((r) => r.data),
+
+  syncItems: (id: number) =>
+    api.get<{ items: SyncItem[] }>(`/syncs/${id}/items`).then((r) => r.data.items),
+
+  removeSync: (id: number, keepDocuments: boolean) =>
+    api
+      .delete<{ removed: number; documents_removed: number; documents_kept: number }>(
+        `/syncs/${id}`,
+        // Remover sem manter apaga um documento por vez (bruto, figuras, grafo).
+        { params: { keep_documents: keepDocuments }, timeout: 300_000 },
+      )
+      .then((r) => r.data),
 };

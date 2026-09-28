@@ -1,6 +1,6 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { BookOpen, Bot, BrainCircuit, ClipboardList, ExternalLink, FlaskConical, History, LibraryBig, LogOut, type LucideIcon, MessagesSquare, Plug, Sparkles, Receipt, ShieldCheck, Users, Workflow } from "lucide-react";
+import { BookOpen, Bot, BrainCircuit, ClipboardList, ExternalLink, FlaskConical, History, LibraryBig, LogOut, type LucideIcon, MessagesSquare, Plug, Sparkles, Receipt, ShieldCheck, TerminalSquare, Users, Workflow } from "lucide-react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useAssistant } from "@/lib/assistant";
@@ -38,6 +38,7 @@ const groups: { label?: string; items: Item[] }[] = [
       { to: "/admin/providers", label: "Provedores e modelos", icon: BrainCircuit },
       { to: "/admin/users", label: "Usuários", icon: Users, admin: true },
       { to: "/admin/catalogs", label: "Catálogos", icon: BookOpen },
+      { to: "/agents", label: "Agentes externos", icon: TerminalSquare },
     ],
   },
 ];

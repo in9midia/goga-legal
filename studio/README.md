@@ -40,6 +40,27 @@ cp .env.example .env        # na raiz do repo: chaves DeepSeek/Gemini e senha do
 
 Studio em `http://studio.localtest.me:8890`, KB em `http://localhost:8890`.
 
+## Agentes externos (Claude Code, Codex, Gemini CLI)
+
+A skill `goga-studio` ([fonte](api/agent-skill/goga-studio/SKILL.md)) deixa esses agentes
+operarem o Studio com **as mesmas ferramentas do Assistente** (`/api/v1/agent/*` reaproveita
+`assistant/tools.ts`). Instalar em qualquer máquina com Node 18+:
+
+```bash
+curl -fsSL https://<studio>/skills/goga.mjs | node - instalar
+```
+
+O Studio serve o script com o próprio endereço embutido; `instalar` grava a skill em
+`~/.claude/skills` (Claude Code) e `~/.agents/skills` (Codex e Gemini CLI) e faz o login: abre
+`/agents/autorizar` no navegador, a pessoa entra com usuário e senha, confere o código e autoriza,
+e o CLI recebe um token pessoal (fluxo tipo *device code*; o token nunca passa por URL). Tokens
+se veem e revogam em **Agentes externos**. Atrás de um proxy TLS, defina `STUDIO_PUBLIC_URL`
+(ex.: `https://goga.inine.com.br`) para os links saírem com `https`.
+
+Dentro do repo a skill já é descoberta (`.agents/skills/` → Codex e Gemini, `.claude/skills/` →
+Claude Code, ambos links para `api/agent-skill/`). Ações sensíveis (publicar, excluir, restaurar,
+lote, escrita genérica) voltam 428 sem `confirm: true`, e a skill manda o agente pedir aprovação.
+
 ## Testes
 
 ```bash

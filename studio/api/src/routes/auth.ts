@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "../db/index.js";
 import { audit } from "../lib/audit.js";
-import { hashPassword, requireAdmin, requireUser, verifyPassword } from "../lib/auth.js";
+import { hashPassword, requireAdmin, requireBrowserSession, requireUser, verifyPassword } from "../lib/auth.js";
 import { badRequest, conflict, HttpError, notFound } from "../lib/errors.js";
 
 const publicUser = (u: typeof schema.appUser.$inferSelect) => ({ id: u.id, name: u.name, email: u.email, role: u.role, active: u.active, createdAt: u.createdAt });
@@ -31,7 +31,7 @@ export async function authRoutes(app: FastifyInstance) {
   app.get("/api/v1/auth/me", async (req) => ({ user: requireUser(req) }));
 
   app.post("/api/v1/auth/password", async (req) => {
-    const me = requireUser(req);
+    const me = requireBrowserSession(req);
     const b = z.object({ current: z.string(), password: z.string().min(8) }).safeParse(req.body);
     if (!b.success) throw badRequest("a nova senha precisa de ao menos 8 caracteres");
     const [u] = await db.select().from(schema.appUser).where(eq(schema.appUser.id, me.id));

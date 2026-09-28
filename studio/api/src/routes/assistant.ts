@@ -10,6 +10,7 @@ import { extractText } from "../files/extract.js";
 import { errorMessage } from "../engine/tracer.js";
 import { publicMessage, runAssistantTurn, type TurnEvent } from "../assistant/agent.js";
 import { isBusy, liveTurn, startLiveTurn } from "../assistant/live.js";
+import { credentialsOf } from "../assistant/tools.js";
 
 const MAX_UPLOAD = 25 * 1024 * 1024;
 const ALLOWED = /^(application\/(pdf|json|x-yaml|yaml)|application\/vnd\.openxmlformats-officedocument\.wordprocessingml\.document|text\/.*|image\/(png|jpe?g|webp|gif))$/;
@@ -124,9 +125,9 @@ export async function assistantRoutes(app: FastifyInstance) {
     if (!b.success) throw badRequest("mensagem inválida", b.error.issues);
     if (isBusy(s.id)) throw conflict("o assistente ainda está respondendo nesta conversa");
     if (b.data.modelId && b.data.modelId !== s.modelId) await db.update(schema.assistantSession).set({ modelId: b.data.modelId }).where(eq(schema.assistantSession.id, s.id));
-    const cookie = req.headers.cookie ?? "";
+    const auth = credentialsOf(req.headers);
     startLiveTurn(s.id, (emit, signal) =>
-      runAssistantTurn({ app, cookie, user: me, sessionId: s.id, content: b.data.content, fileIds: b.data.fileIds, resolutions: b.data.resolutions, signal, emit }).catch((err) => {
+      runAssistantTurn({ app, auth, user: me, sessionId: s.id, content: b.data.content, fileIds: b.data.fileIds, resolutions: b.data.resolutions, signal, emit }).catch((err) => {
         emit({ type: "error", error: err instanceof HttpError ? err.message : errorMessage(err) });
       }),
     );

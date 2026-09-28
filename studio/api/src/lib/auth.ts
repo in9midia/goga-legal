@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
+import { createHash, randomBytes } from "node:crypto";
 import argon2 from "argon2";
-import { eq, lt } from "drizzle-orm";
+import { and, eq, gt, isNull, lt, or } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { HttpError } from "./errors.js";
 
@@ -18,6 +19,8 @@ declare module "fastify" {
   }
   interface FastifyRequest {
     user: SessionUser | null;
+    /** Autenticado por token de API (agente externo), e nao pela sessao do navegador. */
+    viaToken: boolean;
   }
 }
 
@@ -53,9 +56,41 @@ export async function pruneSessions() {
   await db.delete(schema.appSession).where(lt(schema.appSession.expiresAt, new Date()));
 }
 
+// ── tokens de API ───────────────────────────────────────────────────────
+// Formato goga_<48 hex>. So o sha256 vai ao banco: o token tem entropia de
+// sobra, entao um hash lento (argon2) so custaria latencia em toda requisicao.
+export const TOKEN_PREFIX = "goga_";
+export const hashToken = (token: string) => createHash("sha256").update(token).digest("hex");
+export function newToken() {
+  const token = TOKEN_PREFIX + randomBytes(24).toString("hex");
+  return { token, hash: hashToken(token), prefix: token.slice(0, TOKEN_PREFIX.length + 6) };
+}
+
+async function userFromToken(token: string): Promise<string | null> {
+  const now = new Date();
+  const [t] = await db
+    .select({ id: schema.apiToken.id, userId: schema.apiToken.userId, lastUsedAt: schema.apiToken.lastUsedAt })
+    .from(schema.apiToken)
+    .where(and(eq(schema.apiToken.tokenHash, hashToken(token)), isNull(schema.apiToken.revokedAt), or(isNull(schema.apiToken.expiresAt), gt(schema.apiToken.expiresAt, now))));
+  if (!t) return null;
+  // "Ultimo uso" com resolucao de um minuto: sem gravar a cada requisicao.
+  if (!t.lastUsedAt || now.getTime() - t.lastUsedAt.getTime() > 60_000) {
+    await db.update(schema.apiToken).set({ lastUsedAt: now }).where(eq(schema.apiToken.id, t.id));
+  }
+  return t.userId;
+}
+
 export async function loadUser(req: FastifyRequest): Promise<void> {
   req.user = null;
-  const id = req.session?.userId;
+  req.viaToken = false;
+  const auth = req.headers.authorization;
+  let id: string | null | undefined;
+  if (auth?.startsWith(`Bearer ${TOKEN_PREFIX}`)) {
+    id = await userFromToken(auth.slice(7).trim());
+    req.viaToken = !!id;
+  } else {
+    id = req.session?.userId;
+  }
   if (!id) return;
   const [u] = await db.select().from(schema.appUser).where(eq(schema.appUser.id, id));
   // Usuario desativado perde a sessao na proxima requisicao, e nao so no proximo
@@ -67,6 +102,13 @@ export async function loadUser(req: FastifyRequest): Promise<void> {
 export function requireUser(req: FastifyRequest): SessionUser {
   if (!req.user) throw new HttpError(401, "sessão expirada ou inexistente");
   return req.user;
+}
+
+/** Rotas que um token nao pode usar (gerir tokens, trocar senha): quem vaza um token nao ganha persistencia. */
+export function requireBrowserSession(req: FastifyRequest): SessionUser {
+  const u = requireUser(req);
+  if (req.viaToken) throw new HttpError(403, "esta ação exige login no Studio (não vale por token de API)");
+  return u;
 }
 
 export function requireAdmin(req: FastifyRequest): SessionUser {

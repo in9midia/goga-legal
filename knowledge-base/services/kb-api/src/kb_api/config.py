@@ -42,6 +42,105 @@ def _env_list(name: str) -> list[str]:
     return [part.strip() for part in _env(name).split(",") if part.strip()]
 
 
+S3_PROVIDERS = ("minio", "aws", "oci")
+
+
+@dataclass(frozen=True)
+class S3Config:
+    """Um bucket S3 alcancavel: onde fica, como assinar, como enderecar.
+
+    `provider` so escolhe PADROES -- todo campo pode ser sobrescrito. A
+    diferenca que importa entre eles:
+
+      minio  endpoint `http://minio:9000`, path-style, cria o bucket na subida,
+             credencial de laboratorio como padrao.
+      oci    OCI Object Storage pela API compativel: endpoint
+             `https://<S3_NAMESPACE>.compat.objectstorage.<regiao>.oraclecloud.com`,
+             path-style (o `compat` nao atende virtual-hosted), NAO cria bucket
+             (o CreateBucket do compat cai no compartimento padrao do tenancy,
+             e bucket e recurso de infra), credencial = Customer Secret Key.
+      aws    endpoint regional `https://s3.<regiao>.amazonaws.com`,
+             virtual-hosted, NAO cria bucket (em conta real bucket e recurso de
+             infra, com politica e criptografia decididas fora daqui), e aceita
+             as variaveis padrao da AWS (`AWS_ACCESS_KEY_ID`...) como fallback.
+    """
+
+    provider: str
+    endpoint: str
+    bucket: str
+    region: str
+    access_key: str
+    secret_key: str
+    # Credencial temporaria (STS). Vazio = chave estatica de usuario IAM.
+    session_token: str
+    # `path` (host/bucket/chave) ou `virtual` (bucket.host/chave). Ja resolvido.
+    addressing: str
+    create_bucket: bool
+    # Criptografia do lado do servidor pedida em cada PUT: "", "AES256" ou
+    # "aws:kms". Vazio = a padrao do bucket (na AWS, SSE-S3 desde 2023).
+    sse: str
+    sse_kms_key_id: str
+
+
+def s3_config(prefixo: str = "S3_", provider_padrao: str = "minio") -> S3Config:
+    """Le um `S3Config` das variaveis `<prefixo>*`.
+
+    O `prefixo` existe por causa da migracao: a origem e `S3_*` (o que o pod
+    usa hoje) e o destino e `DEST_S3_*`, lidos pela mesma regra.
+    """
+
+    def v(nome: str, padrao: str = "") -> str:
+        return _env(f"{prefixo}{nome}", padrao)
+
+    provider = v("PROVIDER", provider_padrao).lower()
+    aws = provider == "aws"
+    oci = provider == "oci"
+    # Nuvem de verdade: sem credencial de laboratorio e sem criar bucket.
+    nuvem = aws or oci
+    region = (
+        v("REGION")
+        or ((_env("AWS_REGION") or _env("AWS_DEFAULT_REGION")) if aws else "")
+        or "us-east-1"
+    )
+    bucket = v("BUCKET", "knowledge-base-raw")
+    if v("ENDPOINT"):
+        endpoint = v("ENDPOINT")
+    elif aws:
+        endpoint = f"https://s3.{region}.amazonaws.com"
+    elif oci:
+        # Sem namespace nao ha endpoint possivel; o vazio faz a subida falhar
+        # com "object store inacessivel" em vez de apontar para outro lugar.
+        namespace = v("NAMESPACE")
+        endpoint = (
+            f"https://{namespace}.compat.objectstorage.{region}.oraclecloud.com"
+            if namespace
+            else ""
+        )
+    else:
+        endpoint = "http://minio:9000"
+    addressing = v("ADDRESSING", "auto").lower()
+    if addressing not in ("path", "virtual"):
+        # Bucket com ponto no nome quebra o certificado do virtual-hosted
+        # (`a.b.s3.amazonaws.com` nao casa com `*.s3.amazonaws.com`), entao
+        # esse cai para path-style, que a AWS ainda atende.
+        addressing = "virtual" if aws and "." not in bucket else "path"
+    return S3Config(
+        provider=provider,
+        endpoint=endpoint.rstrip("/"),
+        bucket=bucket,
+        region=region,
+        access_key=v("ACCESS_KEY")
+        or (_env("AWS_ACCESS_KEY_ID") if aws else "" if oci else "kbkey"),
+        secret_key=v("SECRET_KEY")
+        or (_env("AWS_SECRET_ACCESS_KEY") if aws else "" if oci else "kbsecret123"),
+        session_token=v("SESSION_TOKEN") or (_env("AWS_SESSION_TOKEN") if aws else ""),
+        addressing=addressing,
+        create_bucket=_env_bool(f"{prefixo}CREATE_BUCKET", not nuvem),
+        sse=v("SSE"),
+        sse_kms_key_id=v("SSE_KMS_KEY_ID"),
+    )
+
+
 @dataclass(frozen=True)
 class Settings:
     env: str = field(default_factory=lambda: _env("KB_ENV", "k8s-local"))
@@ -77,20 +176,17 @@ class Settings:
         default_factory=lambda: _env_int("KB_MIGRATIONS_LOCK_SECONDS", 300)
     )
 
-    # --- MinIO / object storage ---
-    s3_endpoint: str = field(default_factory=lambda: _env("S3_ENDPOINT", "http://minio:9000"))
-    s3_bucket: str = field(default_factory=lambda: _env("S3_BUCKET", "knowledge-base-raw"))
-    s3_access_key: str = field(default_factory=lambda: _env("S3_ACCESS_KEY", "kbkey"))
-    s3_secret_key: str = field(default_factory=lambda: _env("S3_SECRET_KEY", "kbsecret123"))
-    # Regiao do escopo da assinatura SigV4. O MinIO local nao confere; o OCI
-    # Object Storage sim (`sa-saopaulo-1`), e erra com 403 SignatureDoesNotMatch.
-    s3_region: str = field(default_factory=lambda: _env("S3_REGION", "us-east-1"))
+    # --- object storage (MinIO, AWS S3 ou qualquer S3-compativel) ---
+    # Montado por `s3_config`, que resolve os padroes conforme o provedor. O
+    # mesmo leitor serve ao destino da migracao (`DEST_S3_*`), para os dois
+    # lados nao divergirem em regra de padrao.
+    s3: S3Config = field(default_factory=lambda: s3_config("S3_"))
 
     # Onde o documento bruto e guardado. Duas implementacoes atras da MESMA
     # interface (`storage.py`):
     #
-    #   s3          MinIO ou OCI Object Storage, por SigV4. O padrao, e o que
-    #               roda em producao.
+    #   s3          MinIO, AWS S3 ou OCI Object Storage, por SigV4 (qual deles
+    #               e `S3_PROVIDER`). O padrao, e o que roda em producao.
     #   filesystem  um diretorio em disco, normalmente um PVC. Existe para o
     #               ambiente subir SEM depender de credencial de object storage
     #               -- em DEV a Customer Secret Key da OCI e um pedido a infra,
@@ -120,9 +216,7 @@ class Settings:
     # kb-api vive dentro do cluster, onde localhost:8890 e ele mesmo. Sem
     # separar as duas coisas, ou o navegador nao consegue logar ou o kb-api nao
     # consegue validar a assinatura -- nunca os dois.
-    oidc_internal_issuer: str = field(
-        default_factory=lambda: _env("KB_KEYCLOAK_INTERNAL_ISSUER")
-    )
+    oidc_internal_issuer: str = field(default_factory=lambda: _env("KB_KEYCLOAK_INTERNAL_ISSUER"))
     oidc_audience: str = field(default_factory=lambda: _env("KB_KEYCLOAK_AUDIENCE"))
     # Client do Identity usado pelo kb-api para FEDERAR o login do conector MCP.
     # E o mesmo client publico da interface: publico + PKCE, sem segredo para
@@ -133,9 +227,7 @@ class Settings:
     # `/oauth/callback` (ADR-0007), e quem tem essa redirect_uri liberada e o
     # `kb-ui`. Trocar por `kb-mcp` devolve `invalid_redirect_uri` so no fim do
     # fluxo, depois do login ja feito.
-    oidc_client_id: str = field(
-        default_factory=lambda: _env("KB_KEYCLOAK_CLIENT_ID", "kb-ui")
-    )
+    oidc_client_id: str = field(default_factory=lambda: _env("KB_KEYCLOAK_CLIENT_ID", "kb-ui"))
     # Endereco publico deste servico, do ponto de vista de quem conecta. E o que
     # entra nos metadados OAuth e no redirect do login -- e o servidor nao tem
     # como adivinha-lo atras de ingress e de tunel.
@@ -149,9 +241,7 @@ class Settings:
     # quem o ingere e corrige e quem precisa alcancar tudo. O `/goga/ops` opera
     # a Camada B do Goga, que nao e esta base -- dar admin a ele seria acumular
     # por padrao exatamente o que a separacao em quatro grupos evita (ADR-0023).
-    admin_group: str = field(
-        default_factory=lambda: _env("KB_ADMIN_GROUP", "/goga/curadoria")
-    )
+    admin_group: str = field(default_factory=lambda: _env("KB_ADMIN_GROUP", "/goga/curadoria"))
     # Role que tambem da acesso total. Vazia por padrao de proposito: a role de
     # administracao do Keycloak nao deve implicar acesso ao conteudo da base.
     admin_role: str = field(default_factory=lambda: _env("KB_ADMIN_ROLE"))
@@ -163,9 +253,7 @@ class Settings:
     # mesmo default do agentic-sdlc: longo o bastante para nao virar incomodo
     # semanal, curto o bastante para a fotografia de grupos nao envelhecer
     # indefinidamente.
-    personal_token_days: int = field(
-        default_factory=lambda: _env_int("KB_PERSONAL_TOKEN_DAYS", 90)
-    )
+    personal_token_days: int = field(default_factory=lambda: _env_int("KB_PERSONAL_TOKEN_DAYS", 90))
     service_token_groups: list[str] = field(
         default_factory=lambda: _env_list("KB_SERVICE_TOKEN_GROUPS")
     )
@@ -192,7 +280,9 @@ class Settings:
     # Pai/filho: busca no filho, entrega do pai (ING-07). Os tamanhos sao em
     # caracteres, nao tokens: e uma aproximacao deliberada, barata e estavel.
     child_chunk_chars: int = field(default_factory=lambda: _env_int("KB_CHILD_CHUNK_CHARS", 1200))
-    child_overlap_chars: int = field(default_factory=lambda: _env_int("KB_CHILD_OVERLAP_CHARS", 150))
+    child_overlap_chars: int = field(
+        default_factory=lambda: _env_int("KB_CHILD_OVERLAP_CHARS", 150)
+    )
     parent_chunk_chars: int = field(default_factory=lambda: _env_int("KB_PARENT_CHUNK_CHARS", 4800))
     max_upload_mb: int = field(default_factory=lambda: _env_int("KB_MAX_UPLOAD_MB", 100))
 
@@ -206,9 +296,7 @@ class Settings:
     # bate de novo no provedor que acabou de recusar, e maior demora para
     # recuperar uma carga que falhou em bloco.
     retry_enabled: bool = field(default_factory=lambda: _env_bool("KB_RETRY", True))
-    retry_interval_seconds: int = field(
-        default_factory=lambda: _env_int("KB_RETRY_INTERVAL", 300)
-    )
+    retry_interval_seconds: int = field(default_factory=lambda: _env_int("KB_RETRY_INTERVAL", 300))
 
     # Catalogo de preco de modelo. E a tabela que o LiteLLM mantem e que o
     # ecossistema inteiro usa; o agentic-sdlc le a mesma.
@@ -250,9 +338,7 @@ class Settings:
     # Escala da imagem gerada para a figura. Acima de 1 o OCR le print de tela de
     # forma confiavel; 2 e o ponto de equilibrio com o tamanho do PNG.
     figure_scale: float = field(default_factory=lambda: _env_float("KB_FIGURE_SCALE", 2.0))
-    max_figures_per_document: int = field(
-        default_factory=lambda: _env_int("KB_MAX_FIGURES", 60)
-    )
+    max_figures_per_document: int = field(default_factory=lambda: _env_int("KB_MAX_FIGURES", 60))
     max_figure_bytes: int = field(
         default_factory=lambda: _env_int("KB_MAX_FIGURE_BYTES", 6 * 1024 * 1024)
     )
@@ -322,6 +408,20 @@ class Settings:
     def oidc_discovery_base(self) -> str:
         """Base da descoberta OIDC/JWKS: o endereco interno, quando houver."""
         return (self.oidc_internal_issuer or self.oidc_issuer).rstrip("/")
+
+    # Nomes antigos, lidos pela tela tecnica e por quem ja escrevia
+    # `settings.s3_endpoint`. A fonte e o `s3`.
+    @property
+    def s3_endpoint(self) -> str:
+        return self.s3.endpoint
+
+    @property
+    def s3_bucket(self) -> str:
+        return self.s3.bucket
+
+    @property
+    def s3_region(self) -> str:
+        return self.s3.region
 
 
 settings = Settings()

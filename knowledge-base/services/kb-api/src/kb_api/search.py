@@ -569,7 +569,7 @@ def fetch_document(document_id: int, spaces: list[str] | None) -> dict[str, Any]
             """
             SELECT d.id, d.space_slug, d.title, d.filename, d.canonical_md,
                    d.extractor, d.mime, d.size_bytes, d.version, d.content_sha,
-                   d.created_at, d.indexed_at, d.tags, d.pages, d.okf
+                   d.created_at, d.indexed_at, d.tags, d.pages, d.okf, d.sync_id
               FROM document d
              WHERE d.id = %s AND d.active
                AND (%s::text[] IS NULL OR d.space_slug = ANY(%s::text[]))
@@ -608,33 +608,45 @@ def fetch_document(document_id: int, spaces: list[str] | None) -> dict[str, Any]
              "updated_at": r[3].isoformat() if r[3] else None}
             for r in cur.fetchall()
         ]
-        return {
-            "id": row[0],
-            "space": row[1],
-            "title": row[2],
-            "filename": row[3],
-            "canonical_md": _with_figure_links(row[4], figuras, document_id),
-            "extractor": row[5],
-            "mime": row[6],
-            "size_bytes": row[7],
-            "version": row[8],
-            "content_sha": row[9],
-            "created_at": row[10].isoformat() if row[10] else None,
-            "indexed_at": row[11].isoformat() if row[11] else None,
-            "tags": row[12],
-            "pages": row[13] or 0,
-            # BUS-07: o `fetch` de um documento traz as paginas da wiki que
-            # derivam dele, quando a wiki esta ativa no Espaco. E o que abre a
-            # navegacao nos dois sentidos -- da pagina para a fonte e da fonte
-            # para a pagina.
-            "wiki_pages": wiki.paginas_do_documento(document_id),
-            # `representation_status`, e nao `representations`: no Espaco esse
-            # nome ja e o mapa liga/desliga das representacoes. Aqui e o
-            # RESULTADO do build de cada uma neste documento. Dois significados
-            # no mesmo nome custariam uma leitura errada por ano.
-            "representation_status": construcoes,
-            # Vazio quando o documento nao e um conceito OKF, que e o caso da
-            # maioria. A tela usa a presenca de `type` para decidir se mostra o
-            # bloco do conceito.
-            "okf": row[14] or {},
-        }
+    # A conexao ja voltou para o pool aqui, e isso e proposital. As paginas da
+    # wiki pedem OUTRA conexao; pedida de dentro do `with` acima, cada fetch
+    # segurava uma e esperava a segunda. Abrir um documento com 12 figuras
+    # dispara 12 fetch ao mesmo tempo (um por imagem), as 8 conexoes do pool
+    # ficavam presas esperando a nona, e TODOS os pedidos morriam em PoolTimeout
+    # de 30 s -- a KB inteira parecia travada. Apareceu na virada para a OCI,
+    # quando cada imagem passou a demorar o bastante para os pedidos se
+    # sobreporem.
+    return {
+        "id": row[0],
+        "space": row[1],
+        "title": row[2],
+        "filename": row[3],
+        "canonical_md": _with_figure_links(row[4], figuras, document_id),
+        "extractor": row[5],
+        "mime": row[6],
+        "size_bytes": row[7],
+        "version": row[8],
+        "content_sha": row[9],
+        "created_at": row[10].isoformat() if row[10] else None,
+        "indexed_at": row[11].isoformat() if row[11] else None,
+        "tags": row[12],
+        "pages": row[13] or 0,
+        # BUS-07: o `fetch` de um documento traz as paginas da wiki que
+        # derivam dele, quando a wiki esta ativa no Espaco. E o que abre a
+        # navegacao nos dois sentidos -- da pagina para a fonte e da fonte
+        # para a pagina.
+        "wiki_pages": wiki.paginas_do_documento(document_id),
+        # `representation_status`, e nao `representations`: no Espaco esse
+        # nome ja e o mapa liga/desliga das representacoes. Aqui e o
+        # RESULTADO do build de cada uma neste documento. Dois significados
+        # no mesmo nome custariam uma leitura errada por ano.
+        "representation_status": construcoes,
+        # Vazio quando o documento nao e um conceito OKF, que e o caso da
+        # maioria. A tela usa a presenca de `type` para decidir se mostra o
+        # bloco do conceito.
+        "okf": row[14] or {},
+        # Nulo = enviado a mao. Preenchido, o documento pertence a uma pasta
+        # sincronizada: remove-lo na tela nao o tira da pasta, e ele volta
+        # na proxima rodada (`sync.py`).
+        "sync_id": row[15],
+    }

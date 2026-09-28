@@ -101,11 +101,11 @@ def pendentes() -> list[dict[str, Any]]:
         ]
 
 
-def _da_vez() -> list[tuple[int, str, str, str]]:
+def _da_vez() -> list[tuple[int, str, str, str, int | None, str]]:
     with conn() as connection, connection.cursor() as cur:
         cur.execute(
             """
-            SELECT id, space_slug, filename, raw_key
+            SELECT id, space_slug, filename, raw_key, sync_id, source_ref
               FROM document
              WHERE active AND status = 'failed'
                AND error_kind = %s
@@ -182,7 +182,7 @@ def rodada() -> dict[str, Any]:
 
     alvos = _da_vez()
     recuperados = 0
-    for document_id, space_slug, filename, raw_key in alvos:
+    for document_id, space_slug, filename, raw_key, sync_id, source_ref in alvos:
         if _parar.is_set():
             break
         if _carga_de_gente():
@@ -213,8 +213,12 @@ def rodada() -> dict[str, Any]:
         try:
             # `force=True`: sem isso a deduplicacao por conteudo veria o mesmo
             # sha e devolveria "ja indexado" -- da linha que justamente FALHOU.
+            # A origem vai junto: sem ela a versao recuperada de um arquivo do
+            # Drive nasceria como upload manual, e a sincronizacao perderia o
+            # documento de vista (nem atualiza, nem remove).
             resultado = ingest.ingest_document(
-                space_slug, filename, dados, PRINCIPAL, force=True
+                space_slug, filename, dados, PRINCIPAL, force=True,
+                origem=ingest.Origem(sync_id, source_ref) if sync_id is not None else None,
             )
         except Exception as exc:  # noqa: BLE001
             # `ingest_document` ja registrou a falha e agendou a proxima espera.

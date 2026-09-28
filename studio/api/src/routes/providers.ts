@@ -93,7 +93,11 @@ export async function providerRoutes(app: FastifyInstance) {
     requireAdmin(req);
     const [p] = await db.select().from(schema.provider).where(eq(schema.provider.id, req.params.id));
     if (!p) throw notFound("provedor");
-    const models = await db.select().from(schema.model).where(eq(schema.model.providerId, p.id));
+    // Testa o que o sistema de fato usaria: ativo e padrao primeiro. Um modelo
+    // desativado (ex.: aposentado pelo provedor) nao deve reprovar a chave.
+    const models = (await db.select().from(schema.model).where(eq(schema.model.providerId, p.id))).sort(
+      (a, b) => Number(b.active) - Number(a.active) || Number(b.isDefault) - Number(a.isDefault),
+    );
     const chat = models.find((m) => m.purpose === "chat" || m.purpose === "vision");
     const emb = models.find((m) => m.purpose === "embedding");
     const t0 = Date.now();

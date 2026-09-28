@@ -47,6 +47,7 @@ from . import (
     retry,
     search,
     storage,
+    sync,
     tokens,
     wiki,
 )
@@ -142,6 +143,7 @@ def startup() -> None:
     _fechar_trabalhos_orfaos()
     retry.iniciar()
     fila.iniciar()
+    sync.iniciar()
 
 
 def _fechar_trabalhos_orfaos() -> None:
@@ -1383,6 +1385,107 @@ def recalculate_usage(
     return resumo
 
 
+# ── armazenamentos externos e pastas sincronizadas ────────────────────────
+#
+# A logica toda esta em `sync.py`; aqui so a borda HTTP. Tudo exige
+# administrador: cadastrar a credencial e escolher o que entra numa base sao
+# escrita, e listar as pastas do Drive revelaria o que foi compartilhado com a
+# conta de servico.
+
+
+def _sync_http(funcao, *args):
+    try:
+        return funcao(*args)
+    except sync.SyncError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from None
+
+
+@app.get("/v1/storages")
+def list_storages(principal: Principal = Depends(require_write)) -> dict[str, Any]:
+    return {
+        "kinds": [{"kind": k, "label": v} for k, v in sync.TIPOS.items()],
+        "storages": sync.listar_conexoes(),
+    }
+
+
+@app.post("/v1/storages")
+def create_storage(
+    payload: dict = Body(...), principal: Principal = Depends(require_write)
+) -> dict[str, Any]:
+    return _sync_http(sync.criar_conexao, payload, principal.describe())
+
+
+@app.put("/v1/storages/{storage_id}")
+def update_storage(
+    storage_id: int, payload: dict = Body(...), principal: Principal = Depends(require_write)
+) -> dict[str, Any]:
+    return _sync_http(sync.atualizar_conexao, storage_id, payload)
+
+
+@app.delete("/v1/storages/{storage_id}")
+def delete_storage(storage_id: int, principal: Principal = Depends(require_write)) -> dict[str, Any]:
+    _sync_http(sync.remover_conexao, storage_id)
+    log.info("armazenamento %s removido por %s", storage_id, principal.describe())
+    return {"removed": storage_id}
+
+
+@app.post("/v1/storages/{storage_id}/test")
+def test_storage(storage_id: int, principal: Principal = Depends(require_write)) -> dict[str, Any]:
+    return _sync_http(sync.testar_conexao, storage_id)
+
+
+@app.get("/v1/storages/{storage_id}/folders")
+def storage_folders(
+    storage_id: int,
+    parent: str = Query(default=""),
+    principal: Principal = Depends(require_write),
+) -> dict[str, Any]:
+    return _sync_http(sync.pastas, storage_id, parent)
+
+
+@app.get("/v1/syncs")
+def list_syncs(
+    space: str = Query(default=""), principal: Principal = Depends(require_write)
+) -> dict[str, Any]:
+    return {"syncs": sync.listar_syncs(space or None)}
+
+
+@app.post("/v1/spaces/{slug}/syncs")
+def create_sync(
+    slug: str, payload: dict = Body(...), principal: Principal = Depends(require_write)
+) -> dict[str, Any]:
+    return _sync_http(sync.criar_sync, slug, payload, principal.describe())
+
+
+@app.put("/v1/syncs/{sync_id}")
+def update_sync(
+    sync_id: int, payload: dict = Body(...), principal: Principal = Depends(require_write)
+) -> dict[str, Any]:
+    return _sync_http(sync.atualizar_sync, sync_id, payload)
+
+
+@app.post("/v1/syncs/{sync_id}/run")
+def run_sync(sync_id: int, principal: Principal = Depends(require_write)) -> dict[str, Any]:
+    """Antecipa a rodada e volta na hora; o progresso aparece na fila de ingestao."""
+    return _sync_http(sync.pedir_rodada, sync_id)
+
+
+@app.get("/v1/syncs/{sync_id}/items")
+def sync_items(sync_id: int, principal: Principal = Depends(require_write)) -> dict[str, Any]:
+    return {"items": _sync_http(sync.itens, sync_id)}
+
+
+@app.delete("/v1/syncs/{sync_id}")
+def delete_sync(
+    sync_id: int,
+    keep_documents: bool = Query(default=False),
+    principal: Principal = Depends(require_write),
+) -> dict[str, Any]:
+    resultado = _sync_http(sync.remover_sync, sync_id, keep_documents)
+    log.info("sincronizacao %s removida por %s", sync_id, principal.describe())
+    return resultado
+
+
 @app.get("/v1/stack")
 def stack(principal: Principal = Depends(current_principal)) -> dict[str, Any]:
     """O que esta rodando e quanto tem dentro, medido agora.
@@ -2100,42 +2203,12 @@ def delete_document(
     bucket e barato, enquanto um documento meio removido -- fora da listagem mas
     ainda respondendo na busca -- e um vazamento.
     """
-    with conn() as connection, connection.cursor() as cur:
-        cur.execute(
-            "SELECT space_slug, filename, raw_key FROM document WHERE id = %s",
-            (document_id,),
-        )
-        row = cur.fetchone()
-        if row is None:
-            raise HTTPException(status_code=404, detail=f"documento {document_id} nao encontrado")
-        space_slug, filename, raw_key = row
-
-        cur.execute(
-            "SELECT image_key FROM document_figure WHERE document_id = %s AND image_key <> ''",
-            (document_id,),
-        )
-        chaves = [linha[0] for linha in cur.fetchall()]
-        # chunk, chunk_embedding e document_figure caem por ON DELETE CASCADE.
-        cur.execute("DELETE FROM document WHERE id = %s", (document_id,))
-        connection.commit()
-
-    graph.forget_document(document_id)
-
-    perdidos = 0
-    for chave in [raw_key, *chaves]:
-        if not chave:
-            continue
-        try:
-            storage.delete(chave)
-        except Exception as exc:  # noqa: BLE001
-            perdidos += 1
-            log.warning("objeto %s nao removido: %s", chave, exc)
-
-    log.info("documento %s (%s) removido por %s", document_id, filename, principal.describe())
-    return {
-        "removed": document_id, "filename": filename, "space": space_slug,
-        "orphan_objects": perdidos,
-    }
+    removido = ingest.remover_documento(document_id)
+    if removido is None:
+        raise HTTPException(status_code=404, detail=f"documento {document_id} nao encontrado")
+    log.info("documento %s (%s) removido por %s", document_id, removido["filename"],
+             principal.describe())
+    return removido
 
 
 @app.post("/v1/documents/{document_id}/reprocess")
@@ -2180,13 +2253,17 @@ def _reprocessar_um(document_id: int, por_quem: str) -> ingest.IngestResult:
     """
     with conn() as connection, connection.cursor() as cur:
         cur.execute(
-            "SELECT space_slug, filename, raw_key FROM document WHERE id = %s",
+            "SELECT space_slug, filename, raw_key, sync_id, source_ref FROM document WHERE id = %s",
             (document_id,),
         )
         row = cur.fetchone()
     if row is None:
         raise LookupError(f"documento {document_id} nao encontrado")
-    space_slug, filename, raw_key = row
+    space_slug, filename, raw_key, sync_id, source_ref = row
+    # Sem a origem, a versao reprocessada de um arquivo sincronizado nasceria
+    # como upload manual: a antiga sairia (o delete abaixo) e a sincronizacao
+    # passaria a ignorar a nova.
+    origem = ingest.Origem(sync_id, source_ref) if sync_id is not None else None
     if not raw_key:
         raise _SemBruto("este documento nao tem bruto guardado; reenvie o arquivo")
     try:
@@ -2205,7 +2282,9 @@ def _reprocessar_um(document_id: int, por_quem: str) -> ingest.IngestResult:
     # simplesmente inexistente: foi assim que os quatro documentos do Espaco
     # `juridico` desta instalacao desapareceram num reprocessamento com provedor
     # de IA mal configurado. Agora a falha deixa a versao antiga ativa.
-    resultado = ingest.ingest_document(space_slug, filename, data, por_quem, force=True)
+    resultado = ingest.ingest_document(
+        space_slug, filename, data, por_quem, force=True, origem=origem
+    )
 
     # A versao antiga sai SO depois do sucesso, e e o delete que faz chunk,
     # embedding e figura dela cascatearem (ON DELETE CASCADE). Sem isto, cada
@@ -2813,8 +2892,11 @@ def list_documents(slug: str, principal: Principal = Depends(current_principal))
                    (SELECT count(*) FROM document_figure f WHERE f.document_id = d.id),
                    (SELECT count(*) FROM chunk c
                      WHERE c.document_id = d.id AND c.parent_id IS NOT NULL),
-                   d.chunk_engine, d.okf->>'type', d.chunk_enrichment
+                   d.chunk_engine, d.okf->>'type', d.chunk_enrichment,
+                   d.sync_id, ss.folder_name, sc.kind
               FROM document d
+              LEFT JOIN storage_sync ss ON ss.id = d.sync_id
+              LEFT JOIN storage_connection sc ON sc.id = ss.connection_id
              WHERE d.space_slug = %s AND d.active
              ORDER BY d.filename
             """,
@@ -2834,6 +2916,11 @@ def list_documents(slug: str, principal: Principal = Depends(current_principal))
                 "chunk_engine": row[13] or "",
                 "okf_type": row[14] or "",
                 "chunk_enrichment": row[15] or "",
+                # De qual pasta sincronizada veio. Nulo = enviado a mao.
+                "sync": (
+                    {"id": row[16], "folder": row[17] or "", "kind": row[18] or ""}
+                    if row[16] is not None else None
+                ),
             }
             for row in rows
         ],

@@ -26,7 +26,7 @@ idêntico (mesmo sha) é no-op, o que torna a carga em massa segura de repetir.
 
 | valor | grava em | quando |
 |---|---|---|
-| `s3` (padrão) | MinIO ou OCI Object Storage, por SigV4 assinado à mão | produção |
+| `s3` (padrão) | MinIO, AWS S3 ou OCI Object Storage, por SigV4 assinado à mão (qual deles: `S3_PROVIDER`, [ADR-0030](0030-aws-s3-como-alternativa-ao-minio.md)) | produção |
 | `filesystem` | um diretório em disco, normalmente um PVC | dev, enquanto não houver credencial |
 
 As cinco funções públicas (`put`, `get`, `delete`, `stats`, `ensure_bucket`) têm
@@ -51,8 +51,8 @@ Custos:
   o caminho S3 fica sem exercício até o dia da virada. Por isso `s3` é o
   **padrão do código**: quem quiser disco pede explicitamente;
 - **trocar o backend não migra conteúdo.** A árvore em disco casa 1:1 com as
-  chaves do S3, então a migração é um `mirror`, mas é um passo manual que
-  precisa acontecer **antes** de virar a chave;
+  chaves do S3, então a migração é uma cópia, e precisa acontecer **antes** de
+  virar a chave. Desde o ADR-0030 ela é `python -m kb_api.migrar_storage`;
 - **o `filesystem` amarra o serviço em uma réplica.** O PVC é RWO: com duas, ou a
   segunda fica pendente, ou cada pod vê um pedaço do acervo.
 

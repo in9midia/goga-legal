@@ -34,6 +34,9 @@ export const config = {
   geminiKey: env("GEMINI_API_KEY"),
   kbUrl: env("KB_URL", "http://localhost:8890").replace(/\/$/, ""),
   kbUiUrl: env("KB_UI_URL", env("KB_URL", "http://localhost:8890")).replace(/\/$/, ""),
+  // Endereco publico do Studio (ex.: https://goga.inine.com.br), usado nos
+  // links que o CLI dos agentes recebe. Vazio = deduzido da requisicao.
+  publicUrl: env("STUDIO_PUBLIC_URL").replace(/\/$/, ""),
   filesDir: env("STUDIO_FILES_DIR", "./data/files"),
   // Tabela de precos do LiteLLM (a mesma da KB). Vazio desliga a busca de preco.
   priceCatalogUrl: env("STUDIO_PRICE_CATALOG_URL", "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"),

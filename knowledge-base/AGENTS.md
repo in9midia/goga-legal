@@ -160,6 +160,7 @@ services/kb-api/     FastAPI: REST de gestão + servidor MCP + pipeline de inges
     extract.py       docling, fallbacks e OCR
     hibrido.py       PDF longo: triagem por página, PyMuPDF onde basta, docling onde precisa
     fila.py          fila de ingestão: o upload enfileira, um worker processa um por vez
+    retomada.py      ponto de retomada: a tentativa seguinte continua de onde parou
     progresso.py     etapa, percentual e log por documento (tela Fila de ingestão)
     representations.py  as representações e os métodos de acesso
     retrieval.py     um recuperador por método de acesso
@@ -170,6 +171,8 @@ services/kb-api/     FastAPI: REST de gestão + servidor MCP + pipeline de inges
     catalog.py       lista os modelos que uma conta de IA expõe
     search.py        os dois braços e a fusão
     providers.py     provedores de IA e contador de uso
+    sync.py          armazenamentos externos e pastas sincronizadas (ADR-0029)
+    gdrive.py        cliente do Google Drive: JWT da conta de serviço e REST
     oauth.py         o Authorization Server do MCP
     auth.py          resolução de identidade e escopo
     migrate.py       runner de migração

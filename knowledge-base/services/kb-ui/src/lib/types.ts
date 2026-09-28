@@ -156,6 +156,8 @@ export type DocumentSummary = {
   /** Variante de enriquecimento que ingeriu ESTE documento — pode diferir da
    *  atual da base. Vazio = indexado antes da coluna, e conta como desalinhado. */
   chunk_enrichment?: string;
+  /** Pasta sincronizada de onde veio. `null` = enviado a mão. */
+  sync?: { id: number; folder: string; kind: string } | null;
 };
 
 export type DocumentFigure = {
@@ -209,6 +211,8 @@ export type DocumentDetail = {
   tags?: string[];
   pages: number;
   okf?: OkfConcept;
+  /** Preenchido quando o documento veio de uma pasta sincronizada. */
+  sync_id?: number | null;
   related?: RelatedDocument[];
   /** O RESULTADO do build de cada representação neste documento.
    *
@@ -943,4 +947,81 @@ export type IngestEvent = {
   stage: string;
   progress: number | null;
   message: string;
+};
+
+// ── armazenamentos externos e pastas sincronizadas ──
+
+export type StorageKind = { kind: string; label: string };
+
+/** Cadastro de um armazenamento. A chave privada nunca vem (ADR-0009): só o
+ *  e-mail da conta de serviço, que a pessoa precisa para compartilhar a pasta. */
+export type StorageConnection = {
+  id: number;
+  kind: string;
+  kind_label: string;
+  label: string;
+  client_email: string;
+  project_id: string;
+  secret_hint: string;
+  created_at: string | null;
+  updated_at: string | null;
+  /** Quantas pastas usam esta conexão. Com alguma, ela não pode ser removida. */
+  syncs: number;
+};
+
+export type StorageTest =
+  | { ok: true; client_email: string; folders: number }
+  | { ok: false; client_email: string; error: string };
+
+export type StorageFolder = { id: string; name: string; shared_drive?: boolean };
+
+export type SyncSummary = {
+  novos?: number;
+  atualizados?: number;
+  renomeados?: number;
+  removidos?: number;
+  ignorados?: number;
+  erros?: number;
+  arquivos?: number;
+};
+
+export type StorageSync = {
+  id: number;
+  connection_id: number;
+  connection_label: string;
+  kind: string;
+  space: string;
+  folder_id: string;
+  folder_name: string;
+  recursive: boolean;
+  interval_minutes: number;
+  enabled: boolean;
+  status: 'idle' | 'running' | 'error';
+  last_run_at: string | null;
+  last_ok_at: string | null;
+  next_run_at: string | null;
+  last_error: string;
+  last_summary: SyncSummary;
+  created_at: string | null;
+  documents: number;
+  errors: number;
+  skipped: number;
+  /** Arquivos desta pasta na fila de ingestão agora. */
+  pending: number;
+};
+
+export type SyncItem = {
+  ref: string;
+  path: string;
+  name: string;
+  mime: string;
+  size_bytes: number;
+  /** synced = entregue à fila (o desfecho está em `run_status`). */
+  status: 'synced' | 'skipped' | 'error';
+  error: string;
+  updated_at: string | null;
+  run_status: string | null;
+  run_error: string;
+  document_id: number | null;
+  document_status: string | null;
 };

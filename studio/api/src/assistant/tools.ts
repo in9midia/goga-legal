@@ -7,16 +7,22 @@ import type { SessionUser } from "../lib/auth.js";
 import { resolveTarget, runOnce } from "../engine/run.js";
 import { flowGraphSchema, type FlowGraph } from "../shared/graph.js";
 import { applyFlowOps, flowOpSchema, flowSummary, type SpecialtyLike } from "./flowOps.js";
+import { fetchPage, searchWeb } from "./web.js";
 
 // Ferramentas do Assistente. Quase todas chamam a PROPRIA API do Studio
 // (app.inject com o cookie de quem conversa): a validacao, a permissao
 // (admin/operador) e a auditoria sao as mesmas da tela, e o log de auditoria
 // mostra a pessoa, nao "o assistente". Nada aqui escreve no banco por fora.
 
+/** Credencial de quem conversa, repassada a cada chamada interna: o cookie da sessao ou o token de API. */
+export type Credentials = { cookie?: string; authorization?: string };
+export const credentialsOf = (headers: { cookie?: string; authorization?: string }): Credentials =>
+  headers.authorization ? { authorization: headers.authorization } : { cookie: headers.cookie ?? "" };
+
 export class StudioApi {
   constructor(
     private app: FastifyInstance,
-    private cookie: string,
+    private auth: Credentials,
   ) {}
 
   async call<T = unknown>(method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: unknown): Promise<T> {
@@ -24,7 +30,7 @@ export class StudioApi {
     const res = await this.app.inject({
       method,
       url: `/api/v1${path}`,
-      headers: { cookie: this.cookie, ...(hasBody ? { "content-type": "application/json" } : {}) },
+      headers: { ...this.auth, ...(hasBody ? { "content-type": "application/json" } : {}) },
       payload: hasBody ? JSON.stringify(body ?? {}) : undefined,
     });
     const isJson = String(res.headers["content-type"] ?? "").includes("json");
@@ -121,10 +127,10 @@ export const SENSITIVE: Record<string, SensitiveTool> = {
   },
   excluir: {
     description:
-      "Exclui um registro. entidade: fluxo | skill | mcp | especialidade | modelo_documento | modelo_llm | conversa_simulada. Itens do sistema (seed) não se excluem: desative-os. Pede aprovação.",
+      "Exclui um registro. entidade: fluxo | skill | mcp | especialidade | modelo_documento | modelo_llm | conversa_simulada | base_kb (a base INTEIRA, com todos os documentos) | documento_kb. Itens do sistema (seed) não se excluem: desative-os. Pede aprovação.",
     input: z.object({
-      entidade: z.enum(["fluxo", "skill", "mcp", "especialidade", "modelo_documento", "modelo_llm", "conversa_simulada"]),
-      id: z.string().describe("id, slug ou nº interno (especialidade: o id interno, não o número)"),
+      entidade: z.enum(["fluxo", "skill", "mcp", "especialidade", "modelo_documento", "modelo_llm", "conversa_simulada", "base_kb", "documento_kb"]),
+      id: z.string().describe("id, slug ou nº interno (especialidade: o id interno, não o número; base_kb: o slug; documento_kb: o id numérico)"),
       nome: z.string().describe("nome legível, para o usuário saber o que aprova"),
     }),
     resumo: (i) => `Excluir ${i.entidade} "${i.nome}" (${i.id})`,
@@ -137,6 +143,8 @@ export const SENSITIVE: Record<string, SensitiveTool> = {
         modelo_documento: "/catalog/templates/",
         modelo_llm: "/models/",
         conversa_simulada: "/sessions/",
+        base_kb: "/kb/spaces/",
+        documento_kb: "/kb/documents/",
       }[i.entidade as string];
       return api.call("DELETE", `${path}${encodeURIComponent(String(i.id))}`);
     },
@@ -507,6 +515,79 @@ export function buildTools(ctx: ToolCtx): ToolSet {
     description: "Busca na base de conhecimento (KB). Sem bases = todas. Útil para conferir se um especialista teria material para responder.",
     inputSchema: z.object({ consulta: z.string(), bases: z.array(z.string()).default([]), topK: z.number().int().min(1).max(20).default(6) }),
     execute: async ({ consulta, bases, topK }) => fit(await api.call("POST", "/kb/search", { query: consulta, spaces: bases, top_k: topK }), 16_000),
+  });
+
+  t.listar_bases_kb = tool({
+    description: "Lista as bases (espaços) da KB com nº de documentos e trechos. Use o slug nas outras ferramentas da KB e no campo knowledge.spaces dos nós.",
+    inputSchema: z.object({}),
+    execute: async () => fit(await api.call("GET", "/kb/spaces")),
+  });
+
+  t.listar_documentos_kb = tool({
+    description: "Lista os documentos de uma base da KB: id, arquivo, título, status (indexed/failed…), páginas, trechos, erro e data de indexação.",
+    inputSchema: z.object({ base: z.string().describe("slug da base") }),
+    execute: async ({ base }) => {
+      const r = await api.call<{ documents: Record<string, unknown>[] }>("GET", `/kb/spaces/${encodeURIComponent(base)}/documents`);
+      return fit(
+        r.documents.map((d) => ({ id: d.id, arquivo: d.filename, titulo: d.title, status: d.status, paginas: d.pages, trechos: d.chunks, erro: d.error || undefined, indexadoEm: d.indexed_at, tamanho: d.size_bytes })),
+      );
+    },
+  });
+
+  t.criar_base_kb = tool({
+    description: "Cria uma base (espaço) vazia na KB. slug: minúsculas, números, - e _. Depois envie documentos com enviar_documento_kb.",
+    inputSchema: z.object({ slug: z.string(), nome: z.string().optional(), descricao: z.string().optional() }),
+    execute: async ({ slug, nome, descricao }) => api.call("POST", "/kb/spaces", { slug, label: nome, description: descricao }),
+  });
+
+  t.enviar_documento_kb = tool({
+    description:
+      "Envia arquivos já no Studio (fileIds de anexos da conversa ou enviados pelo CLI com `anexar`) para uma base da KB. A KB enfileira e processa em segundo plano (extração, OCR, trechos, embeddings): acompanhe com acompanhar_ingestao_kb. Arquivo igual ao já indexado é pulado.",
+    inputSchema: z.object({ base: z.string(), fileIds: z.array(z.string()).min(1).max(50) }),
+    execute: async ({ base, fileIds }) => api.call("POST", `/kb/spaces/${encodeURIComponent(base)}/documents`, { fileIds }),
+  });
+
+  t.acompanhar_ingestao_kb = tool({
+    description: "Andamento da ingestão na KB (fila e histórico): status queued/running/indexed/skipped/failed, arquivo, documento gerado, páginas, tempo e erro.",
+    inputSchema: z.object({ base: z.string().optional(), status: z.string().optional(), limite: z.number().int().min(1).max(200).default(20) }),
+    execute: async ({ base, status, limite }) => {
+      const q = new URLSearchParams({ limit: String(limite) });
+      if (base) q.set("space", base);
+      if (status) q.set("status", status);
+      return fit(await api.call("GET", `/kb/ingest-runs?${q}`));
+    },
+  });
+
+  t.reprocessar_documento_kb = tool({
+    description: "Reprocessa um documento da KB a partir do arquivo original guardado (ex.: falhou na extração). Pode levar minutos.",
+    inputSchema: z.object({ documentoId: z.number().int() }),
+    execute: async ({ documentoId }) => fit(await api.call("POST", `/kb/documents/${documentoId}/reprocess`)),
+  });
+
+  // ── Internet ─────────────────────────────────────────────────────
+  t.pesquisar_web = tool({
+    description:
+      "Pesquisa na internet (DuckDuckGo; Bing se o DuckDuckGo estiver indisponível) e devolve título, URL e trecho de cada resultado. Use para legislação, jurisprudência, notícias, documentação de APIs/modelos etc. Depois leia as páginas relevantes com navegar_web.",
+    inputSchema: z.object({
+      consulta: z.string().min(2),
+      limite: z.number().int().min(1).max(25).default(8),
+      site: z.string().optional().describe("restringe a um domínio, ex.: planalto.gov.br, stj.jus.br"),
+      periodo: z.enum(["d", "w", "m", "y"]).optional().describe("só resultados do último dia/semana/mês/ano"),
+      regiao: z.string().default("br-pt").describe("região do DuckDuckGo (br-pt, us-en, wt-wt = sem região)"),
+    }),
+    execute: async ({ consulta, limite, site, periodo, regiao }) => ({ consulta, ...(await searchWeb(consulta, { limite, site, periodo, regiao })) }),
+  });
+
+  t.navegar_web = tool({
+    description:
+      "Abre uma URL pública (http/https, GET) e devolve o texto legível da página (HTML vira texto com títulos em Markdown; PDF, DOCX, JSON e texto também). Páginas longas: leia por partes com inicio/tamanho. links=true devolve os links da página para seguir.",
+    inputSchema: z.object({
+      url: z.string(),
+      inicio: z.number().int().min(0).default(0),
+      tamanho: z.number().int().min(1000).max(60_000).default(20_000),
+      links: z.boolean().default(false),
+    }),
+    execute: async ({ url, inicio, tamanho, links }) => fit(await fetchPage(url, { inicio, tamanho, links, userId: ctx.user.id }), 70_000),
   });
 
   // ── Histórico, conversas, auditoria, custos ───────────────────────

@@ -14,6 +14,7 @@ Cobrem lógica pura, que roda sem banco, sem rede e sem cluster:
 |---|---|
 | `test_migrate.py` | descoberta, ordenação, checksum e idempotência do runner de migração |
 | `test_storage_filesystem.py` | o backend de disco: ida e volta, escrita atômica, e **path traversal** |
+| `test_storage_s3.py` | o backend S3 contra um servidor S3 falso em processo (contrato, paginação da listagem, bucket ausente), os padrões de `S3_PROVIDER=aws`, e a migração entre lojas: cópia completa, idempotência, dry-run, e que ela nunca apaga. A **assinatura** SigV4 não é conferida ali: foi comparada com a do botocore na implementação (ADR-0030) |
 | `test_providers.py` | cifra da credencial, os quatro dialetos de provedor, e que a telemetria nunca levanta |
 | `test_reprocesso.py` | que a falha no reprocessamento **não** custa o documento: `force` em vez de apagar antes |
 | `test_okf.py` | reconhecimento e tolerância do OKF, a regra de procedência (escrito ganha do derivado), e que com o modo desligado nada muda |
@@ -23,6 +24,7 @@ Cobrem lógica pura, que roda sem banco, sem rede e sem cluster:
 | `test_provedor_por_espaco.py` | a escolha de modelo por base, a amarra de endpoint ao usar a credencial gravada, a detecção de documento desalinhado (motor **e** modo) e o teste de cadastro por propósito. **Exige Postgres**; pulado sem ele |
 | `test_conceito_datado_e_auditado.py` | vigência, auditoria e armadilha no conceito: normalização de data, a ausência que significa "sempre válido", e a auditoria que só rebaixa |
 | `test_recorte_da_busca.py` | `min_trust` e `as_of`: recusa de valor escrito errado, a wiki saindo inteira quando se pede conteúdo revisado, e o filtro contra Postgres de verdade. A parte do banco **exige Postgres**; pulada sem ele |
+| `test_sincronizacao.py` | a chave da conta de serviço validada no cadastro e o JWT assinado de forma verificável, a listagem recursiva sem duplicar pasta de dois pais, o link da pasta, e que manual e sincronizado nunca se misturam no versionamento |
 | `test_repertorio_do_goga.py` | o repertório versionado em `content/`: que nenhuma identidade de agente alcança os 17 Espaços, que o seed da auditoria deriva o nível de confiança que a §5.1 do plano manda, que todo registro de erro carrega a armadilha, e que os conjuntos de avaliação têm as duas vozes em partes iguais |
 
 Os de `test_storage_filesystem.py` que mais importam são os quatro de path
@@ -151,7 +153,16 @@ E a razão de cada um, porque nenhuma é "faltou tempo":
 - **fluxo OAuth do MCP.** Foi verificado ponta a ponta, no local e por túnel:
   registro, login real no Identity, código, token, chamada, renovação e rotação,
   incluindo os casos negativos (reuso de código e refresh antigo). Manual;
-- **a interface.** Não há teste de componente nem E2E de navegador.
+- **a interface.** Não há teste de componente nem E2E de navegador;
+- **a rodada de sincronização contra o Drive real.** Exige uma conta de serviço
+  e uma pasta compartilhada. Na entrega (ADR-0029) a rodada foi exercitada
+  contra Postgres de verdade e a ingestão real, com o Drive e o embedding
+  substituídos: arquivo novo, sem mudança, alterado (versão 2), renomeado,
+  upload manual homônimo intocado, removido à mão voltando, removido da pasta
+  sem levar o bruto do manual de mesmo conteúdo, pasta inalcançável sem apagar
+  nada, e remoção da sincronização mantendo documentos. O token contra o Google
+  foi exercitado com chave fictícia (recusada com "account not found"); a
+  listagem e o download reais, não.
 
 ## Como verificar de verdade
 

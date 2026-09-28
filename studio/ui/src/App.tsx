@@ -17,6 +17,8 @@ import { EvalPage } from "./pages/Eval";
 import { SkillsPage } from "./pages/Skills";
 import { McpPage } from "./pages/Mcp";
 import { AssistantPage } from "./pages/Assistant";
+import { AgentsPage } from "./pages/Agents";
+import { AgentAuthorizePage } from "./pages/AgentAuthorize";
 
 function Gate() {
   const { user, loading } = useAuth();
@@ -36,6 +38,8 @@ const router = createBrowserRouter([
   {
     element: <Gate />,
     children: [
+      // Fora do Layout: tela unica que o login do CLI dos agentes abre.
+      { path: "agents/autorizar", element: <AgentAuthorizePage /> },
       {
         element: <Layout />,
         children: [
@@ -56,6 +60,7 @@ const router = createBrowserRouter([
           { path: "mcp", element: <McpPage /> },
           { path: "assistant", element: <AssistantPage /> },
           { path: "assistant/:sessionId", element: <AssistantPage /> },
+          { path: "agents", element: <AgentsPage /> },
           { path: "*", element: <Navigate to="/simulator" replace /> },
         ],
       },

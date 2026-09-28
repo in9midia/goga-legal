@@ -7,6 +7,7 @@ import {
   Download,
   FileCode,
   FileText,
+  FolderSync,
   Library,
   MousePointerClick,
   Image as ImageIcon,
@@ -28,6 +29,7 @@ import { useAuthedBlob } from '../lib/useAuthedBlob';
 import { FileViewer } from '../components/FileViewer';
 import { FigureGallery } from '../components/FigureGallery';
 import { IngestPanel } from '../components/IngestPanel';
+import { SyncPanel } from '../components/SyncPanel';
 import { usePreferencia } from '../lib/preferencia';
 import { ExigeBase } from '../components/ExigeBase';
 import { Markdown } from '../components/Markdown';
@@ -179,7 +181,9 @@ export function DocumentsPage() {
   });
 
   const [filtro, setFiltro] = useState('');
-  const [gestao, setGestao] = useState(false);
+  // `?sync=1` chega da tela de Armazenamentos ("abrir na base") e já abre a
+  // gestão, que é onde a pasta sincronizada aparece.
+  const [gestao, setGestao] = useState(params.get('sync') === '1');
   /** Esconde a lista de arquivos para o conteúdo ocupar a largura toda.
    *
    *  Fica no navegador, não na URL: mandar o link do documento 282 na página 3
@@ -327,7 +331,10 @@ export function DocumentsPage() {
           </div>
 
           {admin && gestao && space ? (
-            <div className="mb-4">
+            <div className="mb-4 grid gap-4">
+              {/* A pasta sincronizada vem antes: é um cartão curto, e depois
+                  do painel de envio (que carrega o log inteiro) ninguém a via. */}
+              <SyncPanel space={space} />
               <IngestPanel space={space} />
             </div>
           ) : null}
@@ -470,6 +477,15 @@ function DocumentRow({
                 </Pill>
               ) : null}
               <Pill>{doc.extractor || '—'}</Pill>
+              {doc.sync ? (
+                <Pill
+                  tone="good"
+                  title={`sincronizado da pasta "${doc.sync.folder}"; muda e sai junto com ela`}
+                >
+                  <FolderSync size={10} />{' '}
+                  {doc.sync.kind === 'google_drive' ? 'Drive' : doc.sync.kind}
+                </Pill>
+              ) : null}
               {/* Trocar o motor da base não reprocessa o que já está indexado.
                   Sem marcar aqui quais ficaram para trás, a diferença some — e
                   a base passa a ter dois cortes convivendo sem ninguém saber. */}
@@ -734,7 +750,13 @@ function DocumentDetail({
                   if (
                     confirm(
                       `Remover "${data.filename}" da base?\n\n` +
-                        'Saem os trechos, os vetores, as imagens e o arquivo original. Não dá para desfazer.',
+                        'Saem os trechos, os vetores, as imagens e o arquivo original. Não dá para desfazer.' +
+                        // A pasta manda: remover aqui não tira do Drive, e a
+                        // próxima rodada traz de volta. Sem avisar, parece bug.
+                        (data.sync_id
+                          ? '\n\n⚠ Este documento vem de uma pasta sincronizada: ele volta na próxima ' +
+                            'sincronização. Para tirá-lo de vez, remova-o da pasta no Drive.'
+                          : ''),
                     )
                   )
                     remover.mutate();

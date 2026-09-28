@@ -6,3 +6,6 @@ dist/
 studio/api/data/
 *.tsbuildinfo
 graphify-out/
+
+# backups locais (scripts/backup.sh) — contem segredos
+/backup/

@@ -103,7 +103,7 @@ def retomar_orfaos() -> dict[str, int]:
     return {"retomadas": retomadas, "desistidas": desistidas}
 
 
-def _pegar() -> tuple[int, str, str, str, str] | None:
+def _pegar() -> tuple[int, str, str, str, str, ingest.Origem | None] | None:
     with conn() as connection, connection.cursor() as cur:
         cur.execute(
             """
@@ -115,7 +115,8 @@ def _pegar() -> tuple[int, str, str, str, str] | None:
                     ORDER BY id
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1)
-            RETURNING id, space_slug, filename, raw_key, principal, attempts
+            RETURNING id, space_slug, filename, raw_key, principal, attempts,
+                      sync_id, source_ref
             """
         )
         linha = cur.fetchone()
@@ -124,7 +125,8 @@ def _pegar() -> tuple[int, str, str, str, str] | None:
         return None
     if linha[5] > 1:
         progresso.evento(linha[0], "iniciado", f"retomado após queda do serviço (tentativa {linha[5]})")
-    return linha[:5]
+    origem = ingest.Origem(linha[6], linha[7]) if linha[6] is not None else None
+    return (*linha[:5], origem)
 
 
 def cancelar(run_id: int) -> bool:
@@ -162,7 +164,7 @@ def processar_um() -> bool:
     linha = _pegar()
     if linha is None:
         return False
-    run_id, space_slug, filename, raw_key, principal = linha
+    run_id, space_slug, filename, raw_key, principal, origem = linha
     try:
         dados = storage.get(raw_key)
     except Exception as exc:  # noqa: BLE001
@@ -176,7 +178,7 @@ def processar_um() -> bool:
         # a retentativa automatica. Aqui so resta nao deixar a excecao matar a
         # thread.
         resultado = ingest.ingest_document(
-            space_slug, filename, dados, principal, run_id=run_id
+            space_slug, filename, dados, principal, run_id=run_id, origem=origem
         )
         with _trava:
             _resultados[run_id] = resultado.to_dict()

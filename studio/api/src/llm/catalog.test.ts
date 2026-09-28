@@ -3,7 +3,7 @@ import { findPrice, priceKeys } from "./catalog.js";
 
 const MAP = {
   "deepseek/deepseek-chat": { mode: "chat", input_cost_per_token: 2.7e-7, output_cost_per_token: 1.1e-6, cache_read_input_token_cost: 7e-8, max_input_tokens: 128000, supports_function_calling: true },
-  "gemini/gemini-2.5-flash": { mode: "chat", input_cost_per_token: 3e-7, output_cost_per_token: 2.5e-6, supports_vision: true, max_input_tokens: 1048576 },
+  "gemini/gemini-3.6-flash": { mode: "chat", input_cost_per_token: 3e-7, output_cost_per_token: 2.5e-6, supports_vision: true, max_input_tokens: 1048576 },
   "gemini/gemini-embedding-001": { mode: "embedding", input_cost_per_token: 1.5e-7, output_cost_per_token: 0 },
   "gpt-4o": { mode: "chat", input_cost_per_token: 2.5e-6, output_cost_per_token: 1e-5 },
 };
@@ -15,7 +15,7 @@ describe("catalogo de precos", () => {
   });
 
   it("gemini: tira o prefixo models/ e reconhece visao e embedding", () => {
-    expect(findPrice(MAP, "gemini", "models/gemini-2.5-flash").purpose).toBe("vision");
+    expect(findPrice(MAP, "gemini", "models/gemini-3.6-flash").purpose).toBe("vision");
     expect(findPrice(MAP, "gemini", "gemini-embedding-001")).toMatchObject({ purpose: "embedding", priceInPer1m: 0.15 });
   });
 

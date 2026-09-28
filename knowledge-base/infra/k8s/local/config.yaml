@@ -15,11 +15,13 @@ data:
   POSTGRES_USER: "knowledge_base"
   POSTGRES_PASSWORD: "knowledge_base"
 
-  # ── MinIO ──
-  S3_ENDPOINT: "http://minio:9000"
+  # ── Object storage ──
+  # So o bucket. Endpoint e credencial do MinIO sao os PADROES do codigo para
+  # S3_PROVIDER=minio, e declara-los aqui quebrava a troca de provedor: um
+  # S3_ENDPOINT explicito vence o padrao do provedor, e o kb-api virado para a
+  # OCI continuava batendo no MinIO com a chave da OCI (403). Quem vira para
+  # nuvem e o `storage-secret` do 20-deploy.sh.
   S3_BUCKET: "knowledge-base-raw"
-  S3_ACCESS_KEY: "kbkey"
-  S3_SECRET_KEY: "kbsecret123"
 
   # ── Memgraph ──
   MEMGRAPH_HOST: "memgraph"

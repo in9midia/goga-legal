@@ -57,7 +57,7 @@ def test_worker_processa_na_linha_que_o_upload_abriu(monkeypatch):
     arquivo apareceria `queued` para sempre e `indexed` numa linha nova."""
     from kb_api import fila
 
-    monkeypatch.setattr(fila, "_pegar", lambda: (42, "cdc", "livro.pdf", "cdc/ab/x/livro.pdf", "ana"))
+    monkeypatch.setattr(fila, "_pegar", lambda: (42, "cdc", "livro.pdf", "cdc/ab/x/livro.pdf", "ana", None))
     monkeypatch.setattr(fila.storage, "get", lambda k: b"pdf")
     chamadas = []
 
@@ -65,21 +65,45 @@ def test_worker_processa_na_linha_que_o_upload_abriu(monkeypatch):
         def to_dict(self):
             return {"status": "indexed", "representations": {"grafo": {}}}
 
-    def ingerir(space, nome, dados, principal, run_id=None):
-        chamadas.append((space, nome, dados, principal, run_id))
+    def ingerir(space, nome, dados, principal, run_id=None, origem=None):
+        chamadas.append((space, nome, dados, principal, run_id, origem))
         return _Res()
 
     monkeypatch.setattr(fila.ingest, "ingest_document", ingerir)
     assert fila.processar_um() is True
-    assert chamadas == [("cdc", "livro.pdf", b"pdf", "ana", 42)]
+    assert chamadas == [("cdc", "livro.pdf", b"pdf", "ana", 42, None)]
     # O resultado completo fica para o upload com `wait=true`.
     assert fila.resultado(42)["representations"] == {"grafo": {}}
+
+
+def test_arquivo_sincronizado_sai_da_fila_com_a_origem(monkeypatch):
+    """Sem a origem, o arquivo do Drive viraria upload manual ao sair da fila:
+    a sincronizacao perderia o documento de vista, e ele versionaria contra o
+    upload manual de mesmo nome (ADR-0029)."""
+    from kb_api import fila, ingest
+
+    origem = ingest.Origem(3, "drive-file-id")
+    monkeypatch.setattr(fila, "_pegar", lambda: (5, "cdc", "a.pdf", "k", "sincronizacao:3", origem))
+    monkeypatch.setattr(fila.storage, "get", lambda k: b"x")
+    recebida = []
+
+    class _Res:
+        def to_dict(self):
+            return {}
+
+    def ingerir(*_a, origem=None, **_k):
+        recebida.append(origem)
+        return _Res()
+
+    monkeypatch.setattr(fila.ingest, "ingest_document", ingerir)
+    assert fila.processar_um() is True
+    assert recebida == [origem]
 
 
 def test_falha_da_ingestao_nao_mata_a_thread(monkeypatch):
     from kb_api import fila
 
-    monkeypatch.setattr(fila, "_pegar", lambda: (1, "cdc", "a.pdf", "k", "p"))
+    monkeypatch.setattr(fila, "_pegar", lambda: (1, "cdc", "a.pdf", "k", "p", None))
     monkeypatch.setattr(fila.storage, "get", lambda k: b"x")
 
     def explode(*a, **k):
@@ -99,7 +123,7 @@ def test_fila_vazia_devolve_false(monkeypatch):
 def test_bruto_sumido_fecha_a_linha_em_vez_de_girar(monkeypatch):
     from kb_api import fila
 
-    monkeypatch.setattr(fila, "_pegar", lambda: (9, "cdc", "a.pdf", "k", "p"))
+    monkeypatch.setattr(fila, "_pegar", lambda: (9, "cdc", "a.pdf", "k", "p", None))
 
     def sumiu(_k):
         raise FileNotFoundError("k")

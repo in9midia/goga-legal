@@ -62,6 +62,8 @@ const TOOL_LABEL: Record<string, string> = {
   ler_modelo_documento: "Leu modelo de documento",
   salvar_modelo_documento: "Salvou modelo de documento",
   buscar_kb: "Buscou na KB",
+  pesquisar_web: "Pesquisou na internet",
+  navegar_web: "Abriu página da web",
   listar_execucoes: "Listou execuções",
   analisar_execucao: "Leu a transcrição da execução",
   listar_conversas_simuladas: "Listou conversas do simulador",

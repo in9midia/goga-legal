@@ -87,3 +87,49 @@ export async function fetchWikiPage(id: number): Promise<Record<string, unknown>
 export async function aiUsage(days: number): Promise<unknown> {
   return kbFetch(`/v1/ai/usage?days=${days}`, undefined, 8000);
 }
+
+// ── gestao da KB (bases e documentos) ──────────────────────────────────
+// Escrita so por administradores do Studio (a rota confere). A KB enfileira a
+// ingestao e responde 202: o andamento vem de /v1/ingest-runs.
+
+export function createSpace(p: { slug: string; label?: string; description?: string }) {
+  spacesCache = null;
+  return kbFetch<Record<string, unknown>>("/v1/spaces", { method: "POST", body: JSON.stringify(p) });
+}
+
+export function deleteSpace(slug: string) {
+  spacesCache = null;
+  return kbFetch<{ removed: string }>(`/v1/spaces/${encodeURIComponent(slug)}`, { method: "DELETE" }, 120_000);
+}
+
+export function listDocuments(slug: string) {
+  return kbFetch<{ documents: Record<string, unknown>[] } & Record<string, unknown>>(`/v1/spaces/${encodeURIComponent(slug)}/documents`);
+}
+
+export async function uploadDocument(slug: string, file: { name: string; mime: string; data: Buffer }) {
+  const form = new FormData();
+  form.append("file", new Blob([new Uint8Array(file.data)], { type: file.mime }), file.name);
+  // Sem content-type manual: o fetch monta o boundary do multipart.
+  const res = await fetch(`${config.kbUrl}/v1/spaces/${encodeURIComponent(slug)}/documents`, { method: "POST", body: form, signal: AbortSignal.timeout(120_000) });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`KB ${res.status} ao enviar ${file.name}: ${text.slice(0, 300)}`);
+  spacesCache = null;
+  return JSON.parse(text) as Record<string, unknown>;
+}
+
+export function deleteDocument(id: number) {
+  spacesCache = null;
+  return kbFetch<Record<string, unknown>>(`/v1/documents/${id}`, { method: "DELETE" }, 60_000);
+}
+
+export function reprocessDocument(id: number) {
+  return kbFetch<Record<string, unknown>>(`/v1/documents/${id}/reprocess`, { method: "POST", body: "{}" }, 600_000);
+}
+
+export function ingestRuns(q: { space?: string; status?: string; limit?: number }) {
+  const p = new URLSearchParams();
+  if (q.space) p.set("space", q.space);
+  if (q.status) p.set("status", q.status);
+  p.set("limit", String(q.limit ?? 30));
+  return kbFetch<{ total: number; runs: Record<string, unknown>[] }>(`/v1/ingest-runs?${p}`);
+}

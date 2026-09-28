@@ -31,6 +31,10 @@ spec:
             - { name: KB_URL, value: "http://kb-api.stack-knowledge-base" }
             # Link da sidebar: URL publica da kb-ui (tunel Cloudflare).
             - { name: KB_UI_URL, value: "https://goga-kb.inine.com.br" }
+            # Endereco publico do Studio (mesmo tunel): o tunel reescreve o Host
+            # para studio.localtest.me, entao a API nao consegue deduzi-lo. Vai
+            # embutido no instalador da skill dos agentes e no link de login.
+            - { name: STUDIO_PUBLIC_URL, value: "https://goga.inine.com.br" }
             - { name: STUDIO_FILES_DIR, value: /data/files }
           envFrom:
             # STUDIO_SECRET_KEY, STUDIO_SESSION_SECRET, admin e chaves de

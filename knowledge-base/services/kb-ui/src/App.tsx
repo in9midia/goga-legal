@@ -14,6 +14,7 @@ import { Home } from './pages/Home';
 import { SearchPage } from './pages/Search';
 import { SpacesPage } from './pages/Spaces';
 import { StackPage } from './pages/Stack';
+import { StoragesPage } from './pages/Storages';
 
 export function App() {
   return (
@@ -35,6 +36,7 @@ export function App() {
         <Route path="/acessos" element={<AccessPage />} />
         <Route path="/modelos-ia" element={<AiProvidersPage />} />
         <Route path="/uso-ia" element={<AiUsagePage />} />
+        <Route path="/armazenamentos" element={<StoragesPage />} />
         <Route path="/benchmark" element={<BenchmarkPage />} />
         <Route path="/stack" element={<StackPage />} />
         {/* A tela de Saúde foi dobrada na de Stack: ela mostrava um subconjunto

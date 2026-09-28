@@ -17,6 +17,7 @@ COPY --from=build /app/dist ./dist
 COPY studio/api/package.json ./
 COPY studio/api/drizzle ./drizzle
 COPY studio/api/seed ./seed
+COPY studio/api/agent-skill ./agent-skill
 COPY knowledge-base/content/evaluation ./evaluation
 USER node
 EXPOSE 8787
