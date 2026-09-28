@@ -28,7 +28,7 @@ export async function buildApp() {
     saveUninitialized: false,
     // `secure` so em producao atras de TLS; no k3d local o acesso e http e o
     // cookie seguro simplesmente nao voltaria, e o login "nao pegaria".
-    cookie: { httpOnly: true, sameSite: "lax", secure: config.isProd && process.env.STUDIO_COOKIE_SECURE === "1", maxAge: 12 * 3600 * 1000, path: "/" },
+    cookie: { httpOnly: true, sameSite: "lax", secure: config.isProd && process.env.STUDIO_COOKIE_SECURE === "1", maxAge: 12 * 3600 * 1000, path: "/", domain: config.cookieDomain },
   });
   await app.register(multipart);
   app.decorateRequest("user", null);

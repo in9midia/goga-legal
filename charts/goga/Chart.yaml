@@ -1,0 +1,6 @@
+apiVersion: v2
+name: goga
+description: Goga Legal (MVP) — Knowledge Base (kb-api, kb-ui, memgraph) + Studio (studio-api, studio-ui) sobre um Postgres (pgvector) unico, no OKE.
+type: application
+version: 0.1.0
+appVersion: "mvp"

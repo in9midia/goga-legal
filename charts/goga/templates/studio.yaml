@@ -1,0 +1,109 @@
+# Studio: studio-api (Fastify + motor do fluxo em processo) + studio-ui (bundle
+# + proxy /api no nginx, mesma origem para o cookie).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: studio-files
+  labels: {{- include "goga.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: {{ .Values.postgres.storageClass }}
+  resources: { requests: { storage: {{ .Values.studio.filesStorage }} } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: studio-api
+  labels: {{- include "goga.labels" . | nindent 4 }}
+spec:
+  # Uma replica so: o barramento do SSE e em memoria.
+  replicas: 1
+  # RWO no volume de anexos: o pod novo so monta quando o antigo solta.
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: studio-api } }
+  template:
+    metadata:
+      labels: { app: studio-api }
+      annotations:
+        checksum/config: {{ include "goga.checksum" . }}
+        {{- include "goga.rollout" . | nindent 8 }}
+    spec:
+      {{- include "goga.pullSecrets" . | nindent 6 }}
+      securityContext: { fsGroup: 1000 }
+      containers:
+        - name: studio-api
+          image: {{ include "goga.image" (list . "studio-api") }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          env:
+            # Rede interna: o Studio nao passa pelo basic auth do Ingress da KB.
+            - { name: KB_URL, value: "http://kb-api.{{ .Release.Namespace }}" }
+            - { name: KB_UI_URL, value: "https://{{ .Values.ingress.kbHost }}" }
+            - { name: STUDIO_PUBLIC_URL, value: "https://{{ .Values.ingress.studioHost }}" }
+            - { name: STUDIO_FILES_DIR, value: /data/files }
+            # Cookie Secure: o acesso publico e sempre HTTPS (cert-manager).
+            - { name: STUDIO_COOKIE_SECURE, value: "1" }
+            # SSO: sessao valida nos subdominios, e o /auth/sso so devolve para a KB.
+            - { name: STUDIO_COOKIE_DOMAIN, value: {{ .Values.studio.cookieDomain | quote }} }
+            - { name: STUDIO_SSO_HOSTS, value: {{ .Values.ingress.kbHost | quote }} }
+          envFrom:
+            - secretRef: { name: studio-secrets }
+          ports: [{ containerPort: 8787, name: http }]
+          readinessProbe:
+            httpGet: { path: /api/v1/health, port: 8787 }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /api/v1/health, port: 8787 }
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          volumeMounts: [{ name: files, mountPath: /data }]
+          resources: {{- toYaml .Values.studio.api.resources | nindent 12 }}
+      volumes:
+        - name: files
+          persistentVolumeClaim: { claimName: studio-files }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: studio-api
+  labels: {{- include "goga.labels" . | nindent 4 }}
+spec:
+  selector: { app: studio-api }
+  ports: [{ name: http, port: 80, targetPort: 8787 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: studio-ui
+  labels: {{- include "goga.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: studio-ui } }
+  template:
+    metadata:
+      labels: { app: studio-ui }
+      annotations:
+        {{- include "goga.rollout" . | nindent 8 }}
+    spec:
+      {{- include "goga.pullSecrets" . | nindent 6 }}
+      containers:
+        - name: studio-ui
+          image: {{ include "goga.image" (list . "studio-ui") }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          env:
+            - { name: API_PROXY_TARGET, value: "http://studio-api.{{ .Release.Namespace }}.svc.cluster.local" }
+          ports: [{ containerPort: 8080, name: http }]
+          readinessProbe:
+            httpGet: { path: /index.html, port: 8080 }
+            periodSeconds: 10
+          resources: {{- toYaml .Values.studio.ui.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: studio-ui
+  labels: {{- include "goga.labels" . | nindent 4 }}
+spec:
+  selector: { app: studio-ui }
+  ports: [{ name: http, port: 80, targetPort: 8080 }]

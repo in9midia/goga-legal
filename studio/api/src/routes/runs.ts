@@ -167,14 +167,39 @@ export async function runRoutes(app: FastifyInstance) {
   // ── Auditoria ───────────────────────────────────────────────────────
   app.get("/api/v1/audit", async (req) => {
     requireAdmin(req);
-    const q = z.object({ entity: z.string().optional(), entityId: z.string().optional(), actor: z.string().optional(), from: z.string().optional(), to: z.string().optional(), limit: z.coerce.number().int().max(500).default(200) }).parse(req.query);
+    const q = z
+      .object({
+        entity: z.string().optional(),
+        entityId: z.string().optional(),
+        actor: z.string().optional(),
+        from: z.string().optional(),
+        to: z.string().optional(),
+        limit: z.coerce.number().int().max(500).default(200),
+        full: z.enum(["0", "1", "true", "false"]).optional(),
+      })
+      .parse(req.query);
+    const full = q.full === "1" || q.full === "true";
     const { from, to } = dateRange(q.from, q.to);
     const a = schema.auditLog;
     const where: SQL[] = [gte(a.at, from), lte(a.at, to)];
     if (q.entity) where.push(eq(a.entity, q.entity));
     if (q.entityId) where.push(eq(a.entityId, q.entityId));
     if (q.actor) where.push(sql`${a.actorEmail} ILIKE ${"%" + q.actor + "%"}`);
-    const rows = await db.select().from(a).where(and(...where)).orderBy(desc(a.at)).limit(q.limit);
+    // before/after guardam a entidade inteira (um fluxo traz grafo e prompts), e
+    // 200 deles pesam dezenas de MB. A lista vai sem eles; o diff e buscado por
+    // id ao abrir o registro. `full=1` mantem o formato antigo para quem precisa.
+    const cols = { id: a.id, actorId: a.actorId, actorEmail: a.actorEmail, action: a.action, entity: a.entity, entityId: a.entityId, at: a.at };
+    const rows = full
+      ? await db.select().from(a).where(and(...where)).orderBy(desc(a.at)).limit(q.limit)
+      : await db.select(cols).from(a).where(and(...where)).orderBy(desc(a.at)).limit(q.limit);
     return { entries: rows };
+  });
+
+  app.get("/api/v1/audit/:id", async (req) => {
+    requireAdmin(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const [row] = await db.select().from(schema.auditLog).where(eq(schema.auditLog.id, id));
+    if (!row) throw notFound("registro de auditoria");
+    return row;
   });
 }

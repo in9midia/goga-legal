@@ -1,0 +1,89 @@
+# Postgres UNICO (pgvector) para KB e Studio. Cada servico tem banco e usuario
+# proprios, entao migracoes e ciclo de vida continuam independentes.
+#
+# O init roda SO no primeiro boot (PGDATA vazio): cria os dois bancos e, como
+# superusuario, as extensoes da KB (o usuario knowledge_base nao e superuser e
+# o CREATE EXTENSION das migracoes vira no-op com IF NOT EXISTS).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init
+  labels: {{- include "goga.labels" . | nindent 4 }}
+data:
+  10-goga.sh: |
+    #!/bin/bash
+    set -euo pipefail
+    psql -v ON_ERROR_STOP=1 -U postgres \
+      -v kbpw="$KB_DB_PASSWORD" -v stpw="$STUDIO_DB_PASSWORD" <<'SQL'
+    CREATE USER knowledge_base WITH PASSWORD :'kbpw';
+    CREATE DATABASE knowledge_base OWNER knowledge_base;
+    CREATE USER studio WITH PASSWORD :'stpw';
+    CREATE DATABASE studio OWNER studio;
+    SQL
+    psql -v ON_ERROR_STOP=1 -U postgres -d knowledge_base <<'SQL'
+    CREATE EXTENSION IF NOT EXISTS vector;
+    CREATE EXTENSION IF NOT EXISTS pg_trgm;
+    CREATE EXTENSION IF NOT EXISTS unaccent;
+    SQL
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+  labels: {{- include "goga.labels" . | nindent 4 }}
+  annotations:
+    # Dado de producao: `helm uninstall` nao leva o volume junto.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: {{ .Values.postgres.storageClass }}
+  resources: { requests: { storage: {{ .Values.postgres.storage }} } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  labels: {{- include "goga.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  # PVC RWO: o pod novo nao monta enquanto o antigo segura o volume.
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: postgres } }
+  template:
+    metadata:
+      labels: { app: postgres }
+    spec:
+      containers:
+        - name: postgres
+          image: {{ .Values.postgres.image }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: POSTGRES_USER, value: postgres }
+            - { name: POSTGRES_DB, value: postgres }
+            # subPath pgdata: o block volume tem lost+found na raiz e o initdb exige dir vazio.
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+          envFrom:
+            - secretRef: { name: postgres-secret }
+          ports: [{ containerPort: 5432 }]
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+            - { name: init, mountPath: /docker-entrypoint-initdb.d }
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "postgres"] }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources: {{- toYaml .Values.postgres.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: postgres-data }
+        - name: init
+          configMap: { name: postgres-init }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  labels: {{- include "goga.labels" . | nindent 4 }}
+spec:
+  selector: { app: postgres }
+  ports: [{ port: 5432, targetPort: 5432 }]

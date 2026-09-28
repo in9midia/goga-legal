@@ -175,7 +175,7 @@ export function HistoryPanel({ entity, id }: { entity: string; id: string }) {
   const { isAdmin } = useAuth();
   const q = useQuery({
     queryKey: ["audit", entity, id],
-    queryFn: () => api.get<{ entries: AuditEntry[] }>(`/audit${qs({ entity, entityId: id, from: "2000-01-01", limit: 100 })}`).then((r) => r.entries),
+    queryFn: () => api.get<{ entries: AuditEntry[] }>(`/audit${qs({ entity, entityId: id, from: "2000-01-01", limit: 100, full: 1 })}`).then((r) => r.entries),
     enabled: isAdmin,
   });
   if (!isAdmin) return <Empty>O histórico de alterações é visível só para administradores.</Empty>;

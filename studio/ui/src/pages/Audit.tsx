@@ -20,9 +20,12 @@ interface AuditEntry {
   action: string;
   entity: string;
   entityId: string | null;
+  at: string;
+}
+
+interface AuditRecord extends AuditEntry {
   before: unknown;
   after: unknown;
-  at: string;
 }
 
 const ENTITIES: Record<string, string> = {
@@ -68,7 +71,11 @@ export function AuditPage() {
 
   return (
     <Page>
-      <PageHeader icon={<ClipboardList />} title="Auditoria" description="O que foi alterado na configuração, por quem e quando: fluxos, provedores, chaves, modelos, preços, especialidades e usuários. Clique numa linha para ver o antes e o depois." />
+      <PageHeader
+        icon={<ClipboardList />}
+        title="Auditoria"
+        description="O que foi alterado na configuração, por quem e quando: fluxos, provedores, chaves, modelos, preços, especialidades e usuários. Clique numa linha para ver o antes e o depois."
+      />
 
       <div className="grid gap-3 rounded-[10px] border border-line bg-ink-900 p-4 sm:grid-cols-4">
         <Field label="Entidade">
@@ -141,7 +148,9 @@ export function AuditPage() {
       )}
 
       <Sheet open={!!open} onOpenChange={(o) => !o && setOpen(null)}>
-        <SheetContent side="right" className="w-full gap-0 overflow-y-auto sm:max-w-4xl">{open && <AuditDetail entry={open} />}</SheetContent>
+        <SheetContent side="right" className="w-full gap-0 overflow-y-auto sm:max-w-4xl">
+          {open && <AuditDetail entry={open} />}
+        </SheetContent>
       </Sheet>
     </Page>
   );
@@ -168,7 +177,12 @@ function flatten(value: unknown, prefix = "", out: Flat = new Map()): Flat {
   return out;
 }
 
-type Change = { path: string; kind: "added" | "removed" | "changed"; before: unknown; after: unknown };
+type Change = {
+  path: string;
+  kind: "added" | "removed" | "changed";
+  before: unknown;
+  after: unknown;
+};
 
 function diff(before: unknown, after: unknown): Change[] {
   const a = flatten(before ?? {});
@@ -208,19 +222,13 @@ function Value({ v, tone }: { v: unknown; tone: "before" | "after" }) {
 }
 
 function AuditDetail({ entry }: { entry: AuditEntry }) {
-  const [showJson, setShowJson] = useState(false);
-  const changes = useMemo(() => diff(entry.before, entry.after), [entry]);
-  const groups = useMemo(() => {
-    const m = new Map<string, Change[]>();
-    for (const c of changes) {
-      const k = groupKey(c.path);
-      m.set(k, [...(m.get(k) ?? []), c]);
-    }
-    return [...m.entries()];
-  }, [changes]);
+  // O antes/depois vem só ao abrir: na lista ele deixaria a tela pesada demais.
+  const q = useQuery({
+    queryKey: ["audit-entry", entry.id],
+    queryFn: () => api.get<AuditRecord>(`/audit/${entry.id}`),
+    staleTime: Infinity,
+  });
   const [label, tone] = ACTIONS[entry.action] ?? [entry.action, "neutral" as Tone];
-  const noState = entry.before == null && entry.after == null;
-
   return (
     <>
       <SheetHeader className="border-b border-line">
@@ -232,56 +240,76 @@ function AuditDetail({ entry }: { entry: AuditEntry }) {
           {entry.entityId && <span className="ml-2 font-mono text-text-dim">{entry.entityId}</span>}
         </SheetDescription>
       </SheetHeader>
-
       <div className="space-y-4 p-4">
-        {noState ? (
-          <Empty>Esta ação não guarda estado (por exemplo, troca de senha).</Empty>
-        ) : (
-          <>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex gap-2 text-xs text-text-muted">
-                <Pill tone="info">{changes.filter((c) => c.kind === "changed").length} alterados</Pill>
-                <Pill tone="ok">{changes.filter((c) => c.kind === "added").length} adicionados</Pill>
-                <Pill tone="bad">{changes.filter((c) => c.kind === "removed").length} removidos</Pill>
+        <ErrorBox error={q.error} />
+        {q.isLoading ? <Loading /> : q.data && <AuditChanges record={q.data} />}
+      </div>
+    </>
+  );
+}
+
+function AuditChanges({ record: entry }: { record: AuditRecord }) {
+  const [showJson, setShowJson] = useState(false);
+  const changes = useMemo(() => diff(entry.before, entry.after), [entry]);
+  const groups = useMemo(() => {
+    const m = new Map<string, Change[]>();
+    for (const c of changes) {
+      const k = groupKey(c.path);
+      m.set(k, [...(m.get(k) ?? []), c]);
+    }
+    return [...m.entries()];
+  }, [changes]);
+  const noState = entry.before == null && entry.after == null;
+
+  return (
+    <>
+      {noState ? (
+        <Empty>Esta ação não guarda estado (por exemplo, troca de senha).</Empty>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex gap-2 text-xs text-text-muted">
+              <Pill tone="info">{changes.filter((c) => c.kind === "changed").length} alterados</Pill>
+              <Pill tone="ok">{changes.filter((c) => c.kind === "added").length} adicionados</Pill>
+              <Pill tone="bad">{changes.filter((c) => c.kind === "removed").length} removidos</Pill>
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch id="showjson" checked={showJson} onCheckedChange={setShowJson} />
+              <Label htmlFor="showjson" className="text-xs text-text-muted">
+                mostrar JSON completo
+              </Label>
+            </div>
+          </div>
+
+          {changes.length === 0 ? (
+            <Empty>Nenhuma diferença entre antes e depois.</Empty>
+          ) : (
+            <div className="overflow-hidden rounded-md border border-line">
+              <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)] gap-3 border-b border-line bg-ink-850 px-3 py-2 text-[0.68rem] font-medium tracking-wider text-text-muted uppercase">
+                <span>Caminho</span>
+                <span>Antes</span>
+                <span>Depois</span>
               </div>
-              <div className="flex items-center gap-2">
-                <Switch id="showjson" checked={showJson} onCheckedChange={setShowJson} />
-                <Label htmlFor="showjson" className="text-xs text-text-muted">
-                  mostrar JSON completo
-                </Label>
+              {groups.map(([k, cs]) => (
+                <DiffGroup key={k} name={k} changes={cs} collapsible={groups.length > 1 && cs.length > 3} />
+              ))}
+            </div>
+          )}
+
+          {showJson && (
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="min-w-0 space-y-1">
+                <div className="text-xs text-text-muted">Antes</div>
+                <JsonView value={entry.before ?? null} maxHeight={520} />
+              </div>
+              <div className="min-w-0 space-y-1">
+                <div className="text-xs text-text-muted">Depois</div>
+                <JsonView value={entry.after ?? null} maxHeight={520} />
               </div>
             </div>
-
-            {changes.length === 0 ? (
-              <Empty>Nenhuma diferença entre antes e depois.</Empty>
-            ) : (
-              <div className="overflow-hidden rounded-md border border-line">
-                <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)] gap-3 border-b border-line bg-ink-850 px-3 py-2 text-[0.68rem] font-medium tracking-wider text-text-muted uppercase">
-                  <span>Caminho</span>
-                  <span>Antes</span>
-                  <span>Depois</span>
-                </div>
-                {groups.map(([k, cs]) => (
-                  <DiffGroup key={k} name={k} changes={cs} collapsible={groups.length > 1 && cs.length > 3} />
-                ))}
-              </div>
-            )}
-
-            {showJson && (
-              <div className="grid gap-3 md:grid-cols-2">
-                <div className="min-w-0 space-y-1">
-                  <div className="text-xs text-text-muted">Antes</div>
-                  <JsonView value={entry.before ?? null} maxHeight={520} />
-                </div>
-                <div className="min-w-0 space-y-1">
-                  <div className="text-xs text-text-muted">Depois</div>
-                  <JsonView value={entry.after ?? null} maxHeight={520} />
-                </div>
-              </div>
-            )}
-          </>
-        )}
-      </div>
+          )}
+        </>
+      )}
     </>
   );
 }

@@ -251,10 +251,11 @@ export const kb = {
     form.append('file', file);
     return api
       .post(`/spaces/${encodeURIComponent(slug)}/documents`, form, {
-        // O POST cobre só a SUBIDA do arquivo (até 100 MB), não o
-        // processamento. Dez minutos é folga para upload lento; a ingestão, que
-        // já levou 13 min num PDF com OCR, acontece depois, fora da conexão.
-        timeout: 600_000,
+        // O POST cobre só a SUBIDA do arquivo (até 1 GB), não o
+        // processamento. Trinta minutos (o proxy-send-timeout da borda) é folga
+        // para upload lento; a ingestão, que já levou 13 min num PDF com OCR,
+        // acontece depois, fora da conexão.
+        timeout: 1_800_000,
         // Abortar corta a subida. Se o arquivo já tinha chegado, ele está na
         // fila e será processado mesmo assim.
         signal,

@@ -1,0 +1,12 @@
+# Rede de seguranca: container sem limit declarado herda este teto.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: default-container-limits
+  labels: {{- include "goga.labels" . | nindent 4 }}
+spec:
+  limits:
+    - type: Container
+      default: { cpu: "1", memory: 1Gi }
+      defaultRequest: { cpu: 50m, memory: 64Mi }
+      max: { cpu: "2", memory: 6Gi }

@@ -20,6 +20,9 @@ export function LoginPage() {
           setError(null);
           try {
             await login(email, password);
+            // Veio do SSO de outro produto (ex.: a KB): a API valida o destino e devolve.
+            const rd = new URLSearchParams(window.location.search).get("rd");
+            if (rd) window.location.href = `/api/v1/auth/sso?rd=${encodeURIComponent(rd)}`;
           } catch (err) {
             setError(err);
           } finally {

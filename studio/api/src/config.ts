@@ -38,6 +38,16 @@ export const config = {
   // links que o CLI dos agentes recebe. Vazio = deduzido da requisicao.
   publicUrl: env("STUDIO_PUBLIC_URL").replace(/\/$/, ""),
   filesDir: env("STUDIO_FILES_DIR", "./data/files"),
+  // Teto de upload de arquivo para a KB (Assistente e CLI dos agentes). O
+  // arquivo vai em streaming para o disco; a borda (ingress/nginx) tem o mesmo teto.
+  maxUploadMb: Number(env("STUDIO_MAX_UPLOAD_MB", "1024")),
+  // SSO entre produtos do mesmo dominio: o cookie de sessao vale para
+  // `.goga.legal` e o Ingress da KB pergunta ao /auth/me se ha sessao. Vazio =
+  // cookie so do host do Studio (local).
+  cookieDomain: env("STUDIO_COOKIE_DOMAIN") || undefined,
+  // Hosts para onde o /auth/sso pode devolver o navegador depois do login.
+  // Lista fechada: sem ela o endpoint seria um open redirect.
+  ssoHosts: env("STUDIO_SSO_HOSTS").split(",").map((h) => h.trim().toLowerCase()).filter(Boolean),
   // Tabela de precos do LiteLLM (a mesma da KB). Vazio desliga a busca de preco.
   priceCatalogUrl: env("STUDIO_PRICE_CATALOG_URL", "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"),
 };

@@ -12,7 +12,7 @@ import { hashToken, newToken, requireBrowserSession, requireUser, type SessionUs
 import { badRequest, HttpError, notFound } from "../lib/errors.js";
 import { ASK_TOOL, SENSITIVE, StudioApi, buildTools, credentialsOf, type ToolCtx } from "../assistant/tools.js";
 import { GOGA_DOMINIO } from "../assistant/prompt.js";
-import { saveFile } from "../files/storage.js";
+import { saveUpload } from "../files/storage.js";
 
 // Agentes externos (Claude Code, Codex, Gemini CLI) operando o Studio com as
 // MESMAS ferramentas do Assistente: mesma validacao, mesmas rotas por baixo,
@@ -214,14 +214,12 @@ export async function agentRoutes(app: FastifyInstance) {
   // O CLI sobe arquivos locais aqui e recebe fileIds, que as ferramentas usam
   // (ex.: enviar_documento_kb). Sem extracao de texto: o destino costuma ser a
   // KB, que extrai do jeito dela, e PDF grande travaria o upload.
-  const MAX_AGENT_UPLOAD = 100 * 1024 * 1024;
+  const MAX_AGENT_UPLOAD = config.maxUploadMb * 1024 * 1024;
   app.post("/api/v1/agent/files", async (req) => {
     requireUser(req);
     const part = await req.file({ limits: { fileSize: MAX_AGENT_UPLOAD } });
     if (!part) throw badRequest("nenhum arquivo enviado");
-    const data = await part.toBuffer();
-    if (part.file.truncated) throw new HttpError(413, `arquivo acima de ${MAX_AGENT_UPLOAD / 1048576} MB`);
-    const f = await saveFile({ sessionId: null, direction: "in", name: part.filename, mime: part.mimetype, data });
+    const f = await saveUpload(part, { sessionId: null, mime: part.mimetype }, MAX_AGENT_UPLOAD);
     return { file: { id: f.id, name: f.name, mime: f.mime, size: f.size } };
   });
 

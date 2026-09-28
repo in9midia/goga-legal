@@ -1,0 +1,70 @@
+# Um Ingress por host, cada um com certificado Let's Encrypt (cert-manager,
+# ClusterIssuer em deploy/k8s/cluster-issuers.yaml). DNS dos dois hosts →
+# IP do LB do ingress-nginx (137.131.181.101).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: studio
+  labels: {{- include "goga.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.clusterIssuer }}
+    # Upload de documento grande para a KB (ate 1 GB). Sem buffer da requisicao:
+    # o corpo vai direto para o pod, em vez de ser gravado no disco do ingress.
+    nginx.ingress.kubernetes.io/proxy-body-size: "1g"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "1800"
+    # Turno com varios especialistas passa de 60 s, e o SSE fica aberto o turno inteiro.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  tls:
+    - hosts: [{{ .Values.ingress.studioHost }}]
+      secretName: studio-tls
+  rules:
+    - host: {{ .Values.ingress.studioHost }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: studio-ui, port: { number: 80 } }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kb
+  labels: {{- include "goga.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.clusterIssuer }}
+    # Ingestao de PDF grande: o default de 1m do nginx recusaria com 413, e
+    # extracao + embedding passam de 60 s.
+    nginx.ingress.kubernetes.io/proxy-body-size: "1g"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "1800"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "1800"
+    {{- if eq .Values.kb.auth "sso" }}
+    # SSO pelo Studio: cada requisicao e checada no /auth/me (cookie .goga.legal
+    # ou Bearer de token do Studio); 401 → login do Studio, que devolve via `rd`.
+    nginx.ingress.kubernetes.io/auth-url: "http://studio-api.{{ .Release.Namespace }}.svc.cluster.local/api/v1/auth/me"
+    nginx.ingress.kubernetes.io/auth-signin: "https://{{ .Values.ingress.studioHost }}/api/v1/auth/sso"
+    nginx.ingress.kubernetes.io/auth-signin-redirect-param: "rd"
+    {{- else if eq .Values.kb.auth "basic" }}
+    # KB sem auth propria no MVP: sem isto, kb.goga.legal seria admin aberto.
+    nginx.ingress.kubernetes.io/auth-type: basic
+    nginx.ingress.kubernetes.io/auth-secret: kb-basic-auth
+    nginx.ingress.kubernetes.io/auth-realm: "Goga KB"
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  tls:
+    - hosts: [{{ .Values.ingress.kbHost }}]
+      secretName: kb-tls
+  rules:
+    - host: {{ .Values.ingress.kbHost }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: kb-ui, port: { number: 80 } }

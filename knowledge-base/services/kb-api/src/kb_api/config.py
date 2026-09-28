@@ -284,7 +284,7 @@ class Settings:
         default_factory=lambda: _env_int("KB_CHILD_OVERLAP_CHARS", 150)
     )
     parent_chunk_chars: int = field(default_factory=lambda: _env_int("KB_PARENT_CHUNK_CHARS", 4800))
-    max_upload_mb: int = field(default_factory=lambda: _env_int("KB_MAX_UPLOAD_MB", 100))
+    max_upload_mb: int = field(default_factory=lambda: _env_int("KB_MAX_UPLOAD_MB", 1024))
 
     # ── retentativa automatica da ingestao ──
     #

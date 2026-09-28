@@ -1,3 +1,4 @@
+import { openAsBlob } from "node:fs";
 import { config } from "../config.js";
 
 // A KB roda com autenticacao desligada no MVP (modo `auth-desligada`, so rede
@@ -106,11 +107,14 @@ export function listDocuments(slug: string) {
   return kbFetch<{ documents: Record<string, unknown>[] } & Record<string, unknown>>(`/v1/spaces/${encodeURIComponent(slug)}/documents`);
 }
 
-export async function uploadDocument(slug: string, file: { name: string; mime: string; data: Buffer }) {
+export async function uploadDocument(slug: string, file: { name: string; mime: string; path: string }) {
   const form = new FormData();
-  form.append("file", new Blob([new Uint8Array(file.data)], { type: file.mime }), file.name);
-  // Sem content-type manual: o fetch monta o boundary do multipart.
-  const res = await fetch(`${config.kbUrl}/v1/spaces/${encodeURIComponent(slug)}/documents`, { method: "POST", body: form, signal: AbortSignal.timeout(120_000) });
+  // Blob apoiado no arquivo em disco: o fetch le em streaming, sem carregar
+  // centenas de MB na memoria do pod.
+  form.append("file", await openAsBlob(file.path, { type: file.mime }), file.name);
+  // Sem content-type manual: o fetch monta o boundary do multipart. Prazo
+  // longo: a KB so responde depois de gravar o bruto no object store.
+  const res = await fetch(`${config.kbUrl}/v1/spaces/${encodeURIComponent(slug)}/documents`, { method: "POST", body: form, signal: AbortSignal.timeout(30 * 60_000) });
   const text = await res.text();
   if (!res.ok) throw new Error(`KB ${res.status} ao enviar ${file.name}: ${text.slice(0, 300)}`);
   spacesCache = null;

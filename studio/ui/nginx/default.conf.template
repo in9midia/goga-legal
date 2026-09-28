@@ -1,28 +1,41 @@
 # SPA + proxy da API na MESMA origem: o cookie de sessao (httpOnly, SameSite=Lax)
 # so funciona sem CORS se o navegador ve UI e API no mesmo host.
+
+# Protocolo ORIGINAL do navegador. Atras do Ingress (TLS termina nele) o
+# $scheme daqui e `http`; repassa-lo fazia a API achar que a conexao era HTTP e
+# recusar o cookie Secure — login 200 sem Set-Cookie, tela volta ao logon.
+map $http_x_forwarded_proto $goga_fwd_proto {
+  default $http_x_forwarded_proto;
+  ""      $scheme;
+}
+
 server {
   listen 8080;
   root /usr/share/nginx/html;
-  client_max_body_size 30m;
+  # Upload de documento grande para a KB (ate 1 GB, mesmo teto do ingress).
+  client_max_body_size 1g;
 
   location /api/ {
     proxy_pass ${API_PROXY_TARGET};
     proxy_http_version 1.1;
     proxy_set_header Host $http_host;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Proto $goga_fwd_proto;
     # SSE do trace: com buffer o navegador recebe os spans todos de uma vez no
     # fim da execucao, e o "ao vivo" do simulador vira so um spinner.
     proxy_buffering off;
     proxy_cache off;
     proxy_read_timeout 600s;
+    # Upload grande vai em streaming para a API, sem passar pelo disco do nginx.
+    proxy_request_buffering off;
+    proxy_send_timeout 1800s;
   }
 
   # Instalador da skill dos agentes externos: `curl <studio>/skills/goga.mjs | node - instalar`.
   location /skills/ {
     proxy_pass ${API_PROXY_TARGET};
     proxy_set_header Host $http_host;
-    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Proto $goga_fwd_proto;
   }
 
   location / {

@@ -1,0 +1,17 @@
+# ingress-nginx on OKE (goga-cluster) — OCI flexible LB 10Mbps (Always Free) with reserved public IP goga-ingress-ip (via loadBalancerIP)
+controller:
+  replicaCount: 1
+  ingressClassResource:
+    default: true
+  config:
+    use-forwarded-headers: "true"
+    proxy-body-size: "100m"
+  service:
+    type: LoadBalancer
+    externalTrafficPolicy: Local
+    loadBalancerIP: 137.131.181.101
+    annotations:
+      oci.oraclecloud.com/load-balancer-type: "lb"
+      service.beta.kubernetes.io/oci-load-balancer-shape: "flexible"
+      service.beta.kubernetes.io/oci-load-balancer-shape-flex-min: "10"
+      service.beta.kubernetes.io/oci-load-balancer-shape-flex-max: "10"

@@ -5,14 +5,18 @@ import { db, schema } from "../db/index.js";
 import { requireUser } from "../lib/auth.js";
 import { badRequest, conflict, HttpError, notFound } from "../lib/errors.js";
 import { defaultModelId } from "../llm/models.js";
-import { saveFile } from "../files/storage.js";
+import { readFileData, saveUpload } from "../files/storage.js";
+import { config } from "../config.js";
 import { extractText } from "../files/extract.js";
 import { errorMessage } from "../engine/tracer.js";
 import { publicMessage, runAssistantTurn, type TurnEvent } from "../assistant/agent.js";
 import { isBusy, liveTurn, startLiveTurn } from "../assistant/live.js";
 import { credentialsOf } from "../assistant/tools.js";
 
-const MAX_UPLOAD = 25 * 1024 * 1024;
+// Anexo pode ser um PDF grande a caminho da KB; a extracao de texto (que pode
+// chamar o modelo de visao) so roda ate MAX_EXTRACT.
+const MAX_UPLOAD = config.maxUploadMb * 1024 * 1024;
+const MAX_EXTRACT = 25 * 1024 * 1024;
 const ALLOWED = /^(application\/(pdf|json|x-yaml|yaml)|application\/vnd\.openxmlformats-officedocument\.wordprocessingml\.document|text\/.*|image\/(png|jpe?g|webp|gif))$/;
 
 async function chatModels() {
@@ -96,16 +100,26 @@ export async function assistantRoutes(app: FastifyInstance) {
     const me = requireUser(req);
     const part = await req.file({ limits: { fileSize: MAX_UPLOAD } });
     if (!part) throw badRequest("nenhum arquivo enviado");
-    const data = await part.toBuffer();
     const lower = part.filename.toLowerCase();
     let mime = part.mimetype;
     if (mime === "application/octet-stream") {
       if (lower.endsWith(".docx")) mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
       else if (/\.(md|txt|csv|yaml|yml|json)$/.test(lower)) mime = "text/plain";
     }
-    if (!ALLOWED.test(mime)) throw badRequest(`tipo de arquivo não aceito: ${mime} (PDF, DOCX, imagem, texto, JSON ou YAML)`);
+    if (!ALLOWED.test(mime)) {
+      part.file.resume();
+      throw badRequest(`tipo de arquivo não aceito: ${mime} (PDF, DOCX, imagem, texto, JSON ou YAML)`);
+    }
+    // Grava em streaming; so le de volta para extrair o texto quando e pequeno.
+    // Arquivo grande serve para ir para a KB, que extrai do jeito dela.
+    const f = await saveUpload(part, { sessionId: null, mime }, MAX_UPLOAD);
+    if (f.size > MAX_EXTRACT) {
+      const warning = `arquivo grande (${Math.round(f.size / 1048576)} MB): o texto não foi extraído aqui; dá para enviá-lo à base de conhecimento`;
+      return { file: { id: f.id, name: f.name, mime: f.mime, size: f.size, extractedChars: 0, method: "nenhum", warning } };
+    }
+    const data = await readFileData(f);
     const ex = mime.startsWith("application/") && !mime.includes("pdf") && !mime.includes("wordprocessing") ? { text: data.toString("utf8").slice(0, 200_000), method: "texto" } : await extractText(data, mime, part.filename, me.id);
-    const f = await saveFile({ sessionId: null, direction: "in", name: part.filename, mime, data, extractedText: ex.text });
+    await db.update(schema.file).set({ extractedText: ex.text }).where(eq(schema.file.id, f.id));
     return { file: { id: f.id, name: f.name, mime: f.mime, size: f.size, extractedChars: ex.text.length, method: ex.method, warning: "warning" in ex ? ex.warning : undefined } };
   });
 

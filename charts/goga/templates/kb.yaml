@@ -1,0 +1,173 @@
+# Knowledge Base: memgraph + kb-api (REST /v1 + MCP /mcp) + kb-ui (bundle +
+# proxy /v1 e /mcp para o kb-api, unico caminho do navegador ate a stack).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: knowledge-base-config
+  labels: {{- include "goga.labels" . | nindent 4 }}
+data:
+  {{- range $k, $v := .Values.kb.config }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}
+  POSTGRES_HOST: "postgres"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "knowledge_base"
+  POSTGRES_USER: "knowledge_base"
+  MEMGRAPH_HOST: "memgraph"
+  MEMGRAPH_PORT: "7687"
+  MEMGRAPH_ENABLED: "true"
+  # Vazio = auth desligada (MVP). A porta de entrada publica leva basic auth
+  # no Ingress enquanto isso (values.yaml → kb.auth).
+  KB_KEYCLOAK_ISSUER: ""
+  KB_KEYCLOAK_AUDIENCE: ""
+  KB_PUBLIC_BASE_URL: "https://{{ .Values.ingress.kbHost }}"
+---
+# Memgraph e IN-MEMORY e SEM volume: com PVC ou emptyDir em /var/lib/memgraph o
+# processo segfaulta. O grafo e derivado (reconstruido na ingestao), entao
+# perde-lo num restart nao perde informacao.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: memgraph
+  labels: {{- include "goga.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: memgraph } }
+  template:
+    metadata:
+      labels: { app: memgraph }
+    spec:
+      # Memgraph exige vm.max_map_count >= 262144; o sysctl e do NO.
+      initContainers:
+        - name: sysctl
+          image: docker.io/library/busybox:1.36
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "sysctl -w vm.max_map_count=262144"]
+          securityContext: { privileged: true }
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { cpu: 100m, memory: 64Mi }
+      containers:
+        - name: memgraph
+          image: {{ .Values.memgraph.image }}
+          imagePullPolicy: IfNotPresent
+          # --memory-limit explicito: sem ele o Memgraph dimensiona pela RAM do
+          # no (nao do cgroup) e morre com SIGSEGV.
+          args:
+            - "--telemetry-enabled=false"
+            - "--log-level=WARNING"
+            - "--memory-limit={{ .Values.memgraph.memoryLimitMb }}"
+          ports: [{ containerPort: 7687, name: bolt }]
+          readinessProbe:
+            tcpSocket: { port: 7687 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources: {{- toYaml .Values.memgraph.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: memgraph
+  labels: {{- include "goga.labels" . | nindent 4 }}
+spec:
+  selector: { app: memgraph }
+  ports: [{ name: bolt, port: 7687, targetPort: 7687 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kb-api
+  labels: {{- include "goga.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: kb-api } }
+  template:
+    metadata:
+      labels: { app: kb-api }
+      annotations:
+        checksum/config: {{ include "goga.checksum" . }}
+        {{- include "goga.rollout" . | nindent 8 }}
+    spec:
+      {{- include "goga.pullSecrets" . | nindent 6 }}
+      containers:
+        - name: kb-api
+          image: {{ include "goga.image" (list . "kb-api") }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          envFrom:
+            - configMapRef: { name: knowledge-base-config }
+            - secretRef: { name: knowledge-base-secret }
+            # Por ultimo: em envFrom o ultimo vence.
+            - secretRef: { name: storage-secret }
+          ports: [{ containerPort: 8080, name: http }]
+          startupProbe:
+            # A migracao roda no startup e espera o Postgres.
+            httpGet: { path: /v1/live, port: 8080 }
+            periodSeconds: 5
+            failureThreshold: 60
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet: { path: /v1/ready, port: 8080 }
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            # /v1/live e nao /v1/health: ingestao longa deixa o health lento e o
+            # kubelet mataria o pod no meio do trabalho.
+            httpGet: { path: /v1/live, port: 8080 }
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 10
+          resources: {{- toYaml .Values.kb.api.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kb-api
+  labels: {{- include "goga.labels" . | nindent 4 }}
+spec:
+  selector: { app: kb-api }
+  ports: [{ name: http, port: 80, targetPort: 8080 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kb-ui
+  labels: {{- include "goga.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: kb-ui } }
+  template:
+    metadata:
+      labels: { app: kb-ui }
+      annotations:
+        {{- include "goga.rollout" . | nindent 8 }}
+    spec:
+      {{- include "goga.pullSecrets" . | nindent 6 }}
+      containers:
+        - name: kb-ui
+          image: {{ include "goga.image" (list . "kb-ui") }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          env:
+            - { name: API_PROXY_TARGET, value: "http://kb-api.{{ .Release.Namespace }}" }
+            - { name: API_BASE_URL, value: "/v1" }
+            - { name: MCP_URL, value: "" }
+          ports: [{ containerPort: 8080, name: http }]
+          readinessProbe:
+            httpGet: { path: /index.html, port: 8080 }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /index.html, port: 8080 }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources: {{- toYaml .Values.kb.ui.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kb-ui
+  labels: {{- include "goga.labels" . | nindent 4 }}
+spec:
+  selector: { app: kb-ui }
+  ports: [{ name: http, port: 80, targetPort: 8080 }]

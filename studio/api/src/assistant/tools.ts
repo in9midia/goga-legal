@@ -657,6 +657,7 @@ export function buildTools(ctx: ToolCtx): ToolSet {
       if (i.de) q.set("from", i.de);
       if (i.ate) q.set("to", i.ate);
       q.set("limit", String(i.limite));
+      q.set("full", "1");
       const { entries } = await api.call<{ entries: { id: string; at: string; actorEmail: string; action: string; entity: string; entityId: string | null; before: unknown; after: unknown }[] }>("GET", `/audit?${q}`);
       return fit(entries.map((e) => ({ id: e.id, em: e.at, ator: e.actorEmail, acao: e.action, entidade: e.entity, entidadeId: e.entityId, mudancas: diffPaths(e.before, e.after, 240).slice(0, 25) })));
     },

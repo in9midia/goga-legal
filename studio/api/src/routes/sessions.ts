@@ -4,7 +4,7 @@ import { z } from "zod";
 import { db, schema } from "../db/index.js";
 import { requireUser } from "../lib/auth.js";
 import { badRequest, notFound } from "../lib/errors.js";
-import { saveFile, readFileData } from "../files/storage.js";
+import { saveFile, readFileStream } from "../files/storage.js";
 import { extractText } from "../files/extract.js";
 import { startTurn } from "../engine/run.js";
 import { channel, hasChannel } from "../engine/tracer.js";
@@ -103,11 +103,12 @@ export async function sessionRoutes(app: FastifyInstance) {
     // Arquivo de conversa so para o dono ou admin; arquivo de lote (sem
     // sessao) para qualquer usuario logado do Studio.
     if (!f || (f.owner && f.owner !== me.id && me.role !== "admin")) throw notFound("arquivo");
-    const data = await readFileData(f.f);
     const q = req.query as { inline?: string };
     reply.header("content-type", f.f.mime);
+    reply.header("content-length", f.f.size);
     reply.header("content-disposition", `${q.inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(f.f.name)}`);
-    return reply.send(data);
+    // Stream: anexo de centenas de MB nao passa pela memoria do pod.
+    return reply.send(readFileStream(f.f));
   });
 
   app.get<{ Params: { id: string } }>("/api/v1/files/:id/text", async (req) => {

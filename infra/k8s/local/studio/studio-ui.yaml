@@ -40,7 +40,7 @@ metadata:
   name: studio-ui
   namespace: stack-studio
   annotations:
-    nginx.ingress.kubernetes.io/proxy-body-size: "30m"
+    nginx.ingress.kubernetes.io/proxy-body-size: "1g"
     # Turno com 3 especialistas + 2 ciclos de compliance passa de 60 s, e o SSE
     # fica aberto o turno inteiro.
     nginx.ingress.kubernetes.io/proxy-read-timeout: "600"

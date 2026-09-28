@@ -77,7 +77,7 @@ metadata:
   namespace: stack-knowledge-base
   annotations:
     # Ingestao de PDF de 18 MB: o default de 1m do nginx recusaria com 413.
-    nginx.ingress.kubernetes.io/proxy-body-size: "128m"
+    nginx.ingress.kubernetes.io/proxy-body-size: "1g"
     # A ingestao de um documento grande (extracao + embedding) passa de 60s.
     nginx.ingress.kubernetes.io/proxy-read-timeout: "1800"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "1800"

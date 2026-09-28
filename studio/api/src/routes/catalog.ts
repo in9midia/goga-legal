@@ -5,7 +5,6 @@ import { db, schema } from "../db/index.js";
 import { audit } from "../lib/audit.js";
 import { requireAdmin, requireUser } from "../lib/auth.js";
 import { badRequest, conflict, HttpError, notFound } from "../lib/errors.js";
-import { readFileData } from "../files/storage.js";
 import { flowsUsing } from "../lib/usage.js";
 import * as kb from "../kb/client.js";
 import { config } from "../config.js";
@@ -284,7 +283,7 @@ export async function catalogRoutes(app: FastifyInstance) {
         continue;
       }
       try {
-        const r = await kb.uploadDocument(req.params.slug, { name: f.name, mime: f.mime, data: await readFileData(f) });
+        const r = await kb.uploadDocument(req.params.slug, { name: f.name, mime: f.mime, path: f.path });
         out.push({ fileId: id, arquivo: f.name, ...r });
         await audit(me, "upload", "kb_document", `${req.params.slug}/${f.name}`, null, { space: req.params.slug, filename: f.name, size: f.size, sha256: f.sha256, runId: r.run_id });
       } catch (err) {

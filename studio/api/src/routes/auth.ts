@@ -4,7 +4,19 @@ import { z } from "zod";
 import { db, schema } from "../db/index.js";
 import { audit } from "../lib/audit.js";
 import { hashPassword, requireAdmin, requireBrowserSession, requireUser, verifyPassword } from "../lib/auth.js";
+import { config } from "../config.js";
 import { badRequest, conflict, HttpError, notFound } from "../lib/errors.js";
+
+/** `rd` so vale se for https para um host da lista STUDIO_SSO_HOSTS. */
+function ssoTarget(rd: string | undefined): string | null {
+  if (!rd) return null;
+  try {
+    const u = new URL(rd);
+    return u.protocol === "https:" && config.ssoHosts.includes(u.hostname.toLowerCase()) ? u.toString() : null;
+  } catch {
+    return null;
+  }
+}
 
 const publicUser = (u: typeof schema.appUser.$inferSelect) => ({ id: u.id, name: u.name, email: u.email, role: u.role, active: u.active, createdAt: u.createdAt });
 
@@ -29,6 +41,16 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   app.get("/api/v1/auth/me", async (req) => ({ user: requireUser(req) }));
+
+  // Porta de entrada do SSO: o Ingress de outro produto (ex.: a KB) manda para
+  // ca quem chega sem sessao, com `rd` = URL original. Com sessao, devolve; sem,
+  // leva ao login do Studio, que volta aqui depois de entrar.
+  app.get("/api/v1/auth/sso", { config: { public: true } }, async (req, reply) => {
+    const rd = ssoTarget((req.query as { rd?: string }).rd);
+    if (!rd) return reply.redirect("/");
+    if (req.user && !req.viaToken) return reply.redirect(rd);
+    return reply.redirect(`/?rd=${encodeURIComponent(rd)}`);
+  });
 
   app.post("/api/v1/auth/password", async (req) => {
     const me = requireBrowserSession(req);

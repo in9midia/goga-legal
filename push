@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Builda as imagens do Goga e publica no OCIR (repositorio privado `goga`).
+#
+#   ./push 1.0.0                    kb-api, kb-ui, studio-api, studio-ui
+#   ./push 1.0.1 studio-api         so as listadas
+#
+# Cada imagem vira gru.ocir.io/grc4sekoeyuf/goga:<componente>-<versao> e tambem
+# :<componente>-latest. O chart fica preso em 1.0.0 (charts/goga/values.yaml)
+# com pullPolicy Always: `./push 1.0.0` sobrescreve a tag e basta reiniciar os
+# deployments publicados para pegar a imagem nova:
+#
+#   kubectl --context context-goga-cluster-c76n2d3iq3a -n goga \
+#     rollout restart deploy/<componente> ...
+#
+# Login: usa as credenciais `registry` de charts/goga/secrets.yaml quando o
+# docker ainda nao esta logado no gru.ocir.io.
+set -euo pipefail
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="${REPO:-gru.ocir.io/grc4sekoeyuf/goga}"
+REGISTRY="${REPO%%/*}"
+# O no do OKE e x86; o Mac e arm64.
+PLATFORM="${PLATFORM:-linux/amd64}"
+
+version="${1:-}"
+[[ -z "$version" || "$version" == -* ]] && { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+[[ "$version" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "!! versao invalida: $version"; exit 2; }
+shift
+components=("$@"); [[ ${#components[@]} -eq 0 ]] && components=(kb-api kb-ui studio-api studio-ui)
+
+# ── login ───────────────────────────────────────────────────────────────────
+if ! grep -q "\"$REGISTRY\"" "$HOME/.docker/config.json" 2>/dev/null; then
+  secrets="$root/charts/goga/secrets.yaml"
+  user="$(awk '/^registry:/{f=1} f&&/username:/{gsub(/"/,"",$2); print $2; exit}' "$secrets" 2>/dev/null || true)"
+  pass="$(awk '/^registry:/{f=1} f&&/password:/{gsub(/"/,"",$2); print $2; exit}' "$secrets" 2>/dev/null || true)"
+  [[ -n "$user" && -n "$pass" ]] || { echo "!! sem login no $REGISTRY e sem registry.username/password em $secrets"; exit 1; }
+  echo "== docker login $REGISTRY ($user)"
+  printf '%s' "$pass" | docker login "$REGISTRY" -u "$user" --password-stdin >/dev/null
+fi
+
+# ── build + push ────────────────────────────────────────────────────────────
+build() { # componente dockerfile contexto
+  echo "== $1 → $REPO:$1-$version"
+  docker buildx build --platform "$PLATFORM" -f "$2" \
+    -t "$REPO:$1-$version" -t "$REPO:$1-latest" \
+    --label "org.opencontainers.image.version=$version" \
+    --label "org.opencontainers.image.revision=$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo unknown)" \
+    --push "$3"
+}
+
+for c in "${components[@]}"; do
+  case "$c" in
+    kb-api)     build kb-api     "$root/knowledge-base/services/kb-api/Dockerfile" "$root/knowledge-base/services/kb-api" ;;
+    kb-ui)      build kb-ui      "$root/knowledge-base/services/kb-ui/Dockerfile"  "$root/knowledge-base/services/kb-ui" ;;
+    studio-api) build studio-api "$root/studio/api/Dockerfile"                     "$root" ;;
+    studio-ui)  build studio-ui  "$root/studio/ui/Dockerfile"                      "$root/studio" ;;
+    *) echo "!! componente desconhecido: $c (kb-api, kb-ui, studio-api, studio-ui)"; exit 2 ;;
+  esac
+done
+
+echo
+echo "✅ publicado $version: ${components[*]}"
+echo "   aplicar: kubectl --context context-goga-cluster-c76n2d3iq3a -n goga rollout restart$(printf ' deploy/%s' "${components[@]}")"

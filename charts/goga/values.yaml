@@ -1,0 +1,99 @@
+# Goga Legal (MVP) no OKE — valores NAO sensiveis. Credenciais ficam em
+# secrets.yaml (nao versionado; modelo em secrets.example.yaml).
+#
+#   helm upgrade --install goga charts/goga -n goga --create-namespace \
+#     -f charts/goga/secrets.yaml --kube-context context-goga-cluster-c76n2d3iq3a
+
+images:
+  # Repositorio privado `goga` do OCIR (Sao Paulo). Uma imagem por componente,
+  # distinguida pela tag `<componente>-<versao>` — ex.: goga:kb-api-1.0.0.
+  # Publicadas pelo ./push <versao> da raiz.
+  repository: gru.ocir.io/grc4sekoeyuf/goga
+  # Por enquanto tudo fica em 1.0.0: cada `./push 1.0.0` SOBRESCREVE essa tag e
+  # `kubectl -n goga rollout restart deploy/<componente>` pega a imagem nova
+  # (pullPolicy Always faz o pod novo consultar o registry e baixar o digest
+  # atual). Para outra versao: --set images.version=1.0.1
+  version: "1.0.0"
+  # Always: a tag e sobrescrita a cada push, entao o restart precisa checar o
+  # registry; quando nada mudou o custo e so um HEAD.
+  pullPolicy: Always
+
+ingress:
+  className: nginx
+  clusterIssuer: letsencrypt-prod
+  studioHost: studio.goga.legal
+  kbHost: kb.goga.legal
+
+# Postgres UNICO (pgvector) com dois bancos: knowledge_base e studio, cada um
+# com o proprio usuario. A imagem e pgvector porque a KB precisa de `vector`.
+postgres:
+  # Nome completo: o CRI-O do OKE recusa short name (docker.io implicito).
+  image: docker.io/pgvector/pgvector:0.8.6-pg16
+  # oci-bv: volume minimo do OCI Block Volume e 50Gi.
+  storage: 50Gi
+  storageClass: oci-bv
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
+memgraph:
+  image: docker.io/memgraph/memgraph:2.22.1
+  # MB, abaixo do limits.memory (ver comentario em memgraph.yaml).
+  memoryLimitMb: 600
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: "1", memory: 768Mi }
+
+kb:
+  # A KB roda SEM auth propria no MVP: sem nada no Ingress, qualquer um que
+  # alcance kb.goga.legal e admin. Modos da porta de entrada publica:
+  #   sso    login do Studio (cookie .goga.legal); sem sessao → tela do Studio
+  #          e volta. Agentes/MCP: Authorization: Bearer <token de API do Studio>.
+  #   basic  usuario/senha do nginx (secrets.yaml → kbBasicAuth)
+  #   none   aberto — so quando a KB tiver auth propria
+  # O Studio fala com o kb-api pela rede interna e nao passa por nada disso.
+  auth: sso
+  # Object storage do bruto. Credenciais em secrets.yaml (s3.accessKey/secretKey).
+  s3:
+    provider: oci            # aws | oci
+    namespace: grc4sekoeyuf  # so oci
+    bucket: goga-kb-raw
+    region: sa-saopaulo-1
+    endpoint: ""
+  config:
+    KB_ENV: "oke"
+    KB_LOG_LEVEL: "INFO"
+    KB_ADMIN_GROUP: "/goga/curadoria"
+    KB_CHILD_CHUNK_CHARS: "1200"
+    KB_CHILD_OVERLAP_CHARS: "150"
+    KB_PARENT_CHUNK_CHARS: "4800"
+    KB_MAX_UPLOAD_MB: "1024"
+    KB_DEFAULT_TOP_K: "10"
+    KB_CANDIDATE_POOL: "40"
+    KB_RRF_K: "60"
+    KB_EMBEDDING_DIM: "3072"
+  api:
+    # O no tem ~6,3Gi alocaveis; o docling de PDF grande pode pedir mais. Se o
+    # pod morrer OOMKilled na ingestao, suba o no (shape) antes do limite.
+    resources:
+      requests: { cpu: 200m, memory: 768Mi }
+      limits: { cpu: "1500m", memory: 4Gi }
+  ui:
+    resources:
+      requests: { cpu: 20m, memory: 32Mi }
+      limits: { cpu: 500m, memory: 128Mi }
+
+studio:
+  adminEmail: admin@goga.legal
+  # Cookie de sessao para todos os subdominios: e o que faz o SSO com a KB.
+  cookieDomain: .goga.legal
+  # Anexos e documentos gerados (disco local do studio-api).
+  filesStorage: 50Gi
+  api:
+    resources:
+      requests: { cpu: 100m, memory: 192Mi }
+      limits: { cpu: "1", memory: 768Mi }
+  ui:
+    resources:
+      requests: { cpu: 20m, memory: 32Mi }
+      limits: { cpu: 500m, memory: 128Mi }

@@ -2131,8 +2131,15 @@ async def upload_document(
     `wait=true` mantem o contrato antigo para os scripts de carga: o arquivo
     passa pela MESMA fila, e a resposta so volta quando ele terminar.
     """
-    data = await file.read()
     limit = settings.max_upload_mb * 1024 * 1024
+    # O Starlette ja gravou o upload num arquivo temporario; recusa pelo tamanho
+    # antes de trazer centenas de MB para a memoria.
+    if file.size is not None and file.size > limit:
+        raise HTTPException(
+            status_code=413,
+            detail=f"arquivo de {file.size // 1048576} MB passa do limite de {settings.max_upload_mb} MB",
+        )
+    data = await file.read()
     if len(data) > limit:
         raise HTTPException(
             status_code=413,
