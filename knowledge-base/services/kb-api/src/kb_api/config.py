@@ -298,6 +298,54 @@ class Settings:
     retry_enabled: bool = field(default_factory=lambda: _env_bool("KB_RETRY", True))
     retry_interval_seconds: int = field(default_factory=lambda: _env_int("KB_RETRY_INTERVAL", 300))
 
+    # ── onde a fila de ingestao processa (ADR-0031) ──
+    #
+    # `local` (padrao): a thread dentro do kb-api, um arquivo por vez. `pod`:
+    # cada arquivo num Job do Kubernetes criado sob demanda, ate
+    # `ingest_pod_max` ao mesmo tempo. O limite existe porque cada Job e um
+    # docling inteiro (~700 MB de modelo + o PDF): quem sabe quantos cabem e
+    # quem dimensionou o cluster, nao o codigo.
+    ingest_mode: str = field(default_factory=lambda: _env("KB_INGEST_MODE", "local").lower())
+    ingest_pod_max: int = field(default_factory=lambda: max(1, _env_int("KB_INGEST_POD_MAX", 2)))
+    # Vazio = o namespace do proprio pod (lido da service account).
+    ingest_pod_namespace: str = field(default_factory=lambda: _env("KB_INGEST_POD_NAMESPACE"))
+    # A mesma imagem do kb-api: o Job roda `python -m kb_api.fila_pod`.
+    ingest_pod_image: str = field(default_factory=lambda: _env("KB_INGEST_POD_IMAGE"))
+    ingest_pod_pull_policy: str = field(
+        default_factory=lambda: _env("KB_INGEST_POD_PULL_POLICY", "IfNotPresent")
+    )
+    ingest_pod_pull_secrets: list[str] = field(
+        default_factory=lambda: _env_list("KB_INGEST_POD_PULL_SECRETS")
+    )
+    # `configmap:<nome>` ou `secret:<nome>`, na ordem do envFrom (o ultimo
+    # vence). O Job precisa do mesmo ambiente do kb-api: Postgres, object store,
+    # Memgraph e a chave que decifra a credencial do provedor de IA.
+    ingest_pod_env_from: list[str] = field(
+        default_factory=lambda: _env_list("KB_INGEST_POD_ENV_FROM")
+    )
+    ingest_pod_service_account: str = field(
+        default_factory=lambda: _env("KB_INGEST_POD_SERVICE_ACCOUNT")
+    )
+    ingest_pod_cpu_request: str = field(default_factory=lambda: _env("KB_INGEST_POD_CPU_REQUEST", "500m"))
+    ingest_pod_cpu_limit: str = field(default_factory=lambda: _env("KB_INGEST_POD_CPU_LIMIT", "2"))
+    # 4Gi e o mesmo limite do kb-api, que ja processava PDF de livro inteiro
+    # nele (docling em lotes de pagina, ver `hibrido.py`).
+    ingest_pod_memory_request: str = field(
+        default_factory=lambda: _env("KB_INGEST_POD_MEMORY_REQUEST", "1Gi")
+    )
+    ingest_pod_memory_limit: str = field(
+        default_factory=lambda: _env("KB_INGEST_POD_MEMORY_LIMIT", "4Gi")
+    )
+    # Teto de um arquivo. Tambem cobre o Job que nunca agenda (cluster cheio):
+    # sem prazo ele ocuparia uma vaga da concorrencia para sempre.
+    ingest_pod_deadline_seconds: int = field(
+        default_factory=lambda: _env_int("KB_INGEST_POD_DEADLINE", 7200)
+    )
+    # `key=value` separados por virgula, para prender o Job num pool de nos.
+    ingest_pod_node_selector: list[str] = field(
+        default_factory=lambda: _env_list("KB_INGEST_POD_NODE_SELECTOR")
+    )
+
     # Catalogo de preco de modelo. E a tabela que o LiteLLM mantem e que o
     # ecossistema inteiro usa; o agentic-sdlc le a mesma.
     #

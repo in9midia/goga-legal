@@ -64,3 +64,4 @@ tentativa idêntica.
 | [0028](0028-gemini-pela-camada-compativel.md) | Gemini entra pela camada compatível, e o uso não reportado entra como estimativa |
 | [0029](0029-pasta-sincronizada-de-armazenamento-externo.md) | Uma pasta do Google Drive pode ser espelhada numa base, sem tocar no upload manual |
 | [0030](0030-aws-s3-como-alternativa-ao-minio.md) | O bruto pode ficar no AWS S3 ou na OCI em vez do MinIO, e a migração só copia |
+| [0031](0031-ingestao-em-pod-sob-demanda.md) | A fila de ingestão pode processar cada arquivo num Job do Kubernetes, até N ao mesmo tempo |

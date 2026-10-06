@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeftRight, FileDown, FileText, Loader2, MessageSquarePlus, Paperclip, Rocket, Send, ThumbsDown, ThumbsUp, Trash2, X } from "lucide-react";
+import { AlertTriangle, ArrowLeftRight, Bot, FileDown, FileText, Loader2, MessageSquarePlus, Paperclip, Rocket, Send, ThumbsDown, ThumbsUp, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { api, fileUrl } from "@/lib/api";
 import { bytes, dateTime, usd } from "@/lib/format";
 import { ATALHO_LABEL, type ChatSession, type FlowSummary, type Message, type Outcome, type RunDetail, type SessionFile } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useRunStream } from "@/hooks/useRunStream";
+import { useAssistant } from "@/lib/assistant";
 import { Empty, Pill, StatusBadge } from "@/components/common";
 import { TraceView } from "@/components/trace/TraceView";
 import { CopyButton, TranscriptMenu } from "@/components/transcript";
@@ -274,10 +275,10 @@ function Chat({
         <span className="text-xs text-text-muted">Fluxo</span>
         <TargetSelect value={target} flows={flows} onChange={onTarget} />
         {detail && <span className="ml-auto truncate text-[0.7rem] text-text-dim">{detail.session.title}</span>}
+        {sessionId && messages.length > 0 && <DiscussButton sessionId={sessionId} running={running} className={cn(!detail && "ml-auto")} />}
         {sessionId && messages.length > 0 && (
           <TranscriptMenu
             label="Copiar conversa completa"
-            className={cn(!detail && "ml-auto")}
             sources={[{ label: "Conversa inteira (todas as interações e execuções)", path: `/sessions/${sessionId}/transcript`, filename: `conversa-${sessionId.slice(0, 8)}.md` }]}
           />
         )}
@@ -286,7 +287,7 @@ function Chat({
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
         {!sessionId && messages.length === 0 && (
           <Empty icon={<MessageSquarePlus />}>
-            <div>Simule uma pergunta de um usuário. Arraste PDF, DOCX, imagem ou TXT para anexar.</div>
+            <div>Simule uma pergunta de um usuário. Arraste PDF, DOCX, imagem ou TXT para anexar (até 300 MB).</div>
             <div className="text-[0.72rem] text-text-dim">Qualquer fluxo pode ser simulado, não só o de produção.</div>
           </Empty>
         )}
@@ -335,7 +336,7 @@ function Chat({
                 <button onClick={() => setPending((p) => p.filter((x) => x.id !== f.id))}><X className="h-3 w-3" /></button>
               </span>
             ))}
-            {uploading > 0 && <span className="inline-flex items-center gap-1 text-[0.72rem] text-text-muted"><Loader2 className="h-3 w-3 animate-spin" /> extraindo texto…</span>}
+            {uploading > 0 && <span className="inline-flex items-center gap-1 text-[0.72rem] text-text-muted"><Loader2 className="h-3 w-3 animate-spin" /> enviando e extraindo texto…</span>}
           </div>
         )}
         <div className="flex items-end gap-2">
@@ -360,6 +361,29 @@ function Chat({
 
       <CompareDialog state={compare} onClose={() => setCompare(null)} />
     </div>
+  );
+}
+
+// Manda o log da simulacao (mensagens, anexos, respostas, passo a passo) para
+// o Assistente e abre a discussao no painel lateral, esperando a observacao
+// do usuario. Usado de novo, acrescenta so as interacoes novas.
+function DiscussButton({ sessionId, running, className }: { sessionId: string; running: boolean; className?: string }) {
+  const a = useAssistant();
+  const qc = useQueryClient();
+  const go = useMutation({
+    mutationFn: () => api.post<{ session: { id: string }; novo: boolean; enviadas: number }>("/assistant/sessions/from-simulation", { simSessionId: sessionId, modelId: localStorage.getItem("assistant-model") }),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ["assistant-session", r.session.id] });
+      qc.invalidateQueries({ queryKey: ["assistant-sessions"] });
+      a.setDock({ open: true, sessionId: r.session.id });
+      toast.success(r.novo ? "Simulação enviada ao assistente. Conte o que estava ruim." : r.enviadas ? `${r.enviadas} interação(ões) nova(s) enviada(s) à discussão` : "Discussão retomada: nada novo para enviar");
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+  return (
+    <Button size="sm" variant="outline" className={cn("h-7 text-xs", className)} disabled={running || go.isPending} title="Envia todo o log desta simulação (com anexos) ao Assistente para avaliar onde o fluxo pode melhorar" onClick={() => go.mutate()}>
+      {go.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Bot className="h-3.5 w-3.5" />} Discutir com o assistente
+    </Button>
   );
 }
 

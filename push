@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+
+kubectl --context context-goga-cluster-c76n2d3iq3a -n goga get secret ocir -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d | jq -r '.auths["gru.ocir.io"] | .password // (.auth|@base64d|split(":")[1:]|join(":"))' | docker login gru.ocir.io -u 'grc4sekoeyuf/gabriel@tucci.net.br' --password-stdin
 # Builda as imagens do Goga e publica no OCIR (repositorio privado `goga`).
 #
 #   ./push 1.0.0                    kb-api, kb-ui, studio-api, studio-ui

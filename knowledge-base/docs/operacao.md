@@ -704,6 +704,12 @@ uma conexão. Se o pod reiniciar no meio, o arquivo volta para a fila sozinho;
 se ele derrubar o pod duas vezes, fecha como falha com essa explicação. O
 porquê está na armadilha 28 da arquitetura.
 
+Com `kb.ingest.mode: pod` no chart, cada arquivo da fila roda num **pod
+próprio** do cluster, até `kb.ingest.maxParallel` ao mesmo tempo, e a linha
+`processando` mostra o nome do Job. Um pod que morre por memória devolve o
+arquivo para a fila, com a mesma regra das duas tentativas, e o reinício do
+kb-api não interrompe o que está nos pods. O porquê está no ADR-0031.
+
 O log responde as duas perguntas que a tabela de documentos não responde:
 
 - **o que está processando agora** — linha `processando`, com o relógio correndo.

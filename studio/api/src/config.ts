@@ -41,6 +41,8 @@ export const config = {
   // Teto de upload de arquivo para a KB (Assistente e CLI dos agentes). O
   // arquivo vai em streaming para o disco; a borda (ingress/nginx) tem o mesmo teto.
   maxUploadMb: Number(env("STUDIO_MAX_UPLOAD_MB", "1024")),
+  // Teto do anexo de conversa no simulador. Tem de caber no teto da borda (1 GB).
+  maxAttachMb: Number(env("STUDIO_MAX_ATTACH_MB", "300")),
   // SSO entre produtos do mesmo dominio: o cookie de sessao vale para
   // `.goga.legal` e o Ingress da KB pergunta ao /auth/me se ha sessao. Vazio =
   // cookie so do host do Studio (local).

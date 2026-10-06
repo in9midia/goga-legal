@@ -160,6 +160,8 @@ services/kb-api/     FastAPI: REST de gestão + servidor MCP + pipeline de inges
     extract.py       docling, fallbacks e OCR
     hibrido.py       PDF longo: triagem por página, PyMuPDF onde basta, docling onde precisa
     fila.py          fila de ingestão: o upload enfileira, um worker processa um por vez
+    fila_pod.py      modo pod da fila: um Job do Kubernetes por arquivo (ADR-0031)
+    kube.py          cliente REST minimo da API do Kubernetes, de dentro do cluster
     retomada.py      ponto de retomada: a tentativa seguinte continua de onde parou
     progresso.py     etapa, percentual e log por documento (tela Fila de ingestão)
     representations.py  as representações e os métodos de acesso

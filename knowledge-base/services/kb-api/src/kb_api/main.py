@@ -33,6 +33,7 @@ from . import (
     chunking,
     embedding,
     fila,
+    fila_pod,
     graph,
     icons,
     ingest,
@@ -185,6 +186,9 @@ def _fechar_trabalhos_orfaos() -> None:
                                'processamento. O documento não foi gravado; envie de novo.'
                  WHERE status = 'running'
                 """
+                # Em modo pod, o `running` de um Job continua vivo depois deste
+                # restart; quem fecha e o reconciliador de `fila_pod.py`.
+                + fila.filtro_orfaos()
             )
             ingestoes = cur.rowcount
             cur.execute(
@@ -2586,7 +2590,7 @@ _COLUNAS_FILA = """
     id, space_slug, filename, status, size_bytes, stage, progress, stage_detail,
     attempts, principal, queued_at, started_at, finished_at, total_ms, error,
     document_id, extractor, pages, children,
-    EXTRACT(EPOCH FROM (now() - started_at)) * 1000
+    EXTRACT(EPOCH FROM (now() - started_at)) * 1000, worker
 """
 
 
@@ -2603,6 +2607,8 @@ def _linha_da_fila(r: tuple) -> dict[str, Any]:
         "total_ms": int(r[19] or 0) if em_curso else (r[13] or 0),
         "error": r[14] or "", "document_id": r[15], "extractor": r[16] or "",
         "pages": r[17] or 0, "children": r[18] or 0,
+        # Nome do Job em modo pod; vazio = a thread do kb-api.
+        "worker": r[20] or "",
     }
 
 
@@ -2645,7 +2651,8 @@ def ingest_queue(
         if linha["status"] == "queued":
             posicao += 1
             linha["position"] = posicao
-    return {"active": ativos, "recent": recentes, "counts_24h": contagem}
+    return {"active": ativos, "recent": recentes, "counts_24h": contagem,
+            "executor": fila_pod.resumo()}
 
 
 @app.get("/v1/ingest-runs/{run_id}/events")

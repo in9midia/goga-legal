@@ -21,7 +21,66 @@ data:
   KB_KEYCLOAK_ISSUER: ""
   KB_KEYCLOAK_AUDIENCE: ""
   KB_PUBLIC_BASE_URL: "https://{{ .Values.ingress.kbHost }}"
+  {{- with .Values.kb.ingest }}
+  KB_INGEST_MODE: {{ .mode | quote }}
+  {{- if eq .mode "pod" }}
+  KB_INGEST_POD_MAX: {{ .maxParallel | quote }}
+  KB_INGEST_POD_IMAGE: {{ include "goga.image" (list $ "kb-api") | quote }}
+  KB_INGEST_POD_PULL_POLICY: {{ $.Values.images.pullPolicy | quote }}
+  {{- if $.Values.registry.username }}
+  KB_INGEST_POD_PULL_SECRETS: "ocir"
+  {{- end }}
+  # O Job le o mesmo ambiente do kb-api, na mesma ordem (o ultimo vence).
+  KB_INGEST_POD_ENV_FROM: "configmap:knowledge-base-config,secret:knowledge-base-secret,secret:storage-secret"
+  KB_INGEST_POD_DEADLINE: {{ .deadlineSeconds | quote }}
+  KB_INGEST_POD_CPU_REQUEST: {{ .resources.requests.cpu | quote }}
+  KB_INGEST_POD_CPU_LIMIT: {{ .resources.limits.cpu | quote }}
+  KB_INGEST_POD_MEMORY_REQUEST: {{ .resources.requests.memory | quote }}
+  KB_INGEST_POD_MEMORY_LIMIT: {{ .resources.limits.memory | quote }}
+  {{- with .nodeSelector }}
+  KB_INGEST_POD_NODE_SELECTOR: {{ include "goga.kv" . | quote }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
 ---
+{{- if eq .Values.kb.ingest.mode "pod" }}
+# Modo pod: o kb-api cria um Job por arquivo. So o necessario para isso, e so
+# neste namespace: criar/listar/apagar Job e ler o pod para saber se morreu
+# por OOMKilled. O Job em si roda sem token (automountServiceAccountToken).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kb-api
+  labels: {{- include "goga.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kb-api-ingest
+  labels: {{- include "goga.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kb-api-ingest
+  labels: {{- include "goga.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kb-api-ingest
+subjects:
+  - kind: ServiceAccount
+    name: kb-api
+    namespace: {{ .Release.Namespace }}
+---
+{{- end }}
 # Memgraph e IN-MEMORY e SEM volume: com PVC ou emptyDir em /var/lib/memgraph o
 # processo segfaulta. O grafo e derivado (reconstruido na ingestao), entao
 # perde-lo num restart nao perde informacao.
@@ -90,6 +149,9 @@ spec:
         {{- include "goga.rollout" . | nindent 8 }}
     spec:
       {{- include "goga.pullSecrets" . | nindent 6 }}
+      {{- if eq .Values.kb.ingest.mode "pod" }}
+      serviceAccountName: kb-api
+      {{- end }}
       containers:
         - name: kb-api
           image: {{ include "goga.image" (list . "kb-api") }}

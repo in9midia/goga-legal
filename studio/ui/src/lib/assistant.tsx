@@ -26,6 +26,7 @@ export interface ASession {
   id: string;
   title: string;
   modelId: string | null;
+  simSessionId?: string | null;
   updatedAt: string;
 }
 export interface AMessage {
@@ -79,7 +80,7 @@ interface LiveState {
 export const LIVE_ID = "__live__";
 
 // Ferramentas que mudam dados de outras telas: ao terminarem, as outras telas recarregam.
-const MUTATING = new Set(["criar_fluxo", "editar_fluxo", "testar_fluxo", "salvar_modelo_llm", "salvar_skill", "importar_skill", "salvar_mcp", "testar_mcp", "salvar_especialidade", "salvar_modelo_documento"]);
+const MUTATING = new Set(["criar_fluxo", "editar_fluxo", "testar_fluxo", "salvar_modelo_llm", "salvar_skill", "importar_skill", "salvar_mcp", "testar_mcp", "salvar_especialidade", "salvar_modelo_documento", "reproduzir_simulacao", "enviar_documento_kb", "criar_base_kb"]);
 
 interface Ctx {
   live: Record<string, LiveState>;

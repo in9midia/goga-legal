@@ -1,10 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import { tool, type ToolSet } from "ai";
-import { eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "../db/index.js";
 import type { SessionUser } from "../lib/auth.js";
-import { resolveTarget, runOnce } from "../engine/run.js";
+import { resolveTarget, runOnce, startTurn } from "../engine/run.js";
+import { saveFile } from "../files/storage.js";
 import { flowGraphSchema, type FlowGraph } from "../shared/graph.js";
 import { applyFlowOps, flowOpSchema, flowSummary, type SpecialtyLike } from "./flowOps.js";
 import { fetchPage, searchWeb } from "./web.js";
@@ -170,6 +171,26 @@ export const SENSITIVE: Record<string, SensitiveTool> = {
     resumo: (i) => `Rodar o lote "${i.nome}" em ${(i.fluxoIds as string[]).length} fluxo(s) (conjuntos: ${(i.conjuntos as string[]).join(", ") || "—"}, ${(i.perguntas as unknown[]).length} pergunta(s) avulsas)`,
     run: async (i, { api }) =>
       api.call("POST", "/eval/batches", { name: i.nome, flowIds: i.fluxoIds, sets: i.conjuntos, perSet: i.porConjunto, questions: i.perguntas }),
+  },
+  registrar_conhecimento_kb: {
+    description:
+      "Registra um CONHECIMENTO (texto escrito por você a partir do que o usuário ensinou: regra, entendimento, procedimento, tese, dado) como documento Markdown numa base da KB, que o ingere em segundo plano. Use quando o ensinamento é sobre o DIREITO/conteúdo (o que o Goga precisa saber), não sobre como o fluxo se comporta (isso é prompt/regra: editar_fluxo). O cartão de aprovação mostra o texto: é a sua sugestão de registro. Escreva o texto autocontido (sem 'como dito acima'), com título claro, fundamento legal e fonte quando houver. Para ingerir um ARQUIVO anexado use enviar_documento_kb.",
+    input: z.object({
+      base: z.string().describe("slug da base (listar_bases_kb) — a mesma que os especialistas envolvidos consultam"),
+      titulo: z.string().min(3).max(160),
+      conteudo: z.string().min(20).describe("corpo em Markdown; o título vira o cabeçalho"),
+      fonte: z.string().optional().describe("de onde vem: lei, súmula, URL, 'ensinado por <usuário> na discussão da simulação <id>'"),
+    }),
+    resumo: (i) => `Registrar na base "${i.base}" o conhecimento "${i.titulo}" (${String(i.conteudo).length} caracteres) e enviar para ingestão`,
+    run: async (i, { api, user }) => {
+      const titulo = String(i.titulo).trim();
+      const slug = titulo.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80) || "conhecimento";
+      const hoje = new Date().toISOString().slice(0, 10);
+      const md = `# ${titulo}\n\n${String(i.conteudo).trim()}\n\n---\n${i.fonte ? `Fonte: ${i.fonte}\n` : ""}Registrado por ${user.name} em ${hoje}, via Assistente do Studio.\n`;
+      const f = await saveFile({ sessionId: null, direction: "in", name: `${slug}.md`, mime: "text/markdown", data: Buffer.from(md, "utf8"), extractedText: md });
+      const r = await api.call("POST", `/kb/spaces/${encodeURIComponent(String(i.base))}/documents`, { fileIds: [f.id] });
+      return { fileId: f.id, arquivo: `${slug}.md`, envio: r, proximo: "acompanhe com acompanhar_ingestao_kb e confira com buscar_kb quando indexar" };
+    },
   },
   alterar_via_api: {
     description:
@@ -621,6 +642,64 @@ export function buildTools(ctx: ToolCtx): ToolSet {
       "Transcrição completa de uma execução (item do histórico): o que cada agente recebeu (prompt, mensagens), o que devolveu, ferramentas, KB, compliance, custos e erros. Base para diagnosticar e propor ajustes.",
     inputSchema: z.object({ runId: z.string(), maxCaracteres: z.number().int().min(2000).max(120_000).default(60_000) }),
     execute: async ({ runId, maxCaracteres }) => clipStr(await api.call<string>("GET", `/runs/${runId}/transcript`), maxCaracteres),
+  });
+
+  t.reproduzir_simulacao = tool({
+    description:
+      "Reproduz uma conversa do Simulador inteira (todas as mensagens do usuário, na ordem, com os anexos) numa conversa NOVA do simulador, contra um fluxo (padrão: o mesmo da original). Use depois de ajustar o rascunho para verificar se a mudança corrigiu o problema no contexto real da conversa. Espera cada turno terminar. Tem custo real de LLM (um turno do Goga por mensagem).",
+    inputSchema: z.object({
+      sessaoId: z.string().describe("conversa do simulador a reproduzir"),
+      fluxoId: z.string().optional().describe("rascunho a usar; omitido = o mesmo alvo da conversa original"),
+      producao: z.boolean().default(false),
+      ateInteracao: z.number().int().min(1).optional().describe("reproduz só até esta interação (1 = só a primeira mensagem)"),
+    }),
+    execute: async ({ sessaoId, fluxoId, producao, ateInteracao }) => {
+      const [orig] = await db.select().from(schema.chatSession).where(eq(schema.chatSession.id, sessaoId));
+      if (!orig || (orig.userId !== ctx.user.id && ctx.user.role !== "admin")) throw new Error("conversa do simulador não encontrada");
+      const target = fluxoId || producao ? { flowId: producao ? null : (fluxoId ?? null), useProduction: producao } : { flowId: orig.flowId, useProduction: orig.useProduction };
+      const tg = await resolveTarget(target);
+      const msgs = (await db.select().from(schema.message).where(and(eq(schema.message.sessionId, orig.id), eq(schema.message.role, "user"))).orderBy(asc(schema.message.createdAt))).slice(0, ateInteracao ?? undefined);
+      if (!msgs.length) throw new Error("a conversa não tem mensagens");
+      const [s] = await db.insert(schema.chatSession).values({ userId: ctx.user.id, flowId: target.flowId, useProduction: target.useProduction, title: `Reprodução: ${orig.title}`.slice(0, 80) }).returning();
+      const out: Record<string, unknown>[] = [];
+      for (const [i, m] of msgs.entries()) {
+        const fileIds: string[] = [];
+        for (const fid of m.attachments ?? []) {
+          const [f] = await db.select().from(schema.file).where(eq(schema.file.id, fid));
+          if (!f) continue;
+          const [c] = await db.insert(schema.file).values({ ...f, id: undefined, sessionId: s.id, createdAt: undefined }).returning();
+          fileIds.push(c.id);
+        }
+        const { runId } = await startTurn({ user: ctx.user, sessionId: s.id, message: m.content, fileIds, target });
+        const deadline = Date.now() + 5 * 60_000;
+        let run: typeof schema.run.$inferSelect | undefined;
+        for (;;) {
+          [run] = await db.select().from(schema.run).where(eq(schema.run.id, runId));
+          if (run && run.status !== "running") break;
+          if (Date.now() > deadline) break;
+          await new Promise((r) => setTimeout(r, 1500));
+        }
+        // A mensagem de resposta e gravada logo depois do status do run.
+        await new Promise((r) => setTimeout(r, 300));
+        const o = (run?.outcome ?? null) as Record<string, unknown> | null;
+        out.push({
+          interacao: i + 1,
+          pergunta: clipStr(m.content, 300),
+          runId,
+          status: run?.status === "running" ? "ainda rodando (passou de 5 min)" : run?.status,
+          erro: run?.error ?? undefined,
+          resposta: o?.resposta_simples ? clipStr(String(o.resposta_simples), 3000) : undefined,
+          especialistas: (o?.especialistas as { name: string }[] | undefined)?.map((e) => e.name),
+          intencao: o?.intencao,
+          atalho: o?.atalho,
+          flags: o?.flags,
+          compliance: (o?.compliance as { aprovado?: boolean } | undefined)?.aprovado,
+          custoUsd: run?.costUsd,
+        });
+        if (run?.status === "running") break;
+      }
+      return fit({ novaSessaoId: s.id, abrirNoSimulador: `/simulator/${s.id}`, fluxo: `${tg.flowName} · rev ${tg.revision}${tg.isProduction ? " (produção)" : ""}`, interacoes: out });
+    },
   });
 
   t.listar_conversas_simuladas = tool({

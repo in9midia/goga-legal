@@ -24,6 +24,13 @@ vira um laco de OOM.
 
 `FOR UPDATE SKIP LOCKED` na hora de pegar: hoje ha uma replica e uma thread,
 mas com duas nenhuma pega a mesma linha.
+
+ONDE PROCESSA
+
+Por padrao aqui, na thread. Com `KB_INGEST_MODE=pod` esta thread nao sobe: quem
+consome a mesma fila e `fila_pod.py`, que cria um Job do Kubernetes por arquivo
+(ADR-0031). A linha, a retomada e o limite de tentativas sao os mesmos; muda so
+quem segura o `running`, registrado em `ingest_run.worker`.
 """
 
 from __future__ import annotations
@@ -33,6 +40,7 @@ import threading
 from typing import Any
 
 from . import ingest, progresso, storage
+from .config import settings
 from .db import conn
 
 log = logging.getLogger(__name__)
@@ -60,6 +68,22 @@ def acordar() -> None:
     _acordar.set()
 
 
+def modo_pod() -> bool:
+    return settings.ingest_mode == "pod"
+
+
+def filtro_orfaos() -> str:
+    """O pedaco de WHERE que separa o `running` que morreu com o kb-api.
+
+    Em modo pod, o `running` com `worker` preenchido esta num Job que
+    sobrevive ao restart do kb-api -- e e justamente o que se quer num rollout.
+    Quem decide se ele morreu e o reconciliador de `fila_pod.py`, olhando o Job.
+    Em modo local todo `running` e orfao, inclusive o de um Job deixado por
+    uma troca de modo: o conteudo repetido cai no "ja estava indexado".
+    """
+    return " AND worker = ''" if modo_pod() else ""
+
+
 def retomar_orfaos() -> dict[str, int]:
     """Na subida: o que estava `running` morreu com o pod anterior.
 
@@ -67,12 +91,14 @@ def retomar_orfaos() -> dict[str, int]:
     ou reprocessamento sincrono), nao ha de onde retomar e a linha fecha como
     falha, como antes.
     """
+    filtro = filtro_orfaos()
     with conn() as connection, connection.cursor() as cur:
         cur.execute(
             """
-            UPDATE ingest_run SET status = 'queued', started_at = now(),
+            UPDATE ingest_run SET status = 'queued', started_at = now(), worker = '',
                    stage = 'fila', stage_detail = 'voltou para a fila após queda do serviço'
              WHERE status = 'running' AND raw_key <> '' AND attempts < %s
+            """ + filtro + """
             RETURNING id
             """,
             (MAX_TENTATIVAS,),
@@ -92,7 +118,7 @@ def retomar_orfaos() -> dict[str, int]:
                            '(provavelmente falta de memória). Ele não será retomado sozinho; '
                            'divida o PDF ou reprocesse quando o serviço estiver folgado.'
              WHERE status = 'running' AND raw_key <> '' AND attempts >= %s
-            """,
+            """ + filtro,
             (MAX_TENTATIVAS,),
         )
         desistidas = cur.rowcount
@@ -103,12 +129,20 @@ def retomar_orfaos() -> dict[str, int]:
     return {"retomadas": retomadas, "desistidas": desistidas}
 
 
-def _pegar() -> tuple[int, str, str, str, str, ingest.Origem | None] | None:
+def pegar(prefixo_worker: str = "") -> tuple[int, str, str, str, str, ingest.Origem | None, str] | None:
+    """Pega a mais antiga da fila. O ultimo campo e o `worker` gravado na linha.
+
+    Com prefixo, o worker vira `<prefixo>-<id>-<tentativa>`, que e o nome do Job
+    em modo pod. Montado no MESMO UPDATE que pega a linha: gravado depois, o
+    reconciliador podia ver um `running` sem dono no intervalo.
+    """
     with conn() as connection, connection.cursor() as cur:
         cur.execute(
             """
             UPDATE ingest_run
-               SET status = 'running', started_at = now(), attempts = attempts + 1
+               SET status = 'running', started_at = now(), attempts = attempts + 1,
+                   worker = CASE WHEN %s = '' THEN ''
+                                 ELSE %s || '-' || id || '-' || (attempts + 1) END
              WHERE id = (
                    SELECT id FROM ingest_run
                     WHERE status = 'queued'
@@ -116,8 +150,9 @@ def _pegar() -> tuple[int, str, str, str, str, ingest.Origem | None] | None:
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1)
             RETURNING id, space_slug, filename, raw_key, principal, attempts,
-                      sync_id, source_ref
-            """
+                      sync_id, source_ref, worker
+            """,
+            (prefixo_worker, prefixo_worker),
         )
         linha = cur.fetchone()
         connection.commit()
@@ -126,7 +161,12 @@ def _pegar() -> tuple[int, str, str, str, str, ingest.Origem | None] | None:
     if linha[5] > 1:
         progresso.evento(linha[0], "iniciado", f"retomado após queda do serviço (tentativa {linha[5]})")
     origem = ingest.Origem(linha[6], linha[7]) if linha[6] is not None else None
-    return (*linha[:5], origem)
+    return (*linha[:5], origem, linha[8])
+
+
+def _pegar() -> tuple[int, str, str, str, str, ingest.Origem | None] | None:
+    linha = pegar()
+    return None if linha is None else linha[:6]
 
 
 def cancelar(run_id: int) -> bool:
@@ -164,13 +204,25 @@ def processar_um() -> bool:
     linha = _pegar()
     if linha is None:
         return False
-    run_id, space_slug, filename, raw_key, principal, origem = linha
+    processar(*linha)
+    return True
+
+
+def processar(
+    run_id: int, space_slug: str, filename: str, raw_key: str, principal: str,
+    origem: ingest.Origem | None,
+) -> bool:
+    """Processa uma linha ja pega. `False` se a ingestao falhou.
+
+    E o mesmo caminho na thread e no Job de `fila_pod.py`: a diferenca entre os
+    modos tem de ficar em quem pega a linha, nunca no que se faz com ela.
+    """
     try:
         dados = storage.get(raw_key)
     except Exception as exc:  # noqa: BLE001
         log.warning("fila: bruto de %s sumiu (%s): %s", filename, raw_key, exc)
         _falhar(run_id, "o arquivo original não está mais no object store; envie de novo")
-        return True
+        return False
 
     log.info("fila: processando %s (%s, execucao %s)", filename, space_slug, run_id)
     try:
@@ -186,6 +238,7 @@ def processar_um() -> bool:
                 _resultados.pop(next(iter(_resultados)))
     except Exception as exc:  # noqa: BLE001
         log.info("fila: %s falhou: %s", filename, str(exc)[:200])
+        return False
     return True
 
 
@@ -206,6 +259,11 @@ def _laco() -> None:
 
 
 def iniciar() -> None:
+    if modo_pod():
+        from . import fila_pod
+
+        fila_pod.iniciar(_acordar, _parar)
+        return
     threading.Thread(target=_laco, name="fila-ingestao", daemon=True).start()
     log.info("fila de ingestao iniciada")
 

@@ -184,3 +184,168 @@ export async function sessionTranscript(sessionId: string): Promise<string | nul
   await flush(pendingRun);
   return out.join("\n\n") + "\n";
 }
+
+// ── Resumo para o Assistente ("Discutir com o assistente") ──────────────
+// A transcricao integral repete o prompt de sistema de cada agente a cada
+// turno e estoura o contexto de qualquer modelo. O resumo leva o que importa
+// para achar onde o fluxo errou — pergunta, anexos, resposta, decisoes do
+// classificador, o que cada passo devolveu, erros, custo e avaliacao — e
+// aponta os runIds para o Assistente abrir a transcricao completa quando
+// precisar ver um prompt.
+
+const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}\n…[cortado: +${s.length - n} car.]` : s);
+const brief = (v: unknown, n: number) => (v === null || v === undefined ? "" : clip(typeof v === "string" ? v : JSON.stringify(v), n));
+
+function digestSpans(spans: SpanRow[], labels: Map<string, string>): string {
+  const children = new Map<string | null, SpanRow[]>();
+  const ids = new Set(spans.map((s) => s.id));
+  for (const s of spans) {
+    const parent = s.parentId && ids.has(s.parentId) ? s.parentId : null;
+    children.set(parent, [...(children.get(parent) ?? []), s]);
+  }
+  const out: string[] = [];
+  const walk = (parent: string | null, path: string, depth: number) => {
+    (children.get(parent) ?? [])
+      .sort((a, b) => a.seq - b.seq)
+      .forEach((s, i) => {
+        const num = path ? `${path}.${i + 1}` : `${i + 1}`;
+        const pad = "  ".repeat(depth);
+        const meta = [s.status, s.ms != null ? `${s.ms} ms` : null, s.nodeId ? `nó ${s.nodeId}` : null, s.modelId ? (labels.get(s.modelId) ?? s.modelId) : null, s.costUsd ? usd(s.costUsd) : null].filter(Boolean);
+        out.push(`${pad}- ${num} [${s.kind}] ${s.name} · ${meta.join(" · ")}`);
+        if (s.error) out.push(`${pad}  ERRO: ${s.error}`);
+        const output = s.output as Record<string, unknown> | null;
+        if (s.kind === "llm") {
+          const text = output && typeof output === "object" && "text" in output ? output.text : output;
+          if (text) out.push(`${pad}  saída: ${brief(text, 1500)}`);
+        } else if (s.kind !== "run") {
+          if (s.kind !== "agent" && s.input != null) out.push(`${pad}  entrada: ${brief(s.input, 400)}`);
+          if (output != null) out.push(`${pad}  saída: ${brief(output, s.kind === "agent" ? 600 : 900)}`);
+        }
+        walk(s.id, num, depth + 1);
+      });
+  };
+  walk(null, "", 0);
+  return out.join("\n");
+}
+
+function digestOutcome(o: Record<string, unknown>): string {
+  const pick = {
+    status: o.status,
+    intencao: o.intencao,
+    atalho: o.atalho,
+    especialistas: (o.especialistas as { name?: string }[] | undefined)?.map((e) => e.name),
+    // Ranking completo lista todos os especialistas; os primeiros bastam.
+    classificacao:
+      o.classificacao && typeof o.classificacao === "object"
+        ? { ...(o.classificacao as Record<string, unknown>), ranking: ((o.classificacao as { ranking?: { score: number }[] }).ranking ?? []).slice().sort((a, b) => b.score - a.score).slice(0, 5) }
+        : o.classificacao,
+    flags: o.flags,
+    pendencia: o.pendencia,
+    compliance: o.compliance,
+    citacoes: o.citacoes,
+    documentos: (o.documentos as { name?: string; template?: string }[] | undefined)?.map((d) => `${d.name} (${d.template})`),
+    erro: o.error,
+  };
+  const lines = [`- decisões: ${brief(JSON.parse(JSON.stringify(pick)), 2500)}`];
+  if (typeof o.resposta_tecnica === "string" && o.resposta_tecnica) lines.push(`- resposta técnica:\n${fence(clip(o.resposta_tecnica, 4000))}`);
+  return lines.join("\n");
+}
+
+export interface SimulationDigest {
+  title: string;
+  flow: string;
+  text: string;
+  /** Execucoes incluidas neste resumo (para nao reenviar na proxima atualizacao). */
+  runIds: string[];
+  /** Anexos enviados pelo usuario nas interacoes incluidas. */
+  fileIds: string[];
+  interactions: number;
+  totalInteractions: number;
+}
+
+export async function simulationDigest(sessionId: string, skipRunIds: Set<string> = new Set(), maxChars = 90_000): Promise<SimulationDigest | null> {
+  const [s] = await db.select().from(schema.chatSession).where(eq(schema.chatSession.id, sessionId));
+  if (!s) return null;
+  const messages = await db.select().from(schema.message).where(eq(schema.message.sessionId, s.id)).orderBy(asc(schema.message.createdAt));
+  const files = await db.select({ id: schema.file.id, name: schema.file.name, mime: schema.file.mime, extracted: schema.file.extractedText }).from(schema.file).where(eq(schema.file.sessionId, s.id));
+  const filesById = new Map(files.map((f) => [f.id, f]));
+  const runIds = messages.map((m) => m.runId).filter(Boolean) as string[];
+  const runs = runIds.length ? await db.select().from(schema.run).where(inArray(schema.run.id, runIds)) : [];
+  const runsById = new Map(runs.map((r) => [r.id, r]));
+  let flow = s.useProduction ? "produção (release publicada)" : "rascunho";
+  if (s.flowId) {
+    const [f] = await db.select({ name: schema.flow.name, revision: schema.flow.revision }).from(schema.flow).where(eq(schema.flow.id, s.flowId));
+    flow = s.useProduction ? flow : f ? `rascunho "${f.name}" (fluxoId ${s.flowId}, rev atual ${f.revision})` : "fluxo excluído";
+  }
+
+  // Agrupa em interacoes: mensagem do usuario + resposta (pelo runId).
+  type Turn = { user: (typeof messages)[number]; answer?: (typeof messages)[number] };
+  const turns: Turn[] = [];
+  for (const m of messages) {
+    if (m.role === "user") turns.push({ user: m });
+    else {
+      const t = [...turns].reverse().find((x) => x.user.runId === m.runId) ?? turns[turns.length - 1];
+      if (t && !t.answer) t.answer = m;
+    }
+  }
+
+  const blocks: string[] = [];
+  const included: string[] = [];
+  const fileIds: string[] = [];
+  let size = 0;
+  let omitted = 0;
+  let running = 0;
+  for (const [i, t] of turns.entries()) {
+    const run = t.user.runId ? runsById.get(t.user.runId) : undefined;
+    if (run && skipRunIds.has(run.id)) continue;
+    // Turno ainda rodando fica para o proximo envio (ja com a resposta).
+    if (run?.status === "running") {
+      running++;
+      continue;
+    }
+    if (size > maxChars) {
+      omitted++;
+      continue;
+    }
+    const b: string[] = [`## Interação ${i + 1}${run ? ` · runId ${run.id}` : ""}`];
+    if (run) {
+      const dur = run.endedAt ? `${((run.endedAt.getTime() - run.startedAt.getTime()) / 1000).toFixed(1)} s` : "em andamento";
+      b.push(`_${run.flowName} · rev ${run.flowRevision} · ${run.isProduction ? "produção" : "rascunho"} · status ${run.status} · ${dur} · ${usd(run.costUsd)}_`);
+      if (run.rating) b.push(`**Avaliação do usuário no simulador:** ${run.rating > 0 ? "👍 boa" : "👎 ruim"}${run.ratingComment ? ` — ${run.ratingComment}` : ""}`);
+    }
+    b.push(`### 👤 Usuário\n${fence(t.user.content)}`);
+    for (const id of t.user.attachments ?? []) {
+      const f = filesById.get(id);
+      if (!f) continue;
+      fileIds.push(f.id);
+      b.push(`**Anexo:** ${f.name} (fileId ${f.id}, ${f.mime}, ${f.extracted?.length ?? 0} car. extraídos)${f.extracted ? `\n${fence(clip(f.extracted, 6000))}` : ""}`);
+    }
+    if (t.answer) {
+      b.push(`### 🤖 Goga respondeu\n${fence(clip(t.answer.content, 6000))}`);
+      const p = t.answer.payload as Record<string, unknown> | null;
+      if (p && typeof p === "object") b.push(digestOutcome(p));
+    } else b.push("_(sem resposta gravada)_");
+    if (run) {
+      const spans = await db.select().from(schema.span).where(eq(schema.span.runId, run.id)).orderBy(asc(schema.span.seq));
+      const labels = await modelLabelsFor(spans);
+      b.push(`### Passo a passo (${spans.length} passos; prompts integrais em analisar_execucao)\n${clip(digestSpans(spans, labels), 20_000)}`);
+      if (run.error) b.push(`**Erro da execução:** ${run.error}`);
+      included.push(run.id);
+    }
+    const block = b.join("\n\n");
+    size += block.length;
+    blocks.push(block);
+  }
+
+  const head = [
+    `# Simulação: ${s.title}`,
+    `- sessaoId do simulador: ${s.id}`,
+    `- fluxo da conversa: ${flow}`,
+    `- interações: ${turns.length}${skipRunIds.size ? ` (aqui só as ${blocks.length} novas desde o último envio)` : ""} · custo total: ${usd(runs.reduce((a, r) => a + r.costUsd, 0))}`,
+    omitted ? `- ${omitted} interação(ões) não couberam neste resumo: leia com ler_conversa_simulada.` : null,
+    running ? `- ${running} interação(ões) ainda executando: chegam no próximo envio.` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return { title: s.title, flow, text: `${head}\n\n${blocks.join("\n\n---\n\n")}`, runIds: included, fileIds: [...new Set(fileIds)], interactions: blocks.length, totalInteractions: turns.length };
+}

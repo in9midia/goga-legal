@@ -21,7 +21,9 @@ export type Part =
   | { type: "ask"; id: string; pergunta: string; opcoes: { rotulo: string; descricao?: string }[]; multipla: boolean; permitirOutro: boolean; status: "pending" | "answered" | "skipped"; resposta?: string[] }
   | { type: "approval"; id: string; name: string; input: unknown; resumo: string; status: "pending" | "approved" | "denied" | "skipped"; output?: string; error?: string }
   | { type: "display"; id: string; input: Record<string, unknown> }
-  | { type: "error"; text: string };
+  | { type: "error"; text: string }
+  // So em mensagem do usuario: contexto de uma simulacao enviado pelo botao "Discutir com o assistente".
+  | { type: "simulation"; sessaoId: string; titulo: string; fluxo: string; interacoes: number; total: number; atualizacao: boolean; runIds: string[]; resumo: string };
 
 export type TurnEvent =
   | { type: "user"; message: unknown }
@@ -42,7 +44,7 @@ type MsgRow = typeof schema.assistantMessage.$inferSelect;
 const MAX_STEPS = 30;
 const ATTACH_CHARS = 20_000;
 const UI_OUTPUT_CHARS = 6_000;
-const IMAGE_REF = "studio-file:";
+export const IMAGE_REF = "studio-file:";
 
 const show = (v: unknown) => clipStr(typeof v === "string" ? v : JSON.stringify(v, null, 2), UI_OUTPUT_CHARS);
 

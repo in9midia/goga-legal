@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Bot, FileText, Loader2, Paperclip, Send, Square, X } from "lucide-react";
+import { Link } from "react-router-dom";
+import { AlertTriangle, Bot, ChevronDown, ChevronRight, FileText, FlaskConical, Loader2, Paperclip, Send, Square, X } from "lucide-react";
 import { toast } from "sonner";
 import { api, fileUrl } from "@/lib/api";
 import { bytes, dateTime, usd } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { LIVE_ID, useAssistant, useAssistantConversation, type AFile, type AMessage, type AModel, type Resolution, type TurnBody } from "@/lib/assistant";
 import { Markdown } from "@/components/assistant/Markdown";
-import { ApprovalCard, AskCard, DisplayPart, ToolCard } from "@/components/assistant/parts";
+import { ApprovalCard, AskCard, DisplayPart, ToolCard, type Part } from "@/components/assistant/parts";
 import { CopyButton } from "@/components/transcript";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -39,10 +40,13 @@ export function ChatPanel({ sid, ensureSession, modelId, model, compact }: { sid
     if (id) await a.send(id, { modelId, ...body });
   };
   const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
+  // Acabou de chegar o log de uma simulacao: o assistente espera a observacao do usuario.
+  const tail = messages[messages.length - 1];
+  const awaitingObservation = !running && tail?.role === "user" && tail.parts.some((p) => p.type === "simulation");
   return (
     <>
       <Conversation messages={messages} files={files} running={running} lastAssistantId={lastAssistant?.id} onResolve={(r) => turn({ resolutions: [r] })} onSuggestion={(s) => turn({ content: s })} model={model} compact={compact} />
-      <Composer key={sid ?? "new"} draftKey={sid ?? "new"} running={running} vision={!!model?.vision} onStop={() => sid && a.stop(sid)} onFiles={a.addFiles} onSend={(content, fileIds) => turn({ content, fileIds })} disabled={!modelId} />
+      <Composer key={sid ?? "new"} draftKey={sid ?? "new"} running={running} vision={!!model?.vision} onStop={() => sid && a.stop(sid)} onFiles={a.addFiles} onSend={(content, fileIds) => turn({ content, fileIds })} disabled={!modelId} hint={awaitingObservation ? "O que estava ruim nesta simulação? Conte o que o Goga deveria ter feito, cole um texto ou anexe um arquivo para virar conhecimento…" : undefined} />
     </>
   );
 }
@@ -143,6 +147,8 @@ function Conversation({
 }
 
 function UserBubble({ m, files }: { m: AMessage; files: Map<string, AFile> }) {
+  const sim = m.parts.find((p): p is Extract<Part, { type: "simulation" }> => p.type === "simulation");
+  if (sim) return <SimulationContext sim={sim} m={m} files={files} />;
   return (
     <div className="group flex flex-col items-end gap-1.5">
       {m.attachments.length > 0 && (
@@ -156,6 +162,39 @@ function UserBubble({ m, files }: { m: AMessage; files: Map<string, AFile> }) {
       <div className="opacity-0 transition-opacity group-hover:opacity-100">
         <CopyButton text={m.content} title="Copiar mensagem" />
       </div>
+    </div>
+  );
+}
+
+/** Log de uma simulacao enviado pelo botao "Discutir com o assistente" do Simulador. */
+function SimulationContext({ sim, m, files }: { sim: Extract<Part, { type: "simulation" }>; m: AMessage; files: Map<string, AFile> }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-3 text-xs">
+      <div className="flex items-start gap-2">
+        <FlaskConical className="mt-0.5 h-4 w-4 shrink-0 text-blue-300" />
+        <div className="min-w-0 flex-1">
+          <div className="text-[0.66rem] tracking-wider text-blue-300/80 uppercase">{sim.atualizacao ? "Atualização da simulação" : "Simulação enviada ao assistente"}</div>
+          <div className="mt-0.5 truncate text-sm">{sim.titulo}</div>
+          <div className="mt-0.5 text-text-muted">
+            {sim.atualizacao ? `${sim.interacoes} interação(ões) nova(s)` : `${sim.interacoes} de ${sim.total} interação(ões)`} · {sim.fluxo} · {dateTime(m.createdAt)}
+          </div>
+          <div className="mt-1.5 flex items-center gap-3">
+            <button className="inline-flex items-center gap-0.5 text-text-dim hover:text-text-muted" onClick={() => setOpen((o) => !o)}>
+              {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />} {open ? "ocultar o que foi enviado" : "ver o que foi enviado"}
+            </button>
+            <Link to={`/simulator/${sim.sessaoId}`} className="text-text-dim hover:text-text-muted">abrir no simulador</Link>
+          </div>
+        </div>
+      </div>
+      {m.attachments.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {m.attachments.map((id) => (
+            <Attachment key={id} f={files.get(id) ?? { id, name: "arquivo", mime: "", size: 0 }} />
+          ))}
+        </div>
+      )}
+      {open && <div className="mt-2 max-h-96 overflow-auto rounded border border-line bg-ink-950 p-2.5"><Markdown text={sim.resumo} /></div>}
     </div>
   );
 }
@@ -241,7 +280,9 @@ function Composer({
   onStop,
   onFiles,
   onSend,
+  hint,
 }: {
+  hint?: string;
   draftKey: string;
   running: boolean;
   vision: boolean;
@@ -252,6 +293,9 @@ function Composer({
 }) {
   const input = useRef<HTMLInputElement>(null);
   const area = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (hint) area.current?.focus();
+  }, [hint]);
   // Rascunho (texto e anexos ainda nao enviados) sobrevive a troca de tela e a recarga.
   const storageKey = `assistant-draft:${draftKey}`;
   const saved = useMemo(() => {
@@ -355,9 +399,9 @@ function Composer({
                 send();
               }
             }}
-            placeholder={disabled ? "Nenhum modelo utilizável — cadastre uma chave em Provedores e modelos." : "Peça um ajuste, uma análise ou cole um texto… (Enter envia, Shift+Enter quebra linha)"}
+            placeholder={disabled ? "Nenhum modelo utilizável — cadastre uma chave em Provedores e modelos." : hint ?? "Peça um ajuste, uma análise ou cole um texto… (Enter envia, Shift+Enter quebra linha)"}
+            rows={hint ? 3 : 1}
             className="max-h-60 min-h-9 resize-none border-0 bg-transparent px-1 py-1.5 text-[0.86rem] shadow-none focus-visible:ring-0"
-            rows={1}
           />
           {running ? (
             <Button size="icon" variant="outline" className="h-8 w-8 shrink-0" title="Parar" onClick={onStop}>

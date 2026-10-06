@@ -37,3 +37,10 @@ novo baixa o digest atual da tag.
 {{- define "goga.rollout" -}}
 goga/rollout: {{ now | unixEpoch | quote }}
 {{- end -}}
+
+{{/* map → "k=v,k2=v2", para variavel de ambiente que o kb-api le como lista. */}}
+{{- define "goga.kv" -}}
+{{- $pares := list -}}
+{{- range $k, $v := . }}{{- $pares = append $pares (printf "%s=%s" $k $v) -}}{{- end -}}
+{{- join "," $pares -}}
+{{- end -}}

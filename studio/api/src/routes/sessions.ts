@@ -4,14 +4,15 @@ import { z } from "zod";
 import { db, schema } from "../db/index.js";
 import { requireUser } from "../lib/auth.js";
 import { badRequest, notFound } from "../lib/errors.js";
-import { saveFile, readFileStream } from "../files/storage.js";
-import { extractText } from "../files/extract.js";
+import { readFileStream, saveUpload } from "../files/storage.js";
+import { extractFile } from "../files/extract.js";
+import { config } from "../config.js";
 import { startTurn } from "../engine/run.js";
 import { channel, hasChannel } from "../engine/tracer.js";
 import { runTranscript, sessionTranscript } from "../engine/transcript.js";
 import type { RunEvent, SpanRecord } from "../shared/graph.js";
 
-const MAX_UPLOAD = 25 * 1024 * 1024;
+const MAX_UPLOAD = config.maxAttachMb * 1024 * 1024;
 const ALLOWED = /^(application\/pdf|application\/vnd\.openxmlformats-officedocument\.wordprocessingml\.document|text\/.*|image\/(png|jpe?g|webp))$/;
 
 export async function sessionRoutes(app: FastifyInstance) {
@@ -89,11 +90,16 @@ export async function sessionRoutes(app: FastifyInstance) {
     const s = await ownSession(req.params.id, me.id);
     const part = await req.file({ limits: { fileSize: MAX_UPLOAD } });
     if (!part) throw badRequest("nenhum arquivo enviado");
-    const data = await part.toBuffer();
     const mime = part.mimetype === "application/octet-stream" && part.filename.toLowerCase().endsWith(".docx") ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document" : part.mimetype;
-    if (!ALLOWED.test(mime)) throw badRequest(`tipo de arquivo não aceito: ${mime} (PDF, DOCX, imagem ou texto)`);
-    const ex = await extractText(data, mime, part.filename, me.id);
-    const f = await saveFile({ sessionId: s.id, direction: "in", name: part.filename, mime, data, extractedText: ex.text });
+    if (!ALLOWED.test(mime)) {
+      part.file.resume();
+      throw badRequest(`tipo de arquivo não aceito: ${mime} (PDF, DOCX, imagem ou texto)`);
+    }
+    // Grava em streaming e extrai o texto a partir do disco: anexo de centenas
+    // de MB nao passa inteiro pela memoria do pod.
+    const f = await saveUpload(part, { sessionId: s.id, mime }, MAX_UPLOAD);
+    const ex = await extractFile(f, mime, part.filename, me.id);
+    await db.update(schema.file).set({ extractedText: ex.text }).where(eq(schema.file.id, f.id));
     return { file: { id: f.id, name: f.name, mime: f.mime, size: f.size, direction: "in", extractedChars: ex.text.length, method: ex.method, warning: ex.warning } };
   });
 

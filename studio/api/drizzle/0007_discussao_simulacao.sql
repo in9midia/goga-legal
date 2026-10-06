@@ -1,0 +1,2 @@
+ALTER TABLE "assistant_session" ADD COLUMN "sim_session_id" uuid;--> statement-breakpoint
+ALTER TABLE "assistant_session" ADD CONSTRAINT "assistant_session_sim_session_id_session_id_fk" FOREIGN KEY ("sim_session_id") REFERENCES "public"."session"("id") ON DELETE set null ON UPDATE no action;

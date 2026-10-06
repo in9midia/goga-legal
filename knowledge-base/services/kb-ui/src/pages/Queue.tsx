@@ -88,7 +88,8 @@ export function QueuePage() {
   if (fila.error) return <ErrorBox>{(fila.error as Error).message}</ErrorBox>;
   if (!fila.data) return null;
 
-  const { active, recent, counts_24h: contagem } = fila.data;
+  const { active, recent, counts_24h: contagem, executor } = fila.data;
+  const emPod = executor?.mode === 'pod';
   const rodando = active.filter((r) => r.status === 'running');
   const esperando = active.filter((r) => r.status === 'queued');
   const alternar = (id: number) => setAberto((atual) => (atual === id ? null : id));
@@ -96,9 +97,24 @@ export function QueuePage() {
   return (
     <>
       <PageHeader title="Fila de ingestão">
-        Todo arquivo enviado entra aqui e é processado <strong>um por vez</strong>, de todas as
-        bases. Abra um documento para ver o log do que foi feito nele.
+        {emPod ? (
+          <>
+            Todo arquivo enviado entra aqui, de todas as bases, e cada um é processado{' '}
+            <strong>num pod próprio do cluster</strong>, até{' '}
+            <strong>{executor?.max_parallel}</strong> ao mesmo tempo.
+          </>
+        ) : (
+          <>
+            Todo arquivo enviado entra aqui e é processado <strong>um por vez</strong>, de todas as
+            bases.
+          </>
+        )}{' '}
+        Abra um documento para ver o log do que foi feito nele.
       </PageHeader>
+
+      {emPod && executor?.error ? (
+        <ErrorBox>Não consegui iniciar pods de ingestão: {executor.error}</ErrorBox>
+      ) : null}
 
       <Card className="mb-4 px-5 py-4">
         <Metrics>
@@ -128,6 +144,11 @@ export function QueuePage() {
                 <Loader2 size={14} className="animate-spin text-amber" />
                 <strong className="min-w-0 flex-1 break-words text-[14px]">{run.filename}</strong>
                 <code className="text-[12px] text-text-dim">{run.space}</code>
+                {run.worker ? (
+                  <Pill tone="neutral" title="Job do Kubernetes que está processando este arquivo">
+                    {run.worker}
+                  </Pill>
+                ) : null}
                 {run.attempts > 1 ? (
                   <Pill tone="warn" title="o serviço caiu com este arquivo e ele foi retomado">
                     tentativa {run.attempts}

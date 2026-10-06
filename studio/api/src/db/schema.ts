@@ -375,6 +375,10 @@ export const assistantSession = pgTable("assistant_session", {
     .references(() => appUser.id, { onDelete: "cascade" }),
   title: text("title").notNull().default("Nova conversa"),
   modelId: uuid("model_id").references(() => model.id, { onDelete: "set null" }),
+  // Discussao aberta a partir de uma conversa do Simulador ("Discutir com o
+  // assistente"): o log dela entra como contexto e novas interacoes sao
+  // acrescentadas quando o botao e usado de novo.
+  simSessionId: uuid("sim_session_id").references(() => chatSession.id, { onDelete: "set null" }),
   createdAt: createdAt(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

@@ -9,7 +9,8 @@ import { readFileData, saveUpload } from "../files/storage.js";
 import { config } from "../config.js";
 import { extractText } from "../files/extract.js";
 import { errorMessage } from "../engine/tracer.js";
-import { publicMessage, runAssistantTurn, type TurnEvent } from "../assistant/agent.js";
+import { IMAGE_REF, publicMessage, runAssistantTurn, type Part, type TurnEvent } from "../assistant/agent.js";
+import { simulationDigest } from "../engine/transcript.js";
 import { isBusy, liveTurn, startLiveTurn } from "../assistant/live.js";
 import { credentialsOf } from "../assistant/tools.js";
 
@@ -67,6 +68,52 @@ export async function assistantRoutes(app: FastifyInstance) {
     const modelId = b.data.modelId ?? (await defaultModelId("chat"));
     const [s] = await db.insert(schema.assistantSession).values({ userId: me.id, modelId }).returning();
     return { session: s };
+  });
+
+  // "Discutir com o assistente" (Simulador): abre (ou retoma) a discussao da
+  // simulacao e grava o log dela como contexto. Nao roda turno: o assistente
+  // espera a primeira observacao do usuario. Chamado de novo, acrescenta so as
+  // interacoes que ainda nao foram enviadas.
+  app.post("/api/v1/assistant/sessions/from-simulation", async (req) => {
+    const me = requireUser(req);
+    const b = z.object({ simSessionId: z.string().uuid(), modelId: z.string().uuid().nullable().optional(), nova: z.boolean().default(false) }).safeParse(req.body);
+    if (!b.success) throw badRequest("dados inválidos", b.error.issues);
+    const [sim] = await db.select().from(schema.chatSession).where(and(eq(schema.chatSession.id, b.data.simSessionId), eq(schema.chatSession.userId, me.id)));
+    if (!sim) throw notFound("conversa do simulador");
+
+    let [s] = b.data.nova
+      ? []
+      : await db
+          .select()
+          .from(schema.assistantSession)
+          .where(and(eq(schema.assistantSession.userId, me.id), eq(schema.assistantSession.simSessionId, sim.id)))
+          .orderBy(desc(schema.assistantSession.updatedAt))
+          .limit(1);
+    const isNew = !s;
+    if (s && isBusy(s.id)) throw conflict("o assistente ainda está respondendo nesta discussão; espere terminar para enviar a simulação atualizada");
+    if (!s) {
+      const modelId = b.data.modelId ?? (await defaultModelId("chat"));
+      [s] = await db.insert(schema.assistantSession).values({ userId: me.id, modelId, simSessionId: sim.id, title: `Simulação: ${sim.title}`.slice(0, 70) }).returning();
+    }
+
+    const prior = await db.select({ parts: schema.assistantMessage.parts }).from(schema.assistantMessage).where(eq(schema.assistantMessage.sessionId, s.id));
+    const sent = new Set(prior.flatMap((m) => (m.parts as Part[]).flatMap((p) => (p.type === "simulation" ? p.runIds : []))));
+    const digest = await simulationDigest(sim.id, sent);
+    if (!digest) throw notFound("conversa do simulador");
+    if (!digest.interactions) return { session: s, novo: isNew, enviadas: 0 };
+
+    const files = digest.fileIds.length ? await db.select({ id: schema.file.id, mime: schema.file.mime }).from(schema.file).where(inArray(schema.file.id, digest.fileIds)) : [];
+    const intro = isNew
+      ? `[Contexto enviado pelo Studio — botão "Discutir com o assistente" no Simulador]\nO usuário quer avaliar com você onde o fluxo foi mal nesta simulação e como melhorá-lo. Abaixo está o log. A próxima mensagem dele traz a primeira observação: parta dela.`
+      : `[Atualização enviada pelo Studio — novas interações da mesma simulação desde o último envio]`;
+    const content = [
+      { type: "text" as const, text: `${intro}\n\n${digest.text}` },
+      ...files.filter((f) => f.mime.startsWith("image/")).map((f) => ({ type: "image" as const, image: `${IMAGE_REF}${f.id}`, mediaType: f.mime })),
+    ];
+    const part: Part = { type: "simulation", sessaoId: sim.id, titulo: digest.title, fluxo: digest.flow, interacoes: digest.interactions, total: digest.totalInteractions, atualizacao: !isNew, runIds: digest.runIds, resumo: digest.text };
+    await db.insert(schema.assistantMessage).values({ sessionId: s.id, role: "user", content: "", parts: [part], attachments: digest.fileIds, llm: [{ role: "user", content }] });
+    await db.update(schema.assistantSession).set({ updatedAt: new Date() }).where(eq(schema.assistantSession.id, s.id));
+    return { session: s, novo: isNew, enviadas: digest.interactions };
   });
 
   app.get<{ Params: { id: string } }>("/api/v1/assistant/sessions/:id", async (req) => {

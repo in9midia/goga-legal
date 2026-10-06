@@ -82,6 +82,22 @@ kb:
     resources:
       requests: { cpu: 20m, memory: 32Mi }
       limits: { cpu: 500m, memory: 128Mi }
+  # Onde a fila de ingestao processa cada arquivo (ADR-0031 da KB).
+  #   local  a thread dentro do kb-api, um arquivo por vez (padrao)
+  #   pod    um Job por arquivo, criado sob demanda pelo kb-api, ate
+  #          maxParallel ao mesmo tempo. Cria a Role que deixa o kb-api
+  #          criar/apagar Job neste namespace.
+  # Cada pod e um docling inteiro: maxParallel x resources.requests.memory
+  # tem de caber no que sobra dos nos, senao os Jobs ficam Pending ate
+  # deadlineSeconds e o arquivo gasta uma tentativa.
+  ingest:
+    mode: local
+    maxParallel: 2
+    deadlineSeconds: 7200
+    nodeSelector: {}
+    resources:
+      requests: { cpu: 500m, memory: 1Gi }
+      limits: { cpu: "2", memory: 4Gi }
 
 studio:
   adminEmail: admin@goga.legal

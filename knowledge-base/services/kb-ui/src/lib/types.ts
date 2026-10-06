@@ -934,12 +934,25 @@ export type QueueRun = {
   children: number;
   /** Só nas `queued`: 1 = a próxima a ser processada. */
   position?: number;
+  /** Nome do Job em modo pod; vazio = a thread do kb-api. */
+  worker?: string;
+};
+
+/** Onde a fila processa: `local` (thread do kb-api, um por vez) ou `pod`
+ *  (um Job do Kubernetes por arquivo, até `max_parallel`). */
+export type IngestExecutor = {
+  mode: 'local' | 'pod';
+  max_parallel: number;
+  active_pods?: number;
+  /** Último problema do dispatcher (sem permissão, imagem ausente...). */
+  error?: string;
 };
 
 export type IngestQueue = {
   active: QueueRun[];
   recent: QueueRun[];
   counts_24h: Partial<Record<IngestRun['status'], number>>;
+  executor?: IngestExecutor;
 };
 
 export type IngestEvent = {

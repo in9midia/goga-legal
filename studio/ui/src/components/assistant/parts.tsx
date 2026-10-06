@@ -17,7 +17,8 @@ export type Part =
   | { type: "ask"; id: string; pergunta: string; opcoes: { rotulo: string; descricao?: string }[]; multipla: boolean; permitirOutro: boolean; status: "pending" | "answered" | "skipped"; resposta?: string[] }
   | { type: "approval"; id: string; name: string; input: unknown; resumo: string; status: "pending" | "approved" | "denied" | "skipped"; output?: string; error?: string }
   | { type: "display"; id: string; input: DisplayInput }
-  | { type: "error"; text: string };
+  | { type: "error"; text: string }
+  | { type: "simulation"; sessaoId: string; titulo: string; fluxo: string; interacoes: number; total: number; atualizacao: boolean; runIds: string[]; resumo: string };
 
 export interface DisplayInput {
   tipo: "imagem" | "fluxo" | "tabela" | "grafico";
@@ -68,6 +69,8 @@ const TOOL_LABEL: Record<string, string> = {
   analisar_execucao: "Leu a transcrição da execução",
   listar_conversas_simuladas: "Listou conversas do simulador",
   ler_conversa_simulada: "Leu a conversa do simulador",
+  reproduzir_simulacao: "Reproduziu a simulação",
+  registrar_conhecimento_kb: "Registrar conhecimento na KB",
   consultar_auditoria: "Consultou a auditoria",
   ler_registro_auditoria: "Leu registro de auditoria",
   consultar_custos: "Consultou custos",
@@ -210,6 +213,7 @@ export function ApprovalCard({ part, active, onDecide }: { part: Extract<Part, {
         <div className="min-w-0 flex-1">
           <div className="text-[0.7rem] tracking-wider text-amber-300/80 uppercase">{TOOL_LABEL[part.name] ?? part.name} · requer aprovação</div>
           <div className="mt-0.5 text-sm">{part.resumo}</div>
+          {part.name === "registrar_conhecimento_kb" && <Block label={`texto a registrar · ${(part.input as { titulo?: string }).titulo ?? ""}`} text={String((part.input as { conteudo?: string }).conteudo ?? "")} />}
           <button className="mt-1 text-[0.7rem] text-text-dim hover:text-text-muted" onClick={() => setOpen((o) => !o)}>
             {open ? "ocultar detalhes" : "ver detalhes"}
           </button>
