@@ -573,6 +573,7 @@ def _ingest_document(
     # Depois do commit: antes dele, uma falha na gravacao ainda precisa do
     # ponto de retomada.
     retomada.limpar(space_slug, content_sha)
+    retomada.docling_limpar(content_sha)
 
     # --- 5. grafo, auxiliar ---
     #

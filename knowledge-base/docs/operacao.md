@@ -785,6 +785,16 @@ de OCR ou de leitura de tabela vão ao docling, então um livro digital de mil
 páginas extrai em segundos. O extrator do documento aparece como
 `pymupdf+docling` (ou `pymupdf`, quando nenhuma página precisou).
 
+PDF escaneado que **já tem camada de texto** (o OCR foi feito por quem gerou o
+arquivo) sai pelo PyMuPDF como um PDF digital: a imagem que cobre a página
+inteira é o fundo, e não conta como figura na triagem.
+
+PDF **escaneado sem texto** (a maior parte das páginas sem texto) não passa pelo docling:
+cada página vai direto ao tesseract, e o log diz "N págs escaneadas direto pelo
+tesseract". O extrator aparece como `pymupdf+tesseract`. Se a ingestão cair no
+meio (memória, prazo do Job), a próxima tentativa continua do lote em que
+parou, em vez de recomeçar da página 1 (ADR-0032).
+
 Todo documento tem um **log**, que se abre na linha: cada troca de etapa e cada
 marco (cada lote do docling, cada 10% do embedding e do grafo), com hora e
 percentual. Execuções anteriores à fila não têm log detalhado.

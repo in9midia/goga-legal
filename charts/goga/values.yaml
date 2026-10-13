@@ -72,6 +72,11 @@ kb:
     KB_CANDIDATE_POOL: "40"
     KB_RRF_K: "60"
     KB_EMBEDDING_DIM: "3072"
+    # glibc cria uma arena de malloc por thread, e o docling (torch + pdfium)
+    # devolve pouco ao sistema entre um lote e outro. Duas arenas e o valor
+    # usual para servico Python com torch; vale para o kb-api e para os Jobs de
+    # ingestao, que leem este mesmo ConfigMap.
+    MALLOC_ARENA_MAX: "2"
   api:
     # O no tem ~6,3Gi alocaveis; o docling de PDF grande pode pedir mais. Se o
     # pod morrer OOMKilled na ingestao, suba o no (shape) antes do limite.
@@ -90,14 +95,19 @@ kb:
   # Cada pod e um docling inteiro: maxParallel x resources.requests.memory
   # tem de caber no que sobra dos nos, senao os Jobs ficam Pending ate
   # deadlineSeconds e o arquivo gasta uma tentativa.
+  # No OKE o modo e pod desde 2026-10-13: um livro escaneado no modo local foi
+  # OOMKilled 79 vezes dentro do kb-api, e a busca caia junto.
   ingest:
-    mode: local
-    maxParallel: 2
+    mode: pod
+    # O cluster tem um no so (1,8 CPU, 6,4 Gi): um Job por vez.
+    maxParallel: 1
     deadlineSeconds: 7200
     nodeSelector: {}
     resources:
       requests: { cpu: 500m, memory: 1Gi }
-      limits: { cpu: "2", memory: 4Gi }
+      # 1 CPU, e nao 2: o no tem 1,8, e com 2 o OCR do Job deixava a busca do
+      # kb-api passando de 30 s (64 buscas com timeout entre 06 e 13/10).
+      limits: { cpu: "1", memory: 4Gi }
 
 studio:
   adminEmail: admin@goga.legal

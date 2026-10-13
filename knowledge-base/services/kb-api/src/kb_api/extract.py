@@ -20,16 +20,22 @@ tecnicas ser possivel depois (FUN-04).
 
 from __future__ import annotations
 
+import hashlib
+import importlib.util
 import io
 import logging
+import multiprocessing as mp
 import re
 import subprocess
+import tempfile
 import threading
 import time
+from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import okf, progresso
+from . import okf, progresso, retomada
 from .config import settings
 
 log = logging.getLogger(__name__)
@@ -224,13 +230,17 @@ def _page_count(document) -> int:
         return 0
 
 
-def _docling_markdown(document) -> tuple[str, int]:
-    """Markdown do documento COM marca de pagina.
+def _paginas_do_documento(document) -> tuple[dict[int, str], str, int]:
+    """Corpo de cada pagina do documento, para o canonico ter marca de pagina.
 
     O `export_to_markdown()` inteiro nao diz onde uma pagina termina, e sem isso
     nao ha como levar quem pergunta ate a pagina certa do original -- so ate o
     arquivo. Exportar pagina por pagina resolve, e o custo e uma passada a mais
     sobre uma arvore que ja esta em memoria.
+
+    Devolve `(paginas, inteiro, total)`: `paginas` vazio quando o formato nao tem
+    paginacao ou a versao do docling nao exporta por pagina, e ai `inteiro` traz
+    o documento todo, sem marca.
 
     `escape_html=False` de proposito: com o default, `GH & VOCE` era gravado no
     canonico como `GH &amp; VOCE`, e a entidade aparecia crua no titulo e na
@@ -238,21 +248,27 @@ def _docling_markdown(document) -> tuple[str, int]:
     """
     total = _page_count(document)
     if total <= 0:
-        return _clean(document.export_to_markdown(escape_html=False)), 0
+        return {}, document.export_to_markdown(escape_html=False), 0
 
     # As chaves de `pages` sao os numeros ORIGINAIS: convertido com
     # `page_range=(41, 80)`, o documento tem as paginas 41..80, nao 1..40.
-    parts: list[str] = []
+    paginas: dict[int, str] = {}
     for page in sorted(document.pages):
         try:
-            body = document.export_to_markdown(page_no=page, escape_html=False)
+            paginas[page] = document.export_to_markdown(page_no=page, escape_html=False).strip()
         except Exception as exc:  # noqa: BLE001 - versao sem page_no
             log.info("docling sem exportacao por pagina (%s); canonico sem marca", exc)
-            return _clean(document.export_to_markdown(escape_html=False)), total
-        body = body.strip()
-        if body:
-            parts.append(f"{PAGE_MARK.format(page=page)}\n{body}")
-    return _clean("\n\n".join(parts)), total
+            return {}, document.export_to_markdown(escape_html=False), total
+    return paginas, "", total
+
+
+def _markdown_do_lote(lote: LoteDocling) -> str:
+    if not lote.paginas:
+        return _clean(lote.inteiro)
+    return _clean("\n\n".join(
+        f"{PAGE_MARK.format(page=page)}\n{corpo}"
+        for page, corpo in sorted(lote.paginas.items()) if corpo
+    ))
 
 
 def _ocr_image(data: bytes) -> str:
@@ -281,11 +297,14 @@ def _ocr_image(data: bytes) -> str:
     return _clean(result.stdout.decode("utf-8", "replace"))
 
 
-def _docling_figures(document, anteriores: list[Figure] | None = None) -> list[Figure]:
+def _docling_figures(document, ja: int = 0, bytes_anteriores: int = 0) -> list[Figure]:
     """Figuras do documento, cada uma com legenda e texto lido por OCR.
 
-    `anteriores` sao as figuras dos lotes de paginas ja convertidos: os tetos
-    (quantidade e bytes) valem para o DOCUMENTO, e a numeracao continua.
+    `ja` e `bytes_anteriores` resumem as figuras dos lotes de paginas ja
+    convertidos: os tetos (quantidade e bytes) valem para o DOCUMENTO, e a
+    numeracao continua. Contadores, e nao a lista, porque o lote roda num
+    processo filho e mandar as figuras anteriores para ele seria copiar PNG a
+    toa.
     """
     if not settings.figures_enabled:
         return []
@@ -294,9 +313,8 @@ def _docling_figures(document, anteriores: list[Figure] | None = None) -> list[F
     except Exception:  # noqa: BLE001
         return []
 
-    ja = len(anteriores or [])
     figures: list[Figure] = []
-    total_bytes = sum(len(f.data) for f in anteriores or [])
+    total_bytes = bytes_anteriores
     for item, _level in document.iterate_items():
         if not isinstance(item, PictureItem):
             continue
@@ -399,28 +417,197 @@ def _figure_block(figura: Figure) -> str:
     return "\n".join(linhas)
 
 
-def _docling(data: bytes, filename: str) -> Extracted | None:
+# ── um lote do docling ─────────────────────────────────────────────────────
+#
+# O docling converte PDF longo em lotes de `KB_DOCLING_PAGE_BATCH` paginas. Ate
+# aqui os lotes rodavam todos no mesmo processo, e isso tinha dois custos que se
+# somavam num livro escaneado:
+#
+# - a memoria crescia de um lote para o outro, mesmo soltando o resultado. A
+#   Novissima Gramatica (livro escaneado, OCR em toda pagina) chegou a 3,5 GiB
+#   no terceiro lote do Job e foi OOMKilled em todas as tentativas;
+# - cada tentativa recomecava da pagina 1. No kb-api, o mesmo livro rodou ~2h20
+#   ate as paginas 321-360, morreu, e recomecou -- 45 vezes, por uma semana,
+#   disputando CPU com a busca.
+#
+# Agora cada lote roda num processo filho que sai no fim (o sistema recebe de
+# volta tudo o que torch e pdfium seguravam) e o resultado de cada lote fica
+# gravado no object store (`retomada.docling_*`), entao a proxima tentativa so
+# converte o que falta. Lote cujo filho morre e dividido ao meio e tentado de
+# novo: o pico de memoria acompanha o tamanho do lote.
+
+
+@dataclass
+class LoteDocling:
+    """O que sai de um lote: so dados, para atravessar processo e ir ao pickle."""
+
+    # Corpo de cada pagina, com os `<!-- image -->` do docling ainda no lugar
+    # (quem monta o canonico decide onde as figuras entram).
+    paginas: dict[int, str]
+    # Documento inteiro sem marca de pagina, quando `paginas` vem vazio.
+    inteiro: str
+    total: int
+    figures: list[Figure]
+
+
+class LoteMorreu(RuntimeError):
+    """O processo do lote saiu sem resposta. Quase sempre e o OOM killer."""
+
+
+def _converter_lote(
+    data: bytes, filename: str, faixa: tuple[int, int] | None, ja: int, bytes_anteriores: int,
+) -> LoteDocling:
+    from docling.datamodel.base_models import DocumentStream
+
+    converter = _docling_converter()
+    stream = DocumentStream(name=filename, stream=io.BytesIO(data))
+    if faixa is None:
+        result = converter.convert(stream)
+    else:
+        result = converter.convert(stream, page_range=faixa)
+    document = result.document
+    figures = _docling_figures(document, ja, bytes_anteriores)
+    paginas, inteiro, total = _paginas_do_documento(document)
+    del result, document
+    return LoteDocling(paginas=paginas, inteiro=inteiro, total=total, figures=figures)
+
+
+def _lote_no_filho(
+    caminho: str, filename: str, faixa: tuple[int, int] | None, ja: int, bytes_anteriores: int,
+) -> LoteDocling:
+    """Entrada do processo filho. Le o bruto do disco: mandar um livro de
+    dezenas de MB pelo pipe a cada lote custaria uma copia por lote."""
+    # O filho nasce sem a configuracao de log do pai (`spawn` nao herda), e sem
+    # isso o progresso do docling sumia do log do pod.
+    logging.basicConfig(
+        level=getattr(logging, settings.log_level.upper(), logging.INFO),
+        format="%(asctime)s %(levelname)-7s %(name)s | %(message)s",
+    )
+    logging.getLogger("docling.models.stages.ocr.tesseract_ocr_cli_model").setLevel(
+        logging.CRITICAL
+    )
+    return _converter_lote(Path(caminho).read_bytes(), filename, faixa, ja, bytes_anteriores)
+
+
+def _assinatura_docling() -> str:
+    """O que muda o resultado de um lote. Lote gravado com outra configuracao
+    de OCR ou de figuras nao e reaproveitado."""
     try:
-        from docling.datamodel.base_models import DocumentStream
-    except Exception as exc:  # noqa: BLE001 - ausencia da lib e caso esperado
-        log.info("docling indisponivel (%s); usando o extrator seguinte", exc)
+        from importlib.metadata import version
+
+        versao = version("docling")
+    except Exception:  # noqa: BLE001
+        versao = ""
+    return retomada.assinatura({
+        "docling": versao,
+        "ocr": settings.ocr_enabled,
+        "ocr_force": settings.ocr_force_full_page,
+        "ocr_idiomas": settings.ocr_languages,
+        "ocr_psm": settings.ocr_psm,
+        "figuras": settings.figures_enabled,
+        "figura_escala": settings.figure_scale,
+        "max_figuras": settings.max_figures_per_document,
+        "max_figura_bytes": settings.max_figure_bytes,
+        "max_figuras_bytes": settings.max_figures_total_bytes,
+    })
+
+
+class _Conversor:
+    """Os lotes de UM documento: retomada, processo filho e divisao ao morrer."""
+
+    def __init__(self, data: bytes, filename: str) -> None:
+        self.data = data
+        self.filename = filename
+        self.sha = hashlib.sha256(data).hexdigest()
+        self.assinatura = _assinatura_docling()
+        self._caminho: str | None = None
+
+    def __enter__(self) -> _Conversor:
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        if self._caminho:
+            Path(self._caminho).unlink(missing_ok=True)
+
+    def lotes(
+        self, faixa: tuple[int, int] | None, ja: int, bytes_anteriores: int,
+    ) -> list[tuple[tuple[int, int] | None, LoteDocling]]:
+        """Os lotes que cobrem `faixa`: um, ou mais se o filho morreu e ela foi
+        dividida. Cada um com a faixa que de fato cobre."""
+        pronto = retomada.docling_carregar(self.sha, self.assinatura, faixa, ja)
+        if pronto is not None:
+            log.info("docling %s: paginas %s ja convertidas numa tentativa anterior",
+                     self.filename, "todas" if faixa is None else f"{faixa[0]}-{faixa[1]}")
+            return [(faixa, pronto)]
+        try:
+            lote = self._converter(faixa, ja, bytes_anteriores)
+        except LoteMorreu:
+            if faixa is None or faixa[0] == faixa[1]:
+                raise
+            meio = (faixa[0] + faixa[1]) // 2
+            log.warning("docling %s: o processo das paginas %s-%s morreu; dividindo em "
+                        "%s-%s e %s-%s", self.filename, *faixa, faixa[0], meio, meio + 1, faixa[1])
+            primeira = self.lotes((faixa[0], meio), ja, bytes_anteriores)
+            novas = [f for _, lote in primeira for f in lote.figures]
+            segunda = self.lotes(
+                (meio + 1, faixa[1]), ja + len(novas),
+                bytes_anteriores + sum(len(f.data) for f in novas),
+            )
+            return primeira + segunda
+        retomada.docling_gravar(self.sha, self.assinatura, faixa, ja, lote)
+        return [(faixa, lote)]
+
+    def _converter(
+        self, faixa: tuple[int, int] | None, ja: int, bytes_anteriores: int,
+    ) -> LoteDocling:
+        if not settings.docling_isolar_lote:
+            return _converter_lote(self.data, self.filename, faixa, ja, bytes_anteriores)
+        if self._caminho is None:
+            with tempfile.NamedTemporaryFile(suffix=Path(self.filename).suffix,
+                                             delete=False) as arquivo:
+                arquivo.write(self.data)
+                self._caminho = arquivo.name
+        # `spawn`, e nao `fork`: o pai e o uvicorn (ou o Job) com threads vivas,
+        # e `fork` com thread viva copia lock travado para o filho. Um executor
+        # por lote = um processo por lote; reaproveitar o processo traria de
+        # volta o acumulo de memoria que isto existe para evitar.
+        with ProcessPoolExecutor(max_workers=1, mp_context=mp.get_context("spawn")) as executor:
+            futuro = executor.submit(
+                _lote_no_filho, self._caminho, self.filename, faixa, ja, bytes_anteriores
+            )
+            try:
+                return futuro.result()
+            except BrokenProcessPool:
+                raise LoteMorreu(
+                    f"o processo do docling morreu nas paginas {faixa} (provavelmente memoria)"
+                ) from None
+
+
+def _docling_disponivel() -> bool:
+    # `find_spec`, e nao import: no modo isolado o pai nunca carrega o docling, e
+    # importar so para testar puxaria torch para a memoria do kb-api.
+    try:
+        return importlib.util.find_spec("docling") is not None
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _docling(data: bytes, filename: str) -> Extracted | None:
+    if not _docling_disponivel():
+        log.info("docling indisponivel; usando o extrator seguinte")
         return None
 
     try:
         # Um docling por vez no processo. Dois uploads simultaneos de livro
         # somavam dois picos de memoria e o pod era OOMKilled com os dois.
-        with _DOCLING_LOCK:
-            converter = _docling_converter()
+        with _DOCLING_LOCK, _Conversor(data, filename) as conversor:
             markdowns: list[str] = []
             figures: list[Figure] = []
             pages = 0
             faixas = _faixas_de_pagina(data, filename)
             ultima = faixas[-1][1] if faixas[-1] is not None else 0
             for n, faixa in enumerate(faixas):
-                stream = DocumentStream(name=filename, stream=io.BytesIO(data))
-                if faixa is None:
-                    result = converter.convert(stream)
-                else:
+                if faixa is not None:
                     log.info("docling %s: paginas %s-%s", filename, *faixa)
                     # Antes do lote, e nao depois: o lote leva minutos, e a
                     # tela precisa dizer QUAL faixa esta em curso.
@@ -429,15 +616,12 @@ def _docling(data: bytes, filename: str) -> Extracted | None:
                         f"docling: páginas {faixa[0]}-{faixa[1]} de {ultima}",
                         marco_a_cada=0,
                     )
-                    result = converter.convert(stream, page_range=faixa)
-                parte, n = _docling_markdown(result.document)
-                novas = _docling_figures(result.document, figures)
-                markdowns.append(_attach_figures(parte, novas))
-                figures.extend(novas)
-                pages += n
-                # Solta o documento do lote antes de converter o proximo: e
-                # isso que limita o pico de memoria ao tamanho de um lote.
-                del result
+                for _coberta, lote in conversor.lotes(
+                    faixa, len(figures), sum(len(f.data) for f in figures)
+                ):
+                    markdowns.append(_attach_figures(_markdown_do_lote(lote), lote.figures))
+                    figures.extend(lote.figures)
+                    pages += lote.total
         markdown = _clean("\n\n".join(m for m in markdowns if m))
     except Exception as exc:  # noqa: BLE001 - arquivo protegido, corrompido etc.
         log.warning("docling falhou em %s: %s", filename, exc)
@@ -460,35 +644,32 @@ def docling_paginas(
     paginas que precisam dele. As chaves sao os numeros originais das paginas.
     `None` = docling indisponivel ou falhou; quem chama decide o plano B.
     """
-    try:
-        from docling.datamodel.base_models import DocumentStream
-    except Exception as exc:  # noqa: BLE001 - ausencia da lib e caso esperado
-        log.info("docling indisponivel (%s)", exc)
+    if not _docling_disponivel():
+        log.info("docling indisponivel")
         return None
 
     paginas: dict[int, str] = {}
     figures: list[Figure] = []
     try:
-        with _DOCLING_LOCK:
-            converter = _docling_converter()
+        with _DOCLING_LOCK, _Conversor(data, filename) as conversor:
             for n, faixa in enumerate(faixas):
                 if ao_iniciar_faixa:
                     ao_iniciar_faixa(n, faixa)
-                stream = DocumentStream(name=filename, stream=io.BytesIO(data))
-                result = converter.convert(stream, page_range=faixa)
-                document = result.document
-                novas = _docling_figures(document, figures)
-                figures.extend(novas)
-                for page in sorted(document.pages):
-                    corpo = document.export_to_markdown(page_no=page, escape_html=False).strip()
-                    # Figura sem pagina conhecida fica na primeira da faixa: perder
-                    # a posicao exata e ruim, perder o texto da figura e pior.
-                    dela = [
-                        f for f in novas
-                        if f.page == page or (f.page is None and page == faixa[0])
-                    ]
-                    paginas[page] = _attach_figures(corpo, dela)
-                del result, document
+                for coberta, lote in conversor.lotes(
+                    faixa, len(figures), sum(len(f.data) for f in figures)
+                ):
+                    figures.extend(lote.figures)
+                    if not lote.paginas and lote.inteiro.strip():
+                        lote.paginas = {coberta[0]: lote.inteiro.strip()}
+                    for page, corpo in sorted(lote.paginas.items()):
+                        # Figura sem pagina conhecida fica na primeira da faixa:
+                        # perder a posicao exata e ruim, perder o texto da figura
+                        # e pior.
+                        dela = [
+                            f for f in lote.figures
+                            if f.page == page or (f.page is None and page == coberta[0])
+                        ]
+                        paginas[page] = _attach_figures(corpo, dela)
     except Exception as exc:  # noqa: BLE001 - arquivo protegido, corrompido etc.
         log.warning("docling falhou em %s (faixas %s): %s", filename, faixas, exc)
         return None

@@ -177,3 +177,72 @@ def limpar(space: str, sha: str) -> None:
         storage.delete(f"{_prefixo(space, sha)}/preparo.pkl")
     except Exception as exc:  # noqa: BLE001
         log.warning("nao removi o ponto de retomada de %s: %s", sha[:12], exc)
+
+
+# ── lotes do docling ───────────────────────────────────────────────────────
+#
+# O ponto de retomada acima so existe DEPOIS da extracao. Num livro escaneado e
+# a extracao que leva horas e morre: a Novissima Gramatica caiu por memoria nas
+# paginas 321-360 e cada tentativa recomecava da pagina 1, em 45 tentativas.
+# Cada lote convertido fica gravado aqui, e a proxima tentativa so converte o que
+# falta.
+#
+# A chave e pelo sha do bruto e nao pelo Espaco: o docling nao sabe em que
+# Espaco o arquivo vai entrar, e o mesmo PDF em dois Espacos produz o mesmo lote.
+# A pasta comeca com `_` porque slug de Espaco nao comeca, entao nao ha como
+# colidir com um bruto.
+
+PREFIXO_DOCLING = "_docling"
+
+
+def _prefixo_docling(sha: str) -> str:
+    return f"{PREFIXO_DOCLING}/{sha[:2]}/{sha}"
+
+
+def _chave_docling(sha: str, assinatura_atual: str, faixa: tuple[int, int] | None) -> str:
+    nome = "inteiro" if faixa is None else f"{faixa[0]:06d}-{faixa[1]:06d}"
+    return f"{_prefixo_docling(sha)}/{assinatura_atual}/{nome}.pkl"
+
+
+def docling_carregar(
+    sha: str, assinatura_atual: str, faixa: tuple[int, int] | None, ja: int,
+) -> Any | None:
+    """O lote ja convertido desta faixa, ou `None`.
+
+    `ja` e quantas figuras os lotes anteriores tinham: a numeracao `fig-N` e os
+    tetos sao do documento, entao um lote gravado depois de outra sequencia de
+    lotes (faixas diferentes, um lote dividido ao meio) nao e reaproveitavel.
+    """
+    try:
+        dados = pickle.loads(storage.get(_chave_docling(sha, assinatura_atual, faixa)))  # noqa: S301
+    except Exception:  # noqa: BLE001 - ausente, corrompido ou de outra versao
+        return None
+    if not isinstance(dados, dict) or dados.get("ja") != ja:
+        return None
+    return dados.get("lote")
+
+
+def docling_gravar(
+    sha: str, assinatura_atual: str, faixa: tuple[int, int] | None, ja: int, lote: Any,
+) -> None:
+    try:
+        storage.put(
+            _chave_docling(sha, assinatura_atual, faixa),
+            pickle.dumps({"ja": ja, "lote": lote}),
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("nao guardei o lote %s do docling de %s: %s", faixa, sha[:12], exc)
+
+
+def docling_limpar(sha: str) -> None:
+    """Remove os lotes do docling deste bruto, de qualquer assinatura."""
+    try:
+        chaves = [chave for chave, _ in storage.loja().listar(_prefixo_docling(sha) + "/")]
+    except Exception as exc:  # noqa: BLE001
+        log.warning("nao listei os lotes do docling de %s: %s", sha[:12], exc)
+        return
+    for chave in chaves:
+        try:
+            storage.delete(chave)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("nao removi %s: %s", chave, exc)

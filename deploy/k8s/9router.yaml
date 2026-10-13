@@ -1,0 +1,170 @@
+# 9router (https://github.com/decolua/9router) em llm.goga.legal.
+#
+#   kubectl --context context-goga-cluster-c76n2d3iq3a apply -f deploy/k8s/9router.yaml
+#
+# Sem disco: o estado (SQLite com providers, API keys, senha, uso) fica num
+# emptyDir e o Litestream replica continuamente para o bucket privado OCI
+# `goga-llm` (prefixo 9router/). Ao subir, o initContainer restaura o banco do
+# bucket antes do app. Nao prende o pod a nenhum node.
+#
+# Secrets fora do git:
+#
+#   kubectl --context context-goga-cluster-c76n2d3iq3a -n llm create secret generic 9router \
+#     --from-literal=JWT_SECRET="$(openssl rand -hex 32)" \
+#     --from-literal=INITIAL_PASSWORD="$(openssl rand -base64 18)" \
+#     --from-literal=MACHINE_ID="$(openssl rand -hex 32)"
+#
+#   # Customer Secret Key da OCI com acesso ao bucket goga-llm
+#   kubectl --context context-goga-cluster-c76n2d3iq3a -n llm create secret generic 9router-s3 \
+#     --from-literal=LITESTREAM_ACCESS_KEY_ID=... \
+#     --from-literal=LITESTREAM_SECRET_ACCESS_KEY=...
+#
+# Uma replica so: SQLite tem um escritor.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: llm
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: 9router-litestream
+  namespace: llm
+data:
+  litestream.yml: |
+    dbs:
+      - path: /app/data/db/data.sqlite
+        replicas:
+          - type: s3
+            bucket: goga-llm
+            path: 9router
+            endpoint: https://grc4sekoeyuf.compat.objectstorage.sa-saopaulo-1.oraclecloud.com
+            region: sa-saopaulo-1
+            force-path-style: true
+            sync-interval: 1s
+            snapshot-interval: 24h
+            retention: 168h
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: 9router
+  namespace: llm
+  labels: { app: 9router }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: 9router }
+  template:
+    metadata:
+      labels: { app: 9router }
+    spec:
+      terminationGracePeriodSeconds: 30
+      initContainers:
+        # 1. traz o banco do bucket (no primeiro boot nao ha replica: segue vazio)
+        - name: restore
+          image: docker.io/litestream/litestream:0.3.13
+          command: [sh, -c]
+          args:
+            - mkdir -p /app/data/db &&
+              litestream restore -config /etc/litestream.yml
+              -if-db-not-exists -if-replica-exists /app/data/db/data.sqlite
+          envFrom:
+            - secretRef: { name: 9router-s3 }
+          volumeMounts:
+            - { name: data, mountPath: /app/data }
+            - { name: litestream, mountPath: /etc/litestream.yml, subPath: litestream.yml }
+        # 2. identidade fixa da instancia
+        - name: machine-id
+          image: docker.io/decolua/9router:0.5.95
+          command: [sh, -c, 'printf %s "$MACHINE_ID" > /app/data/machine-id']
+          env:
+            - name: MACHINE_ID
+              valueFrom: { secretKeyRef: { name: 9router, key: MACHINE_ID } }
+          volumeMounts:
+            - { name: data, mountPath: /app/data }
+        # 3. sidecar nativo: replica enquanto o app roda e para depois dele
+        - name: litestream
+          image: docker.io/litestream/litestream:0.3.13
+          restartPolicy: Always
+          args: [replicate, -config, /etc/litestream.yml]
+          envFrom:
+            - secretRef: { name: 9router-s3 }
+          volumeMounts:
+            - { name: data, mountPath: /app/data }
+            - { name: litestream, mountPath: /etc/litestream.yml, subPath: litestream.yml }
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+      containers:
+        - name: 9router
+          image: docker.io/decolua/9router:0.5.95
+          ports:
+            - { name: http, containerPort: 20128 }
+          env:
+            - { name: PORT, value: "20128" }
+            - { name: HOSTNAME, value: "0.0.0.0" }
+            - { name: NODE_ENV, value: production }
+            - { name: DATA_DIR, value: /app/data }
+            - { name: NEXT_PUBLIC_BASE_URL, value: https://llm.goga.legal }
+            - { name: BASE_URL, value: "http://127.0.0.1:20128" }
+          envFrom:
+            - secretRef: { name: 9router }
+          volumeMounts:
+            - { name: data, mountPath: /app/data }
+          readinessProbe:
+            tcpSocket: { port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: { port: http }
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 50m, memory: 192Mi }
+            limits: { cpu: "1", memory: 1Gi }
+      volumes:
+        - name: data
+          emptyDir: { sizeLimit: 1Gi }
+        - name: litestream
+          configMap: { name: 9router-litestream }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: 9router
+  namespace: llm
+spec:
+  selector: { app: 9router }
+  ports:
+    - { name: http, port: 80, targetPort: http }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: 9router
+  namespace: llm
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # streaming (SSE) de respostas longas
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "1800"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "1800"
+    nginx.ingress.kubernetes.io/proxy-body-size: 64m
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [llm.goga.legal]
+      secretName: llm-tls
+  rules:
+    - host: llm.goga.legal
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: 9router
+                port: { number: 80 }

@@ -7,6 +7,7 @@ import { db, schema } from "../db/index.js";
 import { decrypt } from "../lib/crypto.js";
 import { HttpError } from "../lib/errors.js";
 import { mockModel } from "./mock.js";
+import { sseCompatFetch } from "./sse-compat.js";
 
 export type ModelRow = typeof schema.model.$inferSelect;
 export type ProviderRow = typeof schema.provider.$inferSelect;
@@ -30,7 +31,7 @@ export function buildLanguageModel(provider: ProviderRow, modelId: string): Lang
       return createGoogleGenerativeAI({ apiKey, baseURL })(modelId);
     case "openai_compat":
       if (!baseURL) throw new HttpError(400, `Provedor "${provider.name}" precisa de endpoint.`);
-      return createOpenAICompatible({ name: provider.name, baseURL, apiKey })(modelId);
+      return createOpenAICompatible({ name: provider.name, baseURL, apiKey, fetch: sseCompatFetch() })(modelId);
     case "mock":
       return mockModel(modelId);
   }

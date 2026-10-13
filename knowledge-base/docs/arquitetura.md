@@ -755,6 +755,25 @@ Registradas porque o custo delas foi descoberto rodando, não lendo:
     o que já estava gravado: a correção na ingestão só vale para o que for
     reenviado depois dela.
 
+29b. **Lote do docling no mesmo processo acumula memória, e a tentativa
+    recomeçava da página 1.** A *Novíssima Gramática* (livro escaneado) passou de
+    3,5 GiB no terceiro lote do Job e foi OOMKilled em 45 execuções; no kb-api,
+    morria nas páginas 321-360 depois de ~2h20 e voltava ao começo, 79 vezes em
+    uma semana, e a busca do Studio passava de 30 s no meio disso.
+
+    **O conserto (ADR-0032):** cada lote roda num processo filho (`spawn`) que
+    sai no fim, e o pai nunca importa o docling. Lote cujo filho morre é
+    dividido ao meio. O resultado de cada lote fica em `_docling/<sha>/...` no
+    object store e a próxima tentativa só converte o que falta. PDF escaneado
+    nem passa pelo docling: o PyMuPDF renderiza e o tesseract lê, página a
+    página, também com retomada por lote. E o escaneado que já traz camada de
+    texto (o caso da própria Gramática: 687 páginas com a imagem do tamanho da
+    página e o texto do OCR por cima) sai pelo PyMuPDF, porque a triagem não
+    conta mais como "imagem" a página em que a imagem é o fundo e há ao menos
+    300 caracteres de texto. Medido localmente com o docling de
+    verdade: o processo pai ficou em 84 MB, os filhos chegaram a 1,5 GB, e a
+    segunda tentativa reaproveitou os três lotes em 0,0 s.
+
 30. **Cabeçalho HTTP é latin-1, e o nome do arquivo não é.** `Content-Disposition`
     leva o nome do documento, e o Starlette codifica todo cabeçalho em latin-1 —
     na **construção** da resposta. O que não couber levanta `UnicodeEncodeError`

@@ -18,6 +18,8 @@ Vai para o docling a pagina que tiver qualquer um destes (limiares em config):
 
 - sem camada de texto (escaneada)            -> precisa de OCR
 - imagem cobrindo parte grande da pagina     -> print/grafico, precisa de OCR
+  (menos a pagina escaneada que ja traz a camada de texto: ali a imagem e o
+  fundo, e o texto sai pelo PyMuPDF)
 - texto com caracteres corrompidos           -> fonte mal codificada
 - muitos tracos vetoriais                    -> provavel tabela
 
@@ -36,19 +38,21 @@ adivinhar pelo tamanho da fonte. Cada entrada vira `#`/`##`/... na pagina dela.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import unicodedata
 from collections import Counter
 from dataclasses import dataclass
 
-from . import progresso
+from . import progresso, retomada
 from .config import settings
 from .extract import (
     PAGE_MARK,
     Extracted,
     Figure,
     _clean,
+    _ocr_image,
     docling_paginas,
 )
 
@@ -112,7 +116,11 @@ def triar(doc) -> Triagem:
                 coberta += sum(abs(r) for r in page.get_image_rects(info[0]))
             except Exception:  # noqa: BLE001 - imagem quebrada nao decide nada
                 continue
-        if coberta / area > settings.pdf_imagem_area:
+        escaneada_com_texto = (
+            coberta / area >= settings.pdf_escaneado_area
+            and len(texto.strip()) >= settings.pdf_escaneado_texto_min
+        )
+        if coberta / area > settings.pdf_imagem_area and not escaneada_com_texto:
             docling[numero] = "imagem"
             continue
         try:
@@ -347,6 +355,67 @@ def _com_titulos(blocos: list[str], entradas: list[tuple[int, str]]) -> list[str
     return no_topo + saida
 
 
+def _paginas_para_ocr_direto(triagem: Triagem) -> set[int]:
+    """Paginas escaneadas que vao direto ao tesseract, sem passar pelo docling.
+
+    So quando o PDF e escaneado (a fracao sem texto passa do limite que ja
+    mandava o arquivo inteiro ao docling). Num PDF digital com meia duzia de
+    paginas sem texto, essas costumam ser diagrama ou print, e ali a figura e a
+    legenda que o docling extrai valem os segundos a mais.
+    """
+    if not (settings.pdf_ocr_direto and settings.ocr_enabled):
+        return set()
+    sem_texto = {n for n, motivo in triagem.docling.items() if motivo == "sem texto"}
+    if len(sem_texto) / triagem.total <= settings.pdf_hibrido_max_fracao_docling:
+        return set()
+    return sem_texto
+
+
+def _ocr_direto(data: bytes, filename: str, paginas: set[int]) -> dict[int, str]:
+    """Texto das paginas escaneadas: PyMuPDF renderiza, o tesseract le.
+
+    No docling, um lote de 40 paginas da Novissima Gramatica levava de 15 a 20
+    min (o modelo de layout e o de tabela rodam antes do OCR), e o processo
+    chegou a 3,5 GiB no terceiro lote. Aqui a pagina e uma imagem em tons de
+    cinza que vai para um subprocesso do tesseract e some; a memoria nao cresce
+    com o livro.
+
+    Grava o texto a cada lote de paginas no ponto de retomada, com a mesma
+    regra do docling: a tentativa seguinte so le o que falta.
+    """
+    import pymupdf
+
+    sha = hashlib.sha256(data).hexdigest()
+    assinatura = retomada.assinatura({
+        "ocr_direto": 1, "dpi": settings.pdf_ocr_dpi, "idiomas": settings.ocr_languages,
+    })
+    ordem = sorted(paginas)
+    lote = max(1, settings.docling_page_batch)
+    textos: dict[int, str] = {}
+    with pymupdf.open(stream=data, filetype="pdf") as doc:
+        for inicio in range(0, len(ordem), lote):
+            grupo = ordem[inicio:inicio + lote]
+            faixa = (grupo[0], grupo[-1])
+            pronto = retomada.docling_carregar(sha, assinatura, faixa, 0)
+            if isinstance(pronto, dict):
+                textos.update(pronto)
+                continue
+            parte: dict[int, str] = {}
+            for i, n in enumerate(grupo):
+                progresso.avancar(
+                    "extracao", inicio + i, len(ordem),
+                    f"OCR: página {n} ({inicio + i + 1} de {len(ordem)} escaneadas)",
+                )
+                pixmap = doc[n - 1].get_pixmap(dpi=settings.pdf_ocr_dpi, colorspace=pymupdf.csGRAY)
+                png = pixmap.tobytes("png")
+                del pixmap
+                parte[n] = _ocr_image(png)
+            retomada.docling_gravar(sha, assinatura, faixa, 0, parte)
+            textos.update(parte)
+            log.info("hibrido: %s: OCR das paginas %s-%s", filename, *faixa)
+    return textos
+
+
 def extrair(data: bytes, filename: str) -> Extracted | None:
     """Extracao hibrida, ou `None` quando o PDF deve ir inteiro para o docling."""
     if not settings.pdf_hibrido or not filename.lower().endswith(".pdf"):
@@ -366,12 +435,17 @@ def extrair(data: bytes, filename: str) -> Extracted | None:
         if doc.page_count < settings.pdf_hibrido_min_paginas:
             return None
         triagem = triar(doc)
-        if len(triagem.docling) / triagem.total > settings.pdf_hibrido_max_fracao_docling:
+        pelo_ocr = _paginas_para_ocr_direto(triagem)
+        pelo_docling = sorted(n for n in triagem.docling if n not in pelo_ocr)
+        if len(pelo_docling) / triagem.total > settings.pdf_hibrido_max_fracao_docling:
             log.info("hibrido: %s -> docling inteiro (%s)", filename, triagem.resumo())
             progresso.nota(f"{triagem.resumo()}; quase tudo precisa do docling, vai inteiro")
             return None
-        log.info("hibrido: %s -> %s", filename, triagem.resumo())
-        progresso.nota(triagem.resumo())
+        resumo = triagem.resumo()
+        if pelo_ocr:
+            resumo += f"; {len(pelo_ocr)} págs escaneadas direto pelo tesseract"
+        log.info("hibrido: %s -> %s", filename, resumo)
+        progresso.nota(resumo)
 
         # Paginas rapidas: blocos, sem o cabecalho/rodape corrente.
         blocos = {
@@ -399,17 +473,19 @@ def extrair(data: bytes, filename: str) -> Extracted | None:
             log.info("hibrido: %s: %s", filename, aviso)
             progresso.nota(aviso)
 
+    do_ocr = _ocr_direto(data, filename, pelo_ocr) if pelo_ocr else {}
+
     # Paginas do docling, em faixas contiguas e no maximo um lote por conversao.
     do_docling: dict[int, str] = {}
     figuras: list[Figure] = []
-    if triagem.docling:
-        faixas = _faixas(list(triagem.docling), max(1, settings.docling_page_batch))
+    if pelo_docling:
+        faixas = _faixas(pelo_docling, max(1, settings.docling_page_batch))
 
         def ao_iniciar(n: int, faixa: tuple[int, int]) -> None:
             progresso.avancar(
                 "extracao", n + 1, len(faixas) + 1,
                 f"docling: páginas {faixa[0]}-{faixa[1]} "
-                f"({n + 1} de {len(faixas)} faixas; {len(triagem.docling)} págs no total)",
+                f"({n + 1} de {len(faixas)} faixas; {len(pelo_docling)} págs no total)",
                 marco_a_cada=0,
             )
 
@@ -418,10 +494,10 @@ def extrair(data: bytes, filename: str) -> Extracted | None:
             # Sem docling, essas paginas saem pelo PyMuPDF mesmo: texto parcial
             # (ou nenhum, se escaneada) e melhor que perder o livro inteiro.
             log.warning("hibrido: docling falhou; %s paginas ficam com o texto do PyMuPDF",
-                        len(triagem.docling))
+                        len(pelo_docling))
             try:
                 with pymupdf.open(stream=data, filetype="pdf") as doc:
-                    do_docling = {n: doc[n - 1].get_text().strip() for n in triagem.docling}
+                    do_docling = {n: doc[n - 1].get_text().strip() for n in pelo_docling}
             except Exception:  # noqa: BLE001
                 do_docling = {}
         else:
@@ -429,7 +505,9 @@ def extrair(data: bytes, filename: str) -> Extracted | None:
 
     partes: list[str] = []
     for n in range(1, triagem.total + 1):
-        if n in triagem.docling:
+        if n in pelo_ocr:
+            corpo = do_ocr.get(n, "")
+        elif n in triagem.docling:
             corpo = do_docling.get(n, "")
         else:
             corpo = "\n\n".join(_com_titulos(blocos.get(n, []), sumario.get(n, [])))
@@ -438,7 +516,9 @@ def extrair(data: bytes, filename: str) -> Extracted | None:
     markdown = _clean("\n\n".join(partes))
     if not markdown:
         return None
-    extrator = "pymupdf+docling" if triagem.docling else "pymupdf"
+    extrator = "+".join(
+        ["pymupdf"] + (["tesseract"] if pelo_ocr else []) + (["docling"] if pelo_docling else [])
+    )
     # Titulo pelo nome do arquivo, e nao pelo primeiro cabecalho: a primeira
     # entrada do sumario do "Comentarios ao CDC" e "dLivros" (marca d'agua do
     # site de onde o PDF saiu), e foi isso que virou titulo e fonte citada. Em

@@ -400,6 +400,24 @@ class Settings:
     # chamada so estourou os 8 Gi do pod: o docling segura todas as paginas
     # renderizadas ate o fim da conversao. Em lotes, o pico e o de um lote.
     docling_page_batch: int = field(default_factory=lambda: _env_int("KB_DOCLING_PAGE_BATCH", 40))
+    # Cada lote do docling num processo filho que morre no fim. Em lotes no
+    # MESMO processo, a memoria crescia de um lote para o outro mesmo com o
+    # resultado solto: a Novissima Gramatica (livro escaneado) passou de 3,5 GiB
+    # no terceiro lote e foi OOMKilled em todas as 45 tentativas, no kb-api e no
+    # Job. Com o filho, o que torch/pdfium seguram volta ao sistema quando ele sai.
+    docling_isolar_lote: bool = field(
+        default_factory=lambda: _env_bool("KB_DOCLING_ISOLAR_LOTE", True)
+    )
+
+    # Pagina escaneada (sem camada de texto) vai direto ao tesseract, renderizada
+    # pelo PyMuPDF, em vez de passar pelo docling. O docling roda o modelo de
+    # layout e o de tabela antes do OCR, e numa pagina que e so uma foto de texto
+    # isso custa ~25 s e centenas de MB por pagina para chegar ao mesmo texto. O
+    # que se perde e a tabela em Markdown nessas paginas.
+    pdf_ocr_direto: bool = field(default_factory=lambda: _env_bool("KB_PDF_OCR_DIRETO", True))
+    # 300 dpi e a resolucao que o tesseract recomenda para texto de livro; abaixo
+    # de ~200 a acentuacao em portugues comeca a sair errada.
+    pdf_ocr_dpi: int = field(default_factory=lambda: _env_int("KB_PDF_OCR_DPI", 300))
 
     # --- PDF hibrido (hibrido.py) ---
     # O docling leva ~3,7 s por pagina em CPU (medido: 40 paginas em 2,5 min no
@@ -420,6 +438,20 @@ class Settings:
     )
     # Imagem cobrindo mais que isto da pagina = print, grafico, fluxograma: vale OCR.
     pdf_imagem_area: float = field(default_factory=lambda: _env_float("KB_PDF_IMAGEM_AREA", 0.3))
+    # EXCETO a pagina escaneada que ja tem camada de texto: a imagem do tamanho
+    # da pagina e o fundo, e o texto que importa ja esta no PDF. A Novissima
+    # Gramatica (695 paginas, OCR feito por quem gerou o PDF) tinha 687 paginas
+    # assim, todas mandadas ao docling por "imagem" -- horas de OCR por cima de
+    # um texto que o PyMuPDF le em segundos. Imagem cobrindo ao menos esta
+    # fracao da pagina, com ao menos `pdf_escaneado_texto_min` caracteres de
+    # texto, sai pelo PyMuPDF. Nas paginas do livro: 98% a 122% de cobertura e
+    # de 1.368 a 5.103 caracteres. Uma foto com legenda nao chega a 300.
+    pdf_escaneado_area: float = field(
+        default_factory=lambda: _env_float("KB_PDF_ESCANEADO_AREA", 0.9)
+    )
+    pdf_escaneado_texto_min: int = field(
+        default_factory=lambda: _env_int("KB_PDF_ESCANEADO_TEXTO_MIN", 300)
+    )
     # Mais tracos vetoriais que isto na pagina = provavel tabela (as grades sao
     # linhas desenhadas). Pagina de texto corrido tem de 0 a poucos.
     pdf_tabela_desenhos: int = field(default_factory=lambda: _env_int("KB_PDF_TABELA_DESENHOS", 40))

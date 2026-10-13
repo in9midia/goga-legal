@@ -105,9 +105,11 @@ def test_pdf_curto_vai_inteiro_para_o_docling(docling_falso):
     assert hibrido.extrair(_livro(paginas=30, branca=None, imagem=None), "curto.pdf") is None
 
 
-def test_pdf_quase_todo_sem_texto_vai_inteiro_para_o_docling(docling_falso):
+def test_pdf_quase_todo_sem_texto_vai_inteiro_para_o_docling(monkeypatch, docling_falso):
+    """Com o OCR direto desligado, o escaneado vai inteiro ao docling, como antes."""
     from kb_api import hibrido
 
+    monkeypatch.setattr(hibrido, "settings", replace(hibrido.settings, pdf_ocr_direto=False))
     doc = pymupdf.open()
     for _ in range(100):
         doc.new_page()
