@@ -61,12 +61,40 @@ async function kbFetch<T>(path: string, init?: RequestInit, timeoutMs = 20000): 
 }
 
 let spacesCache: { at: number; spaces: KbSpace[] } | null = null;
+// A leitura em voo, compartilhada. O cache so vale depois que a primeira volta:
+// 30 `ler_no` paralelos do Assistente abriam 30 GET /v1/spaces ao mesmo tempo,
+// cada um com a contagem de trechos de todas as bases, e esgotavam as 8 conexoes
+// do pool da KB; as buscas dos especialistas esperavam 30 s pela conexao e o
+// Studio abortava ("The operation was aborted due to timeout").
+let spacesInFlight: Promise<KbSpace[]> | null = null;
+// Base criada ou apagada no meio de uma leitura: a resposta velha nao entra no cache.
+let spacesGen = 0;
 
+function invalidateSpaces() {
+  spacesCache = null;
+  spacesInFlight = null;
+  spacesGen++;
+}
+
+function fetchSpaces(): Promise<KbSpace[]> {
+  const gen = spacesGen;
+  return kbFetch<{ spaces: KbSpace[] }>("/v1/spaces", undefined, 5000).then((r) => {
+    if (gen === spacesGen) spacesCache = { at: Date.now(), spaces: r.spaces };
+    return r.spaces;
+  });
+}
+
+/** `fresh`: a tela de bases e as escritas, que precisam do estado de agora (nao pegam carona na leitura em voo). */
 export async function listSpaces(fresh = false): Promise<KbSpace[]> {
-  if (!fresh && spacesCache && Date.now() - spacesCache.at < 30_000) return spacesCache.spaces;
-  const r = await kbFetch<{ spaces: KbSpace[] }>("/v1/spaces", undefined, 5000);
-  spacesCache = { at: Date.now(), spaces: r.spaces };
-  return r.spaces;
+  if (fresh) return fetchSpaces();
+  if (spacesCache && Date.now() - spacesCache.at < 30_000) return spacesCache.spaces;
+  if (!spacesInFlight) {
+    const p = fetchSpaces().finally(() => {
+      if (spacesInFlight === p) spacesInFlight = null;
+    });
+    spacesInFlight = p;
+  }
+  return spacesInFlight;
 }
 
 /** Slugs da KB, ou null se ela estiver fora do ar (a validacao do grafo pula). */
@@ -113,12 +141,12 @@ export async function aiUsage(days: number): Promise<unknown> {
 // ingestao e responde 202: o andamento vem de /v1/ingest-runs.
 
 export function createSpace(p: { slug: string; label?: string; description?: string }) {
-  spacesCache = null;
+  invalidateSpaces();
   return kbFetch<Record<string, unknown>>("/v1/spaces", { method: "POST", body: JSON.stringify(p) });
 }
 
 export function deleteSpace(slug: string) {
-  spacesCache = null;
+  invalidateSpaces();
   return kbFetch<{ removed: string }>(`/v1/spaces/${encodeURIComponent(slug)}`, { method: "DELETE" }, 120_000);
 }
 
@@ -136,12 +164,12 @@ export async function uploadDocument(slug: string, file: { name: string; mime: s
   const res = await fetch(`${config.kbUrl}/v1/spaces/${encodeURIComponent(slug)}/documents`, { method: "POST", body: form, signal: AbortSignal.timeout(30 * 60_000) });
   const text = await res.text();
   if (!res.ok) throw new Error(`KB ${res.status} ao enviar ${file.name}: ${text.slice(0, 300)}`);
-  spacesCache = null;
+  invalidateSpaces();
   return JSON.parse(text) as Record<string, unknown>;
 }
 
 export function deleteDocument(id: number) {
-  spacesCache = null;
+  invalidateSpaces();
   return kbFetch<Record<string, unknown>>(`/v1/documents/${id}`, { method: "DELETE" }, 60_000);
 }
 
