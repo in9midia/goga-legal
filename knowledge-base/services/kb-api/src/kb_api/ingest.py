@@ -20,7 +20,9 @@ from __future__ import annotations
 import hashlib
 import logging
 import mimetypes
+import threading
 import time
+from concurrent.futures import Future
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -971,24 +973,80 @@ def drop_space(slug: str) -> bool:
     return removed
 
 
+# A listagem de Espacos e a leitura mais cara que uma tela faz: conta os
+# documentos e os trechos filhos de todas as bases. Em 2026-10-19 trinta pedidos
+# simultaneos dela (o Studio validando o grafo em 30 `ler_no` paralelos)
+# tomaram as 8 conexoes do pool por mais de 30 s, e as buscas dos especialistas
+# morreram em PoolTimeout. Duas defesas, uma para cada forma da rajada:
+# - pedidos iguais em voo (mesmo escopo) esperam o primeiro e levam o resultado
+#   dele, em vez de repetir a contagem;
+# - escopos diferentes passam por um teto de 2 contagens ao mesmo tempo, que
+#   deixa 6 das 8 conexoes para a busca.
+_LISTAGENS_SIMULTANEAS = threading.BoundedSemaphore(2)
+_listagens_em_voo: dict[tuple[str, ...] | None, Future[list[dict]]] = {}
+_trava_listagens = threading.Lock()
+
+
 def space_stats(spaces: list[str] | None) -> list[dict]:
+    chave = tuple(sorted(spaces)) if spaces is not None else None
+    with _trava_listagens:
+        em_voo = _listagens_em_voo.get(chave)
+        dono = em_voo is None
+        if dono:
+            em_voo = _listagens_em_voo[chave] = Future()
+    if not dono:
+        return em_voo.result()
+    try:
+        with _LISTAGENS_SIMULTANEAS:
+            resultado = _space_stats(spaces)
+    except BaseException as exc:
+        em_voo.set_exception(exc)
+        raise
+    else:
+        em_voo.set_result(resultado)
+        return resultado
+    finally:
+        # Sai do mapa so depois de resolvida: quem chegar agora faz a sua
+        # contagem, e ve o estado de agora (o cache seria dado velho na tela
+        # logo depois de um upload).
+        with _trava_listagens:
+            _listagens_em_voo.pop(chave, None)
+
+
+def _space_stats(spaces: list[str] | None) -> list[dict]:
     with conn() as connection, connection.cursor() as cur:
+        # Agregado por base ANTES de juntar. A versao anterior fazia
+        # `space LEFT JOIN document LEFT JOIN chunk` e `count(DISTINCT d.id)`
+        # sobre o produto: uma linha por trecho de cada documento, ordenada para
+        # o DISTINCT, so para contar documentos.
         cur.execute(
             """
+            WITH docs AS (
+                SELECT space_slug,
+                       count(*) FILTER (WHERE status = 'indexed') AS documents,
+                       count(*) FILTER (WHERE status = 'failed') AS failed
+                  FROM document
+                 WHERE active AND (%s::text[] IS NULL OR space_slug = ANY(%s::text[]))
+                 GROUP BY space_slug
+            ), filhos AS (
+                SELECT d.space_slug, count(*) AS children
+                  FROM chunk c JOIN document d ON d.id = c.document_id
+                 WHERE d.active AND c.parent_id IS NOT NULL
+                   AND (%s::text[] IS NULL OR d.space_slug = ANY(%s::text[]))
+                 GROUP BY d.space_slug
+            )
             SELECT s.slug, s.label, s.description, s.chunking, s.representations,
-                   count(DISTINCT d.id) FILTER (WHERE d.active AND d.status='indexed') AS documents,
-                   count(DISTINCT d.id) FILTER (WHERE d.active AND d.status='failed') AS failed,
-                   count(c.id) FILTER (WHERE c.parent_id IS NOT NULL) AS children,
-                   s.icon
+                   coalesce(docs.documents, 0), coalesce(docs.failed, 0),
+                   coalesce(filhos.children, 0), s.icon,
+                   s.embedding_provider_id, s.chat_provider_id
               FROM space s
-              LEFT JOIN document d ON d.space_slug = s.slug
-              LEFT JOIN chunk c ON c.document_id = d.id AND d.active
+              LEFT JOIN docs ON docs.space_slug = s.slug
+              LEFT JOIN filhos ON filhos.space_slug = s.slug
              WHERE s.active
                AND (%s::text[] IS NULL OR s.slug = ANY(%s::text[]))
-             GROUP BY s.slug, s.label, s.description, s.chunking, s.representations, s.icon
              ORDER BY s.slug
             """,
-            (spaces, spaces),
+            (spaces, spaces, spaces, spaces, spaces, spaces),
         )
         linhas = cur.fetchall()
 
@@ -1008,12 +1066,13 @@ def space_stats(spaces: list[str] | None) -> list[dict]:
             # padrao da instalacao, e a tela precisa mostrar o que de fato vai
             # ser usado. O `from_space` de cada um diz de onde a escolha veio.
             #
-            # Fora do `with` de proposito: `providers.resolvido` abre a propria
-            # conexao, e chama-lo com o cursor acima ainda aberto seguraria a
-            # conexao do pool por toda a lista de Espacos.
+            # Fora do `with` de proposito: `providers.resolvido` pode abrir a
+            # propria conexao (o `padrao` fora do cache), e chama-lo com o
+            # cursor acima ainda aberto seguraria duas do pool. A escolha do
+            # Espaco ja veio na linha: sem ela, seriam duas idas ao banco por base.
             "ai": {
-                "embedding": providers.resolvido("embedding", row[0]),
-                "chat": providers.resolvido("chat", row[0]),
+                "embedding": providers.resolvido("embedding", row[0], row[9]),
+                "chat": providers.resolvido("chat", row[0], row[10]),
             },
         }
         for row in linhas

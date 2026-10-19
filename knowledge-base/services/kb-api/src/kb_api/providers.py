@@ -24,6 +24,7 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import date
+from typing import Any
 
 from .config import settings
 from .db import conn
@@ -323,25 +324,23 @@ def padrao(purpose: str = "embedding", space: str = "") -> Provedor:
     return provedor
 
 
-def resolvido(purpose: str, space: str = "") -> dict | None:
+_NAO_LIDO: Any = object()
+
+
+def resolvido(purpose: str, space: str = "", escolhido: Any = _NAO_LIDO) -> dict | None:
     """O provedor em vigor, para a TELA. Sem credencial, e sem levantar.
 
     Existe porque a tela precisa mostrar qual modelo esta em uso e de onde a
     escolha veio -- "padrao da instalacao" e "escolhido nesta base" sao estados
     diferentes, e mostrar so o nome esconderia qual dos dois e.
+
+    `escolhido`: o id que o Espaco escolheu, quando quem chama ja leu a linha
+    dele. A listagem de Espacos passava aqui duas vezes por base, e cada
+    passada pedia uma conexao so para reler a coluna que ela ja tinha.
     """
     coluna = _COLUNA_DO_ESPACO.get(purpose)
-    escolhido = None
-    if space and coluna:
-        try:
-            with conn() as connection, connection.cursor() as cur:
-                cur.execute(
-                    f"SELECT {coluna} FROM space WHERE slug = %s AND active", (space,)
-                )
-                achado = cur.fetchone()
-                escolhido = achado[0] if achado else None
-        except Exception:  # noqa: BLE001 - a tela nao cai por causa disto
-            escolhido = None
+    if escolhido is _NAO_LIDO:
+        escolhido = _escolhido_no_espaco(coluna, space)
     try:
         provedor = padrao(purpose, space)
     except ProviderError:
@@ -356,6 +355,21 @@ def resolvido(purpose: str, space: str = "") -> dict | None:
         # desativado -- que e exatamente o que a tela precisa deixar visivel.
         "from_space": escolhido is not None and escolhido == provedor.id,
     }
+
+
+def _escolhido_no_espaco(coluna: str | None, space: str) -> Any:
+    escolhido = None
+    if space and coluna:
+        try:
+            with conn() as connection, connection.cursor() as cur:
+                cur.execute(
+                    f"SELECT {coluna} FROM space WHERE slug = %s AND active", (space,)
+                )
+                achado = cur.fetchone()
+                escolhido = achado[0] if achado else None
+        except Exception:  # noqa: BLE001 - a tela nao cai por causa disto
+            escolhido = None
+    return escolhido
 
 
 _SEM_PROVEDOR = (
