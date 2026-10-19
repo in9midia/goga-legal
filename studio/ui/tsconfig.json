@@ -19,5 +19,6 @@
       "zod": ["./node_modules/zod"]
     }
   },
-  "include": ["src", "../api/src/shared"]
+  "include": ["src", "../api/src/shared"],
+  "exclude": ["../api/src/shared/**/*.test.ts"]
 }
