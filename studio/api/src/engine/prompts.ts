@@ -168,8 +168,24 @@ Como julgar:
 - Sustentação: confira a resposta contra os pareceres e as citações conferidas. Não reprove por falta de sustentação o que está neles.
 - Orientar a pessoa a agir ("guarde os comprovantes", "registre no Procon") não é promessa nem ação do Goga.
 - Numa revisão de correção, verifique se as correções anteriores foram atendidas; não invente objeções novas sobre o que já estava aceitável. Correção já atendida não volta como objeção com outras palavras: aprove.
-- O disclaimer final é texto fixo que o sistema acrescenta: nunca peça para removê-lo.`,
+- O disclaimer final é texto fixo que o sistema acrescenta: nunca peça para removê-lo.
+- A resposta vem em duas partes rotuladas. Só a "Resposta ao usuário" chega à pessoa e termina no disclaimer. A "Versão técnica" é o registro interno com os fundamentos, NUNCA enviado ao usuário: não reprove a resposta por ela existir, por vir depois do disclaimer nem por usar linguagem técnica; nela julgue só a correção jurídica e as citações.`,
 };
+
+export const REVIEW_LABELS = {
+  usuario: "=== Resposta ao usuário (é o que a pessoa lê) ===",
+  tecnica: "=== Versão técnica (registro interno, NÃO é enviada ao usuário) ===",
+};
+
+/**
+ * O que o Compliance revisa. As duas versoes do Consolidador vao rotuladas e
+ * separadas: emendadas, a tecnica aparecia "depois do disclaimer" e o
+ * Compliance reprovava todo turno por "bloco de bastidor na mensagem".
+ */
+export function reviewText(c: { resposta_simples: string; resposta_tecnica: string }): string {
+  const tecnica = c.resposta_tecnica.trim();
+  return `${REVIEW_LABELS.usuario}\n${c.resposta_simples.trim()}` + (tecnica ? `\n\n${REVIEW_LABELS.tecnica}\n${tecnica}` : "");
+}
 
 /** A segunda rodada: le as lacunas dos pareceres e decide quem consultar. */
 export const retriagemSchema = z.object({

@@ -24,6 +24,7 @@ import {
   retriagemFormat,
   retriagemSchema,
   renderVars,
+  reviewText,
   type Colleague,
   section,
   type Classification,
@@ -743,7 +744,7 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
         return value;
       });
       if (!hasCompliance) break;
-      const text = `${consolidado.resposta_simples}\n\n${consolidado.resposta_tecnica}`;
+      const text = reviewText(consolidado);
       // Mesmo texto, mesmo veredito: revisar de novo so gasta tempo.
       if (previousVersion && unchanged(previousVersion, withoutDisclaimer(text))) {
         stop = "sem_mudanca";
