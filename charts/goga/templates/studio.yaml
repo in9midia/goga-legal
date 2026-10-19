@@ -28,7 +28,7 @@ spec:
       labels: { app: studio-api }
       annotations:
         checksum/config: {{ include "goga.checksum" . }}
-        {{- include "goga.rollout" . | nindent 8 }}
+        {{- include "goga.rollout" (list . "studio-api") | nindent 8 }}
     spec:
       {{- include "goga.pullSecrets" . | nindent 6 }}
       securityContext: { fsGroup: 1000 }
@@ -84,7 +84,7 @@ spec:
     metadata:
       labels: { app: studio-ui }
       annotations:
-        {{- include "goga.rollout" . | nindent 8 }}
+        {{- include "goga.rollout" (list . "studio-ui") | nindent 8 }}
     spec:
       {{- include "goga.pullSecrets" . | nindent 6 }}
       containers:

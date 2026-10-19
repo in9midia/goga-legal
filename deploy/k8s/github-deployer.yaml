@@ -1,0 +1,84 @@
+# Conta de serviço que o GitHub Actions usa para o deploy do Goga (.github/workflows/deploy.yml).
+# Mesmo desenho do deploy-homolog do Studio e do SGA (in9midia/studio, in9midia/sga).
+#
+#   kubectl --context context-goga-cluster-c76n2d3iq3a apply -f deploy/k8s/github-deployer.yaml
+#   deploy/k8s/github-deployer-kubeconfig.sh | base64 | pbcopy   # vira o secret KUBECONFIG_GOGA
+#
+# Por que não o kubeconfig de quem roda o `helm` hoje: aquele autentica por `oci ce cluster
+# generate-token`, com o perfil OCI `goga` de uma pessoa. No CI isso seria a chave de API dessa
+# pessoa num secret do GitHub, com o alcance dela no tenancy inteiro. Esta conta só existe dentro do
+# cluster e só alcança o namespace `goga`, onde o release `goga` escreve. Role, e não ClusterRole:
+# o `llm` (9router), o ingress-nginx, o cert-manager e o resto do cluster ficam de fora.
+#
+# O que o chart charts/goga cria (e por isso aparece aqui): Deployments, Services, ConfigMaps,
+# Secrets, PVCs, Ingresses, a LimitRange e a ServiceAccount/Role/RoleBinding `kb-api-ingest` (a KB
+# cria um Job por arquivo). O Kubernetes só deixa criar uma Role com permissões que quem cria também
+# tem: por isso jobs e pods aparecem com os verbos daquela Role. Recurso novo no chart = regra nova
+# aqui, senão o `helm upgrade` responde "forbidden" ou "attempting to grant RBAC permissions not
+# currently held".
+#
+# Limite conhecido: o Helm guarda o release (com os valores do secrets.yaml) em Secrets do namespace
+# e lista Secrets por label; `list` não se restringe por nome. Esta conta lê os Secrets do namespace
+# `goga` inteiro. Apagar o Secret `goga-github-deployer-token` revoga o acesso na hora.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: goga-github-deployer
+  namespace: goga
+---
+# Token de longa duração. Desde o Kubernetes 1.24 a ServiceAccount não ganha um sozinha; este Secret
+# pede ao controlador que preencha.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: goga-github-deployer-token
+  namespace: goga
+  annotations:
+    kubernetes.io/service-account.name: goga-github-deployer
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: goga-github-deployer
+  namespace: goga
+rules:
+  - apiGroups: ['']
+    resources: [secrets, configmaps, services, persistentvolumeclaims, serviceaccounts]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: ['']
+    resources: [limitranges]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: ['']
+    resources: [pods, pods/log, events, endpoints]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [apps]
+    resources: [replicasets]
+    verbs: [get, list, watch]
+  # templates/kb.yaml: a Role `kb-api-ingest` cria e apaga os Jobs de ingestão.
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [roles, rolebindings]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: goga-github-deployer
+  namespace: goga
+subjects:
+  - kind: ServiceAccount
+    name: goga-github-deployer
+    namespace: goga
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: goga-github-deployer

@@ -146,7 +146,7 @@ spec:
       labels: { app: kb-api }
       annotations:
         checksum/config: {{ include "goga.checksum" . }}
-        {{- include "goga.rollout" . | nindent 8 }}
+        {{- include "goga.rollout" (list . "kb-api") | nindent 8 }}
     spec:
       {{- include "goga.pullSecrets" . | nindent 6 }}
       {{- if eq .Values.kb.ingest.mode "pod" }}
@@ -203,7 +203,7 @@ spec:
     metadata:
       labels: { app: kb-ui }
       annotations:
-        {{- include "goga.rollout" . | nindent 8 }}
+        {{- include "goga.rollout" (list . "kb-ui") | nindent 8 }}
     spec:
       {{- include "goga.pullSecrets" . | nindent 6 }}
       containers:

@@ -32,6 +32,34 @@ Imagens: repositorio privado `goga` do OCIR, tag `<componente>-<versao>`
 (so muda de fato quem tem a tag nova; os outros precisam existir nessa versao,
 entao publique todos ou use `./push 1.0.1` completo).
 
+## Deploy automatico (GitHub Actions)
+
+Todo push no `main` roda `.github/workflows/deploy.yml`: testes do Studio,
+build so das imagens cujo codigo mudou desde o commit que esta no ar (tag
+`<componente>-<sha>`, gravada em `images.tags`), push no OCIR e
+`helm upgrade --reset-then-reuse-values` do release `goga`. Os segredos nao
+passam pelo GitHub: ficam no release, dados pelo ultimo `helm upgrade` a mao.
+
+Configuracao, uma vez:
+
+```bash
+kubectl --context context-goga-cluster-c76n2d3iq3a apply -f deploy/k8s/github-deployer.yaml
+deploy/k8s/github-deployer-kubeconfig.sh | base64 | pbcopy   # secret KUBECONFIG_GOGA
+```
+
+e, no GitHub (Settings › Secrets and variables › Actions): `KUBECONFIG_GOGA`,
+`OCIR_USERNAME` (`grc4sekoeyuf/gabriel@tucci.net.br`) e `OCIR_TOKEN`.
+Reconstruir tudo: Actions › deploy › Run workflow com `force_all`.
+
+Deploy a mao depois do automatico (trocar segredo, por exemplo): use
+`--reset-then-reuse-values`, senao `images.tags` some e as imagens voltam para
+`<componente>-<version>`:
+
+```bash
+helm upgrade goga charts/goga -n goga --reset-then-reuse-values \
+  -f charts/goga/secrets.yaml --kube-context context-goga-cluster-c76n2d3iq3a
+```
+
 ## Cuidados
 
 - `kb.secretKey` e `studio.secretKey` cifram credenciais gravadas no banco:

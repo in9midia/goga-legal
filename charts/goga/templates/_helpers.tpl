@@ -1,6 +1,16 @@
-{{- define "goga.image" -}}
+{{/*
+Imagem do componente. Tag fixa em images.tags.<componente> (o deploy do GitHub
+grava <componente>-<commit>) ganha; sem ela, <componente>-<images.version>.
+*/}}
+{{- define "goga.tag" -}}
 {{- $root := index . 0 -}}{{- $name := index . 1 -}}
-{{ $root.Values.images.repository }}:{{ $name }}-{{ $root.Values.images.version }}
+{{- $pinned := index (default dict $root.Values.images.tags) $name -}}
+{{- if $pinned }}{{ $pinned }}{{ else }}{{ $name }}-{{ $root.Values.images.version }}{{ end -}}
+{{- end -}}
+
+{{- define "goga.image" -}}
+{{- $root := index . 0 -}}
+{{ $root.Values.images.repository }}:{{ include "goga.tag" . }}
 {{- end -}}
 
 {{- define "goga.labels" -}}
@@ -30,12 +40,18 @@ imagePullSecrets:
 {{- end -}}
 
 {{/*
-A tag e sobrescrita a cada ./push (ex.: 1.0.0 sempre), entao cada `helm upgrade`
-troca esta anotacao e recria os pods da aplicacao; com pullPolicy Always o pod
-novo baixa o digest atual da tag.
+Tag de versao (./push 1.0.0, sobrescrita a cada push): cada `helm upgrade` troca
+esta anotacao e recria o pod; com pullPolicy Always ele baixa o digest atual.
+Tag fixa por commit (deploy do GitHub): a propria troca de imagem faz o rollout,
+e o componente que nao mudou mantem a tag e o pod nao reinicia.
 */}}
 {{- define "goga.rollout" -}}
+{{- $root := index . 0 -}}{{- $name := index . 1 -}}
+{{- if index (default dict $root.Values.images.tags) $name -}}
+goga/image: {{ include "goga.tag" . | quote }}
+{{- else -}}
 goga/rollout: {{ now | unixEpoch | quote }}
+{{- end -}}
 {{- end -}}
 
 {{/* map → "k=v,k2=v2", para variavel de ambiente que o kb-api le como lista. */}}

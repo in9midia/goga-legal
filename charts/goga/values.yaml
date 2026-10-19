@@ -17,6 +17,15 @@ images:
   # Always: a tag e sobrescrita a cada push, entao o restart precisa checar o
   # registry; quando nada mudou o custo e so um HEAD.
   pullPolicy: Always
+  # Tag fixa por componente. O deploy do GitHub (.github/workflows/deploy.yml)
+  # grava aqui <componente>-<commit> de cada imagem; vazio = <componente>-<version>.
+  # Deploy a mao depois do GitHub: use --reset-then-reuse-values (mantem estas
+  # tags e o secrets.yaml do release), senao as imagens voltam para a version.
+  tags:
+    kb-api: ""
+    kb-ui: ""
+    studio-api: ""
+    studio-ui: ""
 
 ingress:
   className: nginx
