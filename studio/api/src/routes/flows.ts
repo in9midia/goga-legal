@@ -5,7 +5,7 @@ import { db, schema } from "../db/index.js";
 import { audit } from "../lib/audit.js";
 import { requireAdmin, requireUser } from "../lib/auth.js";
 import { badRequest, conflict, HttpError, notFound } from "../lib/errors.js";
-import { flowGraphSchema, validateGraph, type FlowGraph } from "../shared/graph.js";
+import { flowGraphSchema, graphWarnings, validateGraph, type FlowGraph } from "../shared/graph.js";
 import { spaceSlugs } from "../kb/client.js";
 import { emptyGraph } from "../seed/flows.js";
 import { defaultModelId } from "../llm/models.js";
@@ -98,6 +98,7 @@ export async function flowRoutes(app: FastifyInstance) {
       isProduction: prod?.flowId === f.id,
       unpublishedChanges: prod?.flowId === f.id ? diverges(f.graph, prod.graph) : false,
       errors: await validateFull(graph),
+      warnings: graphWarnings(graph),
     };
   });
 
@@ -133,7 +134,8 @@ export async function flowRoutes(app: FastifyInstance) {
     };
     const [f] = await db.update(schema.flow).set(set).where(eq(schema.flow.id, req.params.id)).returning();
     await audit(me, "update", "flow", f.id, { name: before.name, description: before.description, revision: before.revision, graph: before.graph }, { name: f.name, description: f.description, revision: f.revision, graph: f.graph });
-    return { flow: f, errors: await validateFull(flowGraphSchema.parse(f.graph)) };
+    const saved = flowGraphSchema.parse(f.graph);
+    return { flow: f, errors: await validateFull(saved), warnings: graphWarnings(saved) };
   });
 
   app.delete<{ Params: { id: string } }>("/api/v1/flows/:id", async (req) => {
@@ -161,7 +163,7 @@ export async function flowRoutes(app: FastifyInstance) {
     requireUser(req);
     const g = flowGraphSchema.safeParse((req.body as { graph?: unknown })?.graph);
     if (!g.success) return { errors: g.error.issues.slice(0, 20).map((i) => ({ code: "schema", message: `${i.path.join(".")}: ${i.message}` })) };
-    return { errors: await validateFull(g.data) };
+    return { errors: await validateFull(g.data), warnings: graphWarnings(g.data) };
   });
 
   app.post<{ Params: { id: string } }>("/api/v1/flows/:id/publish", async (req) => {

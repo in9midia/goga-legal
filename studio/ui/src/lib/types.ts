@@ -223,7 +223,7 @@ export interface Outcome {
   resposta_tecnica: string;
   citacoes: CitationCheck[];
   documentos: { fileId: string; name: string; mime: string; template: string }[];
-  especialistas: { nodeId: string; name: string; ok: boolean; score?: number; chainedFrom?: string; reused?: boolean; consultadoPor?: string[] }[];
+  especialistas: { nodeId: string; name: string; ok: boolean; score?: number; chainedFrom?: string; encadeadoDe?: string[]; reused?: boolean; consultadoPor?: string[] }[];
   intencao?: "nova_consulta" | "continuacao" | "pedido_documento" | "conversa";
   /** Caminho que o turno tomou no fluxo. */
   atalho?: Atalho;

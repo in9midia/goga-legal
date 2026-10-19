@@ -181,7 +181,7 @@ export function RunPage() {
                   <div key={e.nodeId} className="flex items-center gap-2 text-xs">
                     <StatusBadge status={e.ok ? "ok" : "error"} /> {e.name}
                     {e.score != null && <span className="font-mono text-text-dim">score {e.score.toFixed(2)}</span>}
-                    {e.chainedFrom && <Pill>encadeado de {e.chainedFrom}</Pill>}
+                    {e.chainedFrom && <Pill>encadeado de {(e.encadeadoDe ?? [e.chainedFrom]).join(", ")}</Pill>}
                     {e.consultadoPor?.length ? <Pill>consultado por {e.consultadoPor.join(", ")}</Pill> : null}
                     {e.reused && <Pill>reaproveitado</Pill>}
                   </div>

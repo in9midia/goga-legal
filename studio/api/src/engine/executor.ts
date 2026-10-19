@@ -12,6 +12,7 @@ import { errorMessage } from "./tracer.js";
 import { DATA_NOTICE, INJECTION_ALERT, asData, injectionSignals, neutralize } from "./guard.js";
 import { decideCycle, unchanged, type CycleStop, type Objection } from "./proportionality.js";
 import { planConsultations, type ConsultAsk, type ConsultRequest } from "./consultations.js";
+import { chainClosure, runChains } from "./chains.js";
 import {
   FORMAT,
   classifierSchema,
@@ -82,6 +83,8 @@ export interface SpecialistResult {
   citacoes?: CitationCheck[];
   error?: string;
   chainedFrom?: string;
+  /** Todas as origens do encadeamento que concluíram (chainedFrom é a primeira). */
+  encadeadoDe?: string[];
   /** Parecer reaproveitado de um turno anterior (o especialista nao rodou agora). */
   reused?: boolean;
   /** Ferramentas que devolveram erro: a falta de resultado delas nao prova que algo nao existe. */
@@ -96,7 +99,7 @@ export interface TurnOutcome {
   resposta_tecnica: string;
   citacoes: CitationCheck[];
   documentos: { fileId: string; name: string; mime: string; template: string }[];
-  especialistas: { nodeId: string; name: string; ok: boolean; score?: number; chainedFrom?: string; reused?: boolean; consultadoPor?: string[] }[];
+  especialistas: { nodeId: string; name: string; ok: boolean; score?: number; chainedFrom?: string; encadeadoDe?: string[]; reused?: boolean; consultadoPor?: string[] }[];
   classificacao?: Classification;
   intencao?: Intencao;
   /** Caminho que o turno tomou: completo, conversa, reuso de pareceres ou documento. */
@@ -471,20 +474,13 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
       });
     }
 
-    // ── 3. Especialistas (paralelo) + encadeamentos (sequencial) ─────────
+    // ── 3. Especialistas (paralelo) + encadeamentos (por níveis) ─────────
     // Colegas que a primeira rodada pode acionar: especialista do fluxo que nao
     // foi escolhido nem roda por encadeamento de um escolhido. Sem o no
     // Retriagem, nao ha segunda rodada: o especialista nem e convidado a pedir.
     const maxConsultas = retriagem && decision !== "reuso" ? (retriagem.data.retriagem?.maxConsultas ?? 2) : 0;
-    const willRun = new Set(selected.map((n) => n.id));
-    const stack = [...willRun];
-    while (stack.length) {
-      for (const t of outs(stack.pop()!)) {
-        if (node(t).type !== "specialist" || willRun.has(t)) continue;
-        willRun.add(t);
-        stack.push(t);
-      }
-    }
+    const isSpecialist = (id: string) => node(id)?.type === "specialist";
+    const willRun = new Set(chainClosure(selected.map((n) => n.id), outs, isSpecialist));
     const specialistNodes = byType("specialist");
     const colleagues: Colleague[] = maxConsultas
       ? specialistNodes
@@ -495,11 +491,20 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
           })
       : [];
 
-    const runSpecialist = async (n: FlowNode, from: string | null, prior?: SpecialistResult, requests: ConsultRequest[] = []): Promise<SpecialistResult> => {
+    // priors: pareceres das origens do encadeamento (todas as que concluiram).
+    const runSpecialist = async (n: FlowNode, from: string | null, priors: SpecialistResult[] = [], requests: ConsultRequest[] = []): Promise<SpecialistResult> => {
       // Consultado por um colega: nao ha aresta da origem a marcar no caminho.
-      mark(n.id, from ?? undefined);
-      const base = { nodeId: n.id, name: n.data.name, specialtyNumber: n.data.specialtyNumber, chainedFrom: prior?.nodeId, ...(requests.length ? { consultadoPor: requests.map((r) => r.de) } : {}) };
-      const span = await ctx.tracer.start({ kind: "agent", name: n.data.name, nodeId: n.id, parentId: root.id, input: { score: scoreOf.get(n.id), encadeado_de: prior?.name, ...(requests.length ? { consulta: requests.map((r) => ({ de: r.de, pergunta: r.pergunta })) } : {}) } });
+      if (priors.length) for (const p of priors) mark(n.id, p.nodeId);
+      else mark(n.id, from ?? undefined);
+      const base = {
+        nodeId: n.id,
+        name: n.data.name,
+        specialtyNumber: n.data.specialtyNumber,
+        chainedFrom: priors[0]?.nodeId,
+        ...(priors.length > 1 ? { encadeadoDe: priors.map((p) => p.nodeId) } : {}),
+        ...(requests.length ? { consultadoPor: requests.map((r) => r.de) } : {}),
+      };
+      const span = await ctx.tracer.start({ kind: "agent", name: n.data.name, nodeId: n.id, parentId: root.id, input: { score: scoreOf.get(n.id), encadeado_de: priors.length ? priors.map((p) => p.name) : undefined, ...(requests.length ? { consulta: requests.map((r) => ({ de: r.de, pergunta: r.pergunta })) } : {}) } });
       const falhas: string[] = [];
       try {
         const env = { ctx, node: n, parentId: span.id, failures: falhas };
@@ -531,7 +536,10 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
           (await rulesOf(n)) +
           section("Evidências da base de conhecimento", evidencias || "(nenhuma evidência recuperada)") +
           // O parecer do colega e saida de modelo que leu documentos e anexos: vai como dado.
-          (prior?.parecer ? section(`Parecer anterior (${prior.name})`, asData(`parecer:${prior.name}`, JSON.stringify(prior.parecer))) : "") +
+          priors
+            .filter((p) => p.parecer)
+            .map((p) => section(`Parecer anterior (${p.name})`, asData(`parecer:${p.name}`, JSON.stringify(p.parecer))))
+            .join("") +
           (n.data.prompt.examples ? section("Exemplos", n.data.prompt.examples) : "") +
           // Uma rodada de consulta so: quem foi consultado nao aciona mais ninguem.
           (!requests.length && n.data.prompt.outputFormat === "parecer" ? consultSection(colleagues, maxConsultas) : "") +
@@ -581,21 +589,10 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
       const fatal = firstWave.find((r): r is PromiseRejectedResult => r.status === "rejected" && (r.reason instanceof BudgetError || r.reason instanceof CancelledError));
       if (fatal) throw fatal.reason;
       results = firstWave.map((r, i) => (r.status === "fulfilled" ? r.value : { nodeId: selected[i].id, name: selected[i].data.name, specialtyNumber: selected[i].data.specialtyNumber, ok: false, error: errorMessage(r.reason) }));
-      // Encadeamentos (53 -> 52, 54 -> 29 -> 52): cada especialista que rodou
-      // alimenta o seguinte, em sequencia, e cada no roda no maximo uma vez.
-      const queue = results.filter((r) => r.ok);
-      const ran = new Set(results.map((r) => r.nodeId));
-      while (queue.length) {
-        const src = queue.shift()!;
-        for (const t of outs(src.nodeId)) {
-          const tn = node(t);
-          if (tn.type !== "specialist" || ran.has(t)) continue;
-          ran.add(t);
-          const r = await runSpecialist(tn, src.nodeId, src);
-          results.push(r);
-          if (r.ok) queue.push(r);
-        }
-      }
+      // Encadeamentos (53 -> 52, 54 -> 29 -> 52): cada no roda no maximo uma vez,
+      // depois de todas as suas origens, com o parecer de todas; nos do mesmo
+      // nivel rodam em paralelo.
+      results.push(...(await runChains({ first: results, outs, isSpecialist, run: (id, priors) => runSpecialist(node(id), null, priors) })));
     }
     // ── 3b. Retriagem: consulta entre especialistas (uma rodada) ──────────
     // O Classificador decide antes de alguem analisar; um parecer pode descobrir
@@ -660,7 +657,7 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
             }));
           if (plan.byNode.size) {
             flags.push("consulta_entre_especialistas");
-            const second = await Promise.allSettled([...plan.byNode].map(([id, rs]) => runSpecialist(node(id), null, undefined, rs)));
+            const second = await Promise.allSettled([...plan.byNode].map(([id, rs]) => runSpecialist(node(id), null, [], rs)));
             const fatal = second.find((r): r is PromiseRejectedResult => r.status === "rejected" && (r.reason instanceof BudgetError || r.reason instanceof CancelledError));
             if (fatal) throw fatal.reason;
             const ids = [...plan.byNode.keys()];
@@ -862,7 +859,7 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
       resposta_tecnica: finalAnswer.resposta_tecnica,
       citacoes: dedupe(allCitations),
       documentos: ctx.generated,
-      especialistas: results.map((r) => ({ nodeId: r.nodeId, name: r.name, ok: r.ok, score: scoreOf.get(r.nodeId), chainedFrom: r.chainedFrom, reused: r.reused, ...(r.consultadoPor ? { consultadoPor: r.consultadoPor } : {}) })),
+      especialistas: results.map((r) => ({ nodeId: r.nodeId, name: r.name, ok: r.ok, score: scoreOf.get(r.nodeId), chainedFrom: r.chainedFrom, ...(r.encadeadoDe ? { encadeadoDe: r.encadeadoDe } : {}), reused: r.reused, ...(r.consultadoPor ? { consultadoPor: r.consultadoPor } : {}) })),
       compliance: hasCompliance
         ? {
             aprovado: verdict.aprovado,

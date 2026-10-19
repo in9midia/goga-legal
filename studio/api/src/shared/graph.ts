@@ -265,6 +265,30 @@ export function validateGraph(graph: FlowGraph, ctx: GraphContext = {}): GraphEr
   return errors;
 }
 
+/**
+ * Avisos: o fluxo roda e pode ser publicado, mas a configuracao provavelmente
+ * nao faz o que se espera. Nao bloqueiam salvar nem publicar.
+ */
+export function graphWarnings(graph: FlowGraph): GraphError[] {
+  const warnings: GraphError[] = [];
+  const typeOf = new Map(graph.nodes.map((n) => [n.id, n.type]));
+  const chains = graph.edges.filter((e) => typeOf.get(e.source) === "specialist" && typeOf.get(e.target) === "specialist").length;
+  if (chains && !graph.nodes.some((n) => n.type === "retriagem")) {
+    warnings.push({
+      code: "chains_without_retriagem",
+      message: `${chains} encadeamento(s) entre especialistas e nenhuma Retriagem: cada nó encadeado roda em todo turno que passa pela origem. Com a Retriagem, o especialista de apoio pode ser consultado só quando um parecer tiver lacuna.`,
+    });
+  }
+  for (const n of graph.nodes) {
+    const needsModel = ["classifier", "specialist", "retriagem", "consolidator", "compliance"].includes(n.type);
+    const primary = n.data.model.modelId ?? graph.settings.defaultModelId;
+    if (needsModel && n.data.model.fallbackModelId && n.data.model.fallbackModelId === primary) {
+      warnings.push({ code: "fallback_same_model", nodeId: n.id, message: `"${n.data.name}": o modelo de fallback é o mesmo do principal; se o provedor cair, o fallback cai junto.` });
+    }
+  }
+  return warnings;
+}
+
 function nameOf(graph: FlowGraph, id: string) {
   return graph.nodes.find((n) => n.id === id)?.data.name ?? id;
 }

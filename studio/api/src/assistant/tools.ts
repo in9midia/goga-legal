@@ -296,7 +296,7 @@ export function buildTools(ctx: ToolCtx): ToolSet {
     description: "Lê um fluxo: configurações, nós (resumo, prompts cortados), ligações, erros de validação e revisão. Para o conteúdo integral de um nó use ler_no.",
     inputSchema: z.object({ fluxoId: z.string() }),
     execute: async ({ fluxoId }) => {
-      const r = await api.call<{ flow: { id: string; name: string; description: string; revision: number; graph: FlowGraph }; isProduction: boolean; unpublishedChanges: boolean; errors: unknown[] }>("GET", `/flows/${fluxoId}`);
+      const r = await api.call<{ flow: { id: string; name: string; description: string; revision: number; graph: FlowGraph }; isProduction: boolean; unpublishedChanges: boolean; errors: unknown[]; warnings?: unknown[] }>("GET", `/flows/${fluxoId}`);
       return fit({
         id: r.flow.id,
         nome: r.flow.name,
@@ -305,6 +305,7 @@ export function buildTools(ctx: ToolCtx): ToolSet {
         emProducao: r.isProduction,
         alteracoesNaoPublicadas: r.unpublishedChanges,
         errosDeValidacao: r.errors,
+        avisosDeValidacao: r.warnings ?? [],
         ...flowSummary(r.flow.graph, await modelLabels(api)),
       });
     },
@@ -349,13 +350,13 @@ export function buildTools(ctx: ToolCtx): ToolSet {
         ? (await api.call<{ specialties: SpecialtyLike[] }>("GET", "/catalog/specialties")).specialties
         : [];
       const out = applyFlowOps(flowGraphSchema.parse(r.flow.graph), operacoes, { name: r.flow.name, description: r.flow.description }, specs);
-      const saved = await api.call<{ flow: { revision: number }; errors: unknown[] }>("PUT", `/flows/${fluxoId}`, {
+      const saved = await api.call<{ flow: { revision: number }; errors: unknown[]; warnings?: unknown[] }>("PUT", `/flows/${fluxoId}`, {
         name: out.name,
         description: out.description,
         graph: out.graph,
         expectedRevision: r.flow.revision,
       });
-      return { salvo: true, revisaoAnterior: r.flow.revision, revisao: saved.flow.revision, log: out.log, errosDeValidacao: saved.errors };
+      return { salvo: true, revisaoAnterior: r.flow.revision, revisao: saved.flow.revision, log: out.log, errosDeValidacao: saved.errors, avisosDeValidacao: saved.warnings ?? [] };
     },
   });
 
@@ -363,8 +364,8 @@ export function buildTools(ctx: ToolCtx): ToolSet {
     description: "Valida o rascunho de um fluxo (estrutura, modelos, bases, skills, MCP).",
     inputSchema: z.object({ fluxoId: z.string() }),
     execute: async ({ fluxoId }) => {
-      const r = await api.call<{ errors: unknown[]; flow: { revision: number } }>("GET", `/flows/${fluxoId}`);
-      return { revisao: r.flow.revision, valido: r.errors.length === 0, erros: r.errors };
+      const r = await api.call<{ errors: unknown[]; warnings?: unknown[]; flow: { revision: number } }>("GET", `/flows/${fluxoId}`);
+      return { revisao: r.flow.revision, valido: r.errors.length === 0, erros: r.errors, avisos: r.warnings ?? [] };
     },
   });
 

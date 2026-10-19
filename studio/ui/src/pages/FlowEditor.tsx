@@ -23,6 +23,7 @@ interface FlowResponse {
   isProduction: boolean;
   unpublishedChanges: boolean;
   errors: GraphError[];
+  warnings?: GraphError[];
 }
 
 export function FlowEditorPage() {
@@ -55,6 +56,7 @@ function Editor({ initial }: { initial: FlowResponse }) {
   const [selected, setSelected] = useState<string | null>(params.get("node"));
   const [dirty, setDirty] = useState(false);
   const [errors, setErrors] = useState<GraphError[]>(initial.errors);
+  const [warnings, setWarnings] = useState<GraphError[]>(initial.warnings ?? []);
   const [confirmPublish, setConfirmPublish] = useState(false);
   const [adding, setAdding] = useState(false);
   const [fitKey, setFitKey] = useState("0");
@@ -126,17 +128,24 @@ function Editor({ initial }: { initial: FlowResponse }) {
   useEffect(() => {
     if (!dirty) return;
     const t = setTimeout(() => {
-      api.post<{ errors: GraphError[] }>(`/flows/${initial.flow.id}/validate`, { graph: currentGraph() }).then((r) => setErrors(r.errors)).catch(() => undefined);
+      api
+        .post<{ errors: GraphError[]; warnings?: GraphError[] }>(`/flows/${initial.flow.id}/validate`, { graph: currentGraph() })
+        .then((r) => {
+          setErrors(r.errors);
+          setWarnings(r.warnings ?? []);
+        })
+        .catch(() => undefined);
     }, 700);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graph, dirty]);
 
   const save = useMutation({
-    mutationFn: () => api.put<{ flow: Flow; errors: GraphError[] }>(`/flows/${initial.flow.id}`, { name, description, graph: currentGraph(), expectedRevision: revision }),
+    mutationFn: () => api.put<{ flow: Flow; errors: GraphError[]; warnings?: GraphError[] }>(`/flows/${initial.flow.id}`, { name, description, graph: currentGraph(), expectedRevision: revision }),
     onSuccess: (r) => {
       setRevision(r.flow.revision);
       setErrors(r.errors);
+      setWarnings(r.warnings ?? []);
       setDirty(false);
       if (isProduction) setUnpublished(true);
       qc.invalidateQueries({ queryKey: ["flows"] });
@@ -224,19 +233,19 @@ function Editor({ initial }: { initial: FlowResponse }) {
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Popover>
             <PopoverTrigger asChild>
-              <Button variant="outline" size="sm" className={errors.length ? "border-rose-500/40 text-rose-300" : "text-emerald-300"}>
-                {errors.length ? <AlertTriangle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
-                {errors.length ? `${errors.length} erro(s)` : "válido"}
+              <Button variant="outline" size="sm" className={errors.length ? "border-rose-500/40 text-rose-300" : warnings.length ? "border-amber-500/40 text-amber-300" : "text-emerald-300"}>
+                {errors.length || warnings.length ? <AlertTriangle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
+                {errors.length ? `${errors.length} erro(s)` : warnings.length ? `válido · ${warnings.length} aviso(s)` : "válido"}
               </Button>
             </PopoverTrigger>
             <PopoverContent align="end" className="w-96 p-2">
-              {errors.length === 0 ? <p className="p-2 text-sm text-text-muted">Nenhum erro de validação.</p> : (
+              {errors.length === 0 && warnings.length === 0 ? <p className="p-2 text-sm text-text-muted">Nenhum erro de validação.</p> : (
                 <ul className="max-h-80 space-y-1 overflow-y-auto">
-                  {errors.map((e, i) => (
+                  {[...errors.map((e) => ({ e, warn: false })), ...warnings.map((e) => ({ e, warn: true }))].map(({ e, warn }, i) => (
                     <li key={i}>
                       <button className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-ink-800" onClick={() => e.nodeId && setSelected(e.nodeId)}>
-                        <span className="font-mono text-[0.65rem] text-text-dim">{e.code}</span>
-                        <div className="text-rose-200">{e.message}</div>
+                        <span className="font-mono text-[0.65rem] text-text-dim">{warn ? `aviso · ${e.code}` : e.code}</span>
+                        <div className={warn ? "text-amber-200" : "text-rose-200"}>{e.message}</div>
                       </button>
                     </li>
                   ))}
