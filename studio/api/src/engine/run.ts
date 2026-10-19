@@ -6,6 +6,51 @@ import type { SessionUser } from "../lib/auth.js";
 import type { RunContext } from "./context.js";
 import { executeTurn, readCase, type TurnInput, type TurnOutcome } from "./executor.js";
 import { RunTracer, errorMessage, publish } from "./tracer.js";
+import { CancelledError } from "../llm/call.js";
+
+/** Execucoes em andamento neste processo: o pedido de parar chega por aqui. */
+const live = new Map<string, { ctx: RunContext; abort: AbortController }>();
+
+function track(ctx: RunContext) {
+  const abort = new AbortController();
+  ctx.signal = abort.signal;
+  live.set(ctx.runId, { ctx, abort });
+}
+
+/**
+ * Pedido de parar: a chamada a modelo em curso e abortada e a proxima e
+ * recusada. O turno fecha como erro "interrompida pelo usuario", com o que ja
+ * rodou no trace. Devolve false se a execucao nao esta rodando neste processo.
+ */
+export function cancelRun(runId: string): boolean {
+  const r = live.get(runId);
+  if (!r) return false;
+  r.ctx.aborted = true;
+  r.abort.abort(new CancelledError());
+  return true;
+}
+
+export function isLive(runId: string) {
+  return live.has(runId);
+}
+
+/**
+ * Execucao e em processo: o reinicio do pod (deploy, OOM) deixava o run em
+ * `running` para sempre e a conversa esperando uma resposta que nunca vem. No
+ * boot, antes de aceitar requisicoes, todo run ainda `running` vira erro e a
+ * conversa ganha a mensagem de falha. Uma replica so (chart): nenhum outro
+ * processo pode estar executando estes runs.
+ */
+export async function reapOrphanRuns(): Promise<number> {
+  const error = "Execução interrompida: o servidor reiniciou durante o turno. Envie a mensagem de novo.";
+  const rows = await db.update(schema.run).set({ status: "error", error, endedAt: new Date() }).where(eq(schema.run.status, "running")).returning({ id: schema.run.id, sessionId: schema.run.sessionId });
+  for (const r of rows) {
+    if (!r.sessionId) continue;
+    const [answered] = await db.select({ id: schema.message.id }).from(schema.message).where(and(eq(schema.message.runId, r.id), eq(schema.message.role, "assistant")));
+    if (!answered) await db.insert(schema.message).values({ sessionId: r.sessionId, role: "assistant", content: `Falha na execução: ${error}`, payload: { error }, runId: r.id });
+  }
+  return rows.length;
+}
 
 export interface RunTarget {
   flowId: string | null;
@@ -109,35 +154,50 @@ export async function startTurn(args: {
 
   // Execucao EM PROCESSO, sem fila (decisao de arquitetura do MVP). O POST
   // devolve o runId na hora e o progresso sai pelo SSE.
+  track(ctx);
   void runInBackground(ctx, { message: args.message, history, caso }, msg.id);
   return { runId: runRow.id, messageId: msg.id };
 }
 
+/** O motivo da falha. Pedido de parar ganha a mesma mensagem, qualquer que seja o erro que ele provocou. */
+const failureOf = (ctx: RunContext, err: unknown) => (ctx.aborted ? new CancelledError().message : errorMessage(err));
+
 async function runInBackground(ctx: RunContext, input: TurnInput, _userMsgId: string) {
   let outcome: TurnOutcome | null = null;
   let error: string | null = null;
+  let status: string = "error";
+  let messageId: string | undefined;
   try {
-    outcome = await executeTurn(ctx, input);
+    try {
+      outcome = await executeTurn(ctx, input);
+    } catch (err) {
+      error = failureOf(ctx, err);
+    }
+    status = outcome?.status ?? "error";
+    await db
+      .update(schema.run)
+      .set({ status: status as TurnOutcome["status"], error, outcome: outcome ?? null, endedAt: new Date(), costUsd: ctx.costUsd, tokensIn: ctx.tokensIn, tokensOut: ctx.tokensOut })
+      .where(eq(schema.run.id, ctx.runId));
+    const [assistant] = await db
+      .insert(schema.message)
+      .values({
+        sessionId: ctx.sessionId!,
+        role: "assistant",
+        content: outcome?.resposta_simples ?? `Falha na execução: ${error}`,
+        payload: outcome ?? { error },
+        attachments: (outcome?.documentos ?? []).map((d) => d.fileId),
+        runId: ctx.runId,
+      })
+      .returning();
+    messageId = assistant.id;
   } catch (err) {
-    error = errorMessage(err);
+    // Banco fora no fim do turno: o `done` ainda sai, senao a tela espera para sempre.
+    console.error(`[run ${ctx.runId}] falha ao gravar o desfecho: ${errorMessage(err)}`);
+    status = "error";
+  } finally {
+    live.delete(ctx.runId);
+    publish(ctx.runId, { type: "done", runId: ctx.runId, status, ...(messageId ? { messageId } : {}) });
   }
-  const status = outcome?.status ?? "error";
-  await db
-    .update(schema.run)
-    .set({ status, error, outcome: outcome ?? null, endedAt: new Date(), costUsd: ctx.costUsd, tokensIn: ctx.tokensIn, tokensOut: ctx.tokensOut })
-    .where(eq(schema.run.id, ctx.runId));
-  const [assistant] = await db
-    .insert(schema.message)
-    .values({
-      sessionId: ctx.sessionId!,
-      role: "assistant",
-      content: outcome?.resposta_simples ?? `Falha na execução: ${error}`,
-      payload: outcome ?? { error },
-      attachments: (outcome?.documentos ?? []).map((d) => d.fileId),
-      runId: ctx.runId,
-    })
-    .returning();
-  publish(ctx.runId, { type: "done", runId: ctx.runId, status, messageId: assistant.id });
 }
 
 /** Execucao sem sessao de chat (lote de avaliacao, teste de integracao). */
@@ -163,10 +223,13 @@ export async function runOnce(args: { user: SessionUser | null; graph: FlowGraph
   };
   let outcome: TurnOutcome | null = null;
   let error: string | null = null;
+  track(ctx);
   try {
     outcome = await executeTurn(ctx, { message: args.message, history: args.history ?? [], caso: args.caso ?? null });
   } catch (err) {
-    error = errorMessage(err);
+    error = failureOf(ctx, err);
+  } finally {
+    live.delete(ctx.runId);
   }
   await db
     .update(schema.run)

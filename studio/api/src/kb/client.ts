@@ -37,6 +37,16 @@ export interface KbSearchParams {
   as_of?: string;
 }
 
+/** Erro HTTP da KB com o status: 4xx e pedido errado (nao adianta repetir), 5xx e da KB. */
+export class KbError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 async function kbFetch<T>(path: string, init?: RequestInit, timeoutMs = 20000): Promise<T> {
   const res = await fetch(`${config.kbUrl}${path}`, {
     ...init,
@@ -45,7 +55,7 @@ async function kbFetch<T>(path: string, init?: RequestInit, timeoutMs = 20000): 
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`KB ${res.status} em ${path}: ${body.slice(0, 300)}`);
+    throw new KbError(res.status, `KB ${res.status} em ${path}: ${body.slice(0, 300)}`);
   }
   return (await res.json()) as T;
 }
@@ -72,7 +82,16 @@ export async function search(p: KbSearchParams): Promise<{ results: KbPassage[];
   const body: Record<string, unknown> = { query: p.query, spaces: p.spaces ?? [], top_k: p.top_k ?? 6 };
   if (p.min_trust) body.min_trust = p.min_trust;
   if (p.as_of) body.as_of = p.as_of;
-  return kbFetch("/v1/search", { method: "POST", body: JSON.stringify(body) }, 30000);
+  const init = { method: "POST", body: JSON.stringify(body) };
+  try {
+    return await kbFetch("/v1/search", init, 30000);
+  } catch (err) {
+    // Uma retentativa: a busca e idempotente, e a KB as vezes demora no
+    // primeiro acesso (embeddings frios) ou cai num restart. Pedido recusado
+    // (4xx) daria o mesmo erro de novo.
+    if (err instanceof KbError && err.status < 500) throw err;
+    return kbFetch("/v1/search", init, 20000);
+  }
 }
 
 export async function fetchDocument(id: number): Promise<Record<string, unknown>> {

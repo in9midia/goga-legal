@@ -121,6 +121,21 @@ describe.skipIf(!dbUp)("motor: fluxo seed com modelo simulado", () => {
     expect(novo.o.caso.documentos).toEqual([]);
   }, 60000);
 
+  it("Retriagem: a lacuna de um parecer vira consulta ao colega que a fecha", async () => {
+    const { db, schema } = mods.db;
+    const graph = mods.flows.buildFlow(mods.flows.FULL_FLOW, mods.flows.FULL_CHAINS, mockId);
+    const r = await mods.run.runOnce({ user: null, graph, flowId: null, flowName: "teste", revision: 1, message: "O banco fez um empréstimo no meu nome que eu não contratei (lacuna da especialidade 46)" });
+    expect(r.error).toBeNull();
+    const o = r.outcome!;
+    const consulted = o.especialistas.find((e) => e.nodeId === "sp-46");
+    expect(consulted?.consultadoPor?.length).toBeGreaterThan(0);
+    expect(o.flags).toContain("consulta_entre_especialistas");
+    expect(o.path.nodes).toEqual(expect.arrayContaining(["retriagem", "sp-46", "consolidator"]));
+    expect(o.path.edges).toEqual(expect.arrayContaining(["classifier->retriagem", "retriagem->consolidator"]));
+    const spans = await db.select().from(schema.span).where(eq(schema.span.runId, r.runId));
+    expect(spans.some((s) => s.name === "Consulta entre especialistas")).toBe(true);
+  }, 30000);
+
   it("fora de escopo vai para o Encaminhamento (Ag. 5)", async () => {
     const graph = mods.flows.buildFlow(mods.flows.FULL_FLOW, mods.flows.FULL_CHAINS, mockId);
     const r = await mods.run.runOnce({ user: null, graph, flowId: null, flowName: "teste", revision: 1, message: "quero saber sobre divórcio e guarda dos filhos" });

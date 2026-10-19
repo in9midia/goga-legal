@@ -3,13 +3,14 @@
 // que o salvar do editor e a validacao do servidor nao possam divergir.
 import { z } from "zod";
 
-export const NODE_TYPES = ["entry", "classifier", "specialist", "consolidator", "compliance", "output"] as const;
+export const NODE_TYPES = ["entry", "classifier", "specialist", "retriagem", "consolidator", "compliance", "output"] as const;
 export type NodeType = (typeof NODE_TYPES)[number];
 
 export const NODE_TYPE_LABEL: Record<NodeType, string> = {
   entry: "Entrada",
   classifier: "Classificador",
   specialist: "Especialista",
+  retriagem: "Retriagem",
   consolidator: "Consolidador",
   compliance: "Compliance",
   output: "Saída",
@@ -79,11 +80,23 @@ export const nodeDataSchema = z.object({
       defendantFastPath: z.boolean().default(true),
     })
     .optional(),
+  // So Retriagem: a segunda rodada, em que um especialista que ja respondeu
+  // pede a um colega o dado que falta. Sem o no no fluxo, nao ha segunda rodada.
+  retriagem: z
+    .object({
+      maxConsultas: z.number().int().min(0).max(5).default(2),
+    })
+    .optional(),
   cycle: z
     .object({
       maxCycles: z.number().int().min(0).max(5).default(2),
       requiredChecks: z.array(z.string()).default([...DETERMINISTIC_CHECKS]),
       safeResponse: z.string().default(""),
+      // Esgotados os ciclos com objecao so do modelo (nenhuma checagem
+      // deterministica falhou, zona nao vermelha): entrega a ultima versao com a
+      // flag `compliance_ressalvas` em vez da resposta segura. Desligado, vale a
+      // regra antiga: qualquer reprovacao vira resposta segura.
+      deliverWithReservations: z.boolean().default(false),
     })
     .optional(),
 });
@@ -156,6 +169,9 @@ export function validateGraph(graph: FlowGraph, ctx: GraphContext = {}): GraphEr
   if (byType("compliance").length > 1) {
     errors.push({ code: "compliance_count", message: "No máximo 1 nó Compliance." });
   }
+  if (byType("retriagem").length > 1) {
+    errors.push({ code: "retriagem_count", message: "No máximo 1 nó Retriagem." });
+  }
   if (byType("specialist").length === 0) {
     errors.push({ code: "no_specialist", message: "O fluxo precisa de ao menos 1 Especialista." });
   }
@@ -221,7 +237,7 @@ export function validateGraph(graph: FlowGraph, ctx: GraphContext = {}): GraphEr
           errors.push({ code: "model_inactive", nodeId: n.id, message: `"${n.data.name}": modelo inexistente ou inativo.` });
         }
       }
-      const needsModel = ["classifier", "specialist", "consolidator", "compliance"].includes(n.type);
+      const needsModel = ["classifier", "specialist", "retriagem", "consolidator", "compliance"].includes(n.type);
       if (needsModel && !m.modelId && !graph.settings.defaultModelId) {
         errors.push({ code: "model_missing", nodeId: n.id, message: `"${n.data.name}": sem modelo e o fluxo não tem modelo padrão.` });
       }

@@ -125,15 +125,17 @@ export function applyFlowOps(
                 rules: { escalation: s.escalationRules, zone: s.zone === "amarela" ? "amarela" : "verde" },
               }
             : {
-                name: op.tipo === "specialist" ? "Novo especialista" : op.tipo === "compliance" ? "Compliance" : "Novo nó",
+                name: op.tipo === "specialist" ? "Novo especialista" : op.tipo === "compliance" ? "Compliance" : op.tipo === "retriagem" ? "Retriagem" : "Novo nó",
                 cycle: op.tipo === "compliance" ? {} : undefined,
+                retriagem: op.tipo === "retriagem" ? {} : undefined,
                 routing: op.tipo === "classifier" ? {} : undefined,
               };
           const data = nodeDataSchema.parse(deepMerge(base, op.dados ?? {}));
           const cls = g.nodes.find((n) => n.type === "classifier");
           const position = { x: (cls?.position.x ?? 300) + 300, y: (cls?.position.y ?? 200) + 90 * (g.nodes.filter((n) => n.type === "specialist").length % 8) - 200 };
           g.nodes.push({ id, type: op.tipo, position, data });
-          if (op.tipo === "specialist" && op.conectar) {
+          // Retriagem entra sempre ligada (Classificador -> Retriagem -> Consolidador): solta, nao seria alcancavel.
+          if ((op.tipo === "specialist" && op.conectar) || op.tipo === "retriagem") {
             const consolidator = g.nodes.find((n) => n.type === "consolidator");
             if (cls) link(cls.id, id);
             if (consolidator) link(id, consolidator.id);

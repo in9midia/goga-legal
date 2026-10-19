@@ -182,6 +182,7 @@ export function RunPage() {
                     <StatusBadge status={e.ok ? "ok" : "error"} /> {e.name}
                     {e.score != null && <span className="font-mono text-text-dim">score {e.score.toFixed(2)}</span>}
                     {e.chainedFrom && <Pill>encadeado de {e.chainedFrom}</Pill>}
+                    {e.consultadoPor?.length ? <Pill>consultado por {e.consultadoPor.join(", ")}</Pill> : null}
                     {e.reused && <Pill>reaproveitado</Pill>}
                   </div>
                 ))}

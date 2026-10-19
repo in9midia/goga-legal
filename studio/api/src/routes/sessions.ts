@@ -3,11 +3,11 @@ import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "../db/index.js";
 import { requireUser } from "../lib/auth.js";
-import { badRequest, notFound } from "../lib/errors.js";
+import { HttpError, badRequest, notFound } from "../lib/errors.js";
 import { readFileStream, saveUpload } from "../files/storage.js";
 import { extractFile } from "../files/extract.js";
 import { config } from "../config.js";
-import { startTurn } from "../engine/run.js";
+import { cancelRun, startTurn } from "../engine/run.js";
 import { channel, hasChannel } from "../engine/tracer.js";
 import { runTranscript, sessionTranscript } from "../engine/transcript.js";
 import type { RunEvent, SpanRecord } from "../shared/graph.js";
@@ -164,6 +164,17 @@ export async function sessionRoutes(app: FastifyInstance) {
     }
     const started = await startTurn({ user: me, sessionId: s.id, message: r.question, fileIds, target: b.data });
     return { sessionId: s.id, ...started };
+  });
+
+  // Pedido de parar: a chamada a modelo em curso e abortada; o turno fecha como
+  // erro "interrompida pelo usuario", com o que ja rodou no trace.
+  app.post<{ Params: { id: string } }>("/api/v1/runs/:id/cancel", async (req) => {
+    const me = requireUser(req);
+    const [r] = await db.select({ userId: schema.run.userId, status: schema.run.status }).from(schema.run).where(eq(schema.run.id, req.params.id));
+    if (!r) throw notFound("execução");
+    if (r.userId && r.userId !== me.id && me.role !== "admin") throw new HttpError(403, "Só quem iniciou a execução pode pará-la.");
+    if (r.status !== "running") return { cancelled: false, status: r.status };
+    return { cancelled: cancelRun(req.params.id) };
   });
 
   app.get<{ Params: { id: string } }>("/api/v1/runs/:id/stream", async (req, reply) => {

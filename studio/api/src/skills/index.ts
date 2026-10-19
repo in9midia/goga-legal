@@ -21,7 +21,18 @@ export interface SkillEnv {
   ctx: RunContext;
   node: FlowNode;
   parentId: string | null;
+  /**
+   * Ferramentas chamadas pelo modelo que devolveram erro ("nome: erro"). A falta
+   * de resultado delas nao prova que algo nao existe: o Consolidador precisa saber.
+   */
+  failures?: string[];
 }
+
+/** O erro que a ferramenta devolveu como dado (`{ erro: "…" }`), ou nulo. */
+const errorOf = (r: unknown): string | null => {
+  const e = r && typeof r === "object" ? (r as { erro?: unknown }).erro : undefined;
+  return typeof e === "string" && e.trim() ? e.trim().slice(0, 200) : null;
+};
 
 interface SkillDef<S extends z.ZodTypeAny = z.ZodTypeAny> {
   id: string;
@@ -336,13 +347,17 @@ export async function toolsFor(env: SkillEnv, mcpTools: { server: string; name: 
       description: row.description,
       inputSchema: row.kind === "builtin" ? code!.input : jsonSchemaOf(row.inputSchema as Record<string, unknown>),
       execute: async (input: unknown) => {
+        let out: unknown;
         try {
-          return await runSkill(row.id, input, env);
+          out = await runSkill(row.id, input, env);
         } catch (err) {
           // Erro volta ao modelo como resultado, nao como excecao: ele pode
           // corrigir o argumento (data em formato errado e o caso tipico).
-          return { erro: (err as Error).message };
+          out = { erro: (err as Error).message };
         }
+        const e = errorOf(out);
+        if (e) env.failures?.push(`${row.id}: ${e}`);
+        return out;
       },
     });
   }
@@ -351,12 +366,16 @@ export async function toolsFor(env: SkillEnv, mcpTools: { server: string; name: 
     set[key] = tool({
       description: `[MCP ${t.server}] ${t.description ?? t.name}`,
       inputSchema: jsonSchemaOf(t.inputSchema),
-      execute: async (args: unknown) =>
-        env.ctx.tracer
+      execute: async (args: unknown) => {
+        const out = await env.ctx.tracer
           .wrap({ kind: "mcp", name: `mcp · ${t.server}.${t.name}`, parentId: env.parentId, nodeId: env.node.id, input: args }, () =>
             callTool(t.server, t.name, restrictMcpArgs(t, args as Record<string, unknown>, env.node)),
           )
-          .catch((err: Error) => ({ erro: err.message })),
+          .catch((err: Error) => ({ erro: err.message }));
+        const e = errorOf(out);
+        if (e) env.failures?.push(`${t.server}.${t.name}: ${e}`);
+        return out;
+      },
     });
   }
   return set;

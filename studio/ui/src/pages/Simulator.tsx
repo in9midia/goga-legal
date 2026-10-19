@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeftRight, Bot, FileDown, FileText, Loader2, MessageSquarePlus, Paperclip, Rocket, Send, ThumbsDown, ThumbsUp, Trash2, X } from "lucide-react";
+import { AlertTriangle, ArrowLeftRight, Bot, FileDown, FileText, Loader2, MessageSquarePlus, Paperclip, Rocket, Send, Square, ThumbsDown, ThumbsUp, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { api, fileUrl } from "@/lib/api";
 import { bytes, dateTime, usd } from "@/lib/format";
@@ -101,6 +101,7 @@ export function SimulatorPage() {
             onTarget={(t) => changeTarget.mutate(t)}
             ensureSession={ensureSession}
             running={isLive}
+            onStop={() => activeRun && api.post(`/runs/${activeRun}/cancel`, {}).catch((err: Error) => toast.error(err.message))}
             onSent={(runId) => {
               setActiveRun(runId);
               setSelectedRun(runId);
@@ -197,6 +198,7 @@ function Chat({
   onTarget,
   ensureSession,
   running,
+  onStop,
   onSent,
   selectedRun,
   onSelectRun,
@@ -209,6 +211,7 @@ function Chat({
   onTarget: (t: Target) => void;
   ensureSession: () => Promise<string>;
   running: boolean;
+  onStop: () => void;
   onSent: (runId: string) => void;
   selectedRun: string | null;
   onSelectRun: (id: string) => void;
@@ -321,7 +324,12 @@ function Chat({
           ),
         )}
         {running && (
-          <div className="flex items-center gap-2 text-sm text-text-muted"><Loader2 className="h-4 w-4 animate-spin" /> executando o fluxo… acompanhe no trace ao lado</div>
+          <div className="flex items-center gap-2 text-sm text-text-muted">
+            <Loader2 className="h-4 w-4 animate-spin" /> executando o fluxo… acompanhe no trace ao lado
+            <Button size="sm" variant="outline" className="ml-auto h-7 text-xs" title="Interrompe a execução: a chamada ao modelo em curso é abortada e o turno fecha como erro" onClick={onStop}>
+              <Square className="h-3 w-3" /> Parar
+            </Button>
+          </div>
         )}
         <div ref={bottom} />
       </div>

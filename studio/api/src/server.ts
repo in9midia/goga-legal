@@ -4,10 +4,13 @@ import { runMigrations } from "./db/index.js";
 import { pruneSessions } from "./lib/auth.js";
 import { seed } from "./seed/index.js";
 import { recoverInterruptedTurns } from "./assistant/agent.js";
+import { reapOrphanRuns } from "./engine/run.js";
 import { getIndices } from "./skills/indices.js";
 
 await runMigrations();
 await seed((m) => console.log(`[seed] ${m}`));
+const orphans = await reapOrphanRuns();
+if (orphans) console.warn(`[execucoes] ${orphans} execução(ões) interrompida(s) pelo reinício foram fechadas`);
 const interrupted = await recoverInterruptedTurns();
 if (interrupted) console.warn(`[assistente] ${interrupted} turno(s) interrompido(s) pelo reinício foram fechados`);
 // Aquece a tabela do BCB sem bloquear o boot: sem rede, o Studio sobe e so o

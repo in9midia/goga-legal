@@ -76,11 +76,12 @@ export function emptyGraph(defaultModelId: string | null = null): FlowGraph {
   const nodes: FlowNode[] = [
     { id: "entry", type: "entry", position: { x: 0, y: 200 }, data: data({ name: "Entrada", prompt: { system: p.entry?.prompt ?? "", outputFormat: "livre", examples: "" } }) },
     classifierNode({ x: 280, y: 200 }),
+    retriagemNode({ x: 740, y: -60 }),
     consolidatorNode({ x: 900, y: 200 }),
     complianceNode({ x: 1180, y: 200 }),
     { id: "output", type: "output", position: { x: 1460, y: 200 }, data: data({ name: "Saída" }) },
   ];
-  const edges: FlowEdge[] = [e("entry", "classifier"), e("consolidator", "compliance"), e("compliance", "consolidator"), e("compliance", "output")];
+  const edges: FlowEdge[] = [e("entry", "classifier"), e("classifier", "retriagem"), e("retriagem", "consolidator"), e("consolidator", "compliance"), e("compliance", "consolidator"), e("compliance", "output")];
   return { nodes, edges, settings: flowSettings(defaultModelId) };
 }
 
@@ -104,6 +105,22 @@ function classifierNode(position: { x: number; y: number }): FlowNode {
         exclusionTriggers: (c.exclusion_triggers as string[]) ?? ["familia", "penal"],
         defendantFastPath: c.defendant_fast_path !== false,
       },
+    }),
+  };
+}
+
+/** Segunda rodada: le as lacunas dos pareceres e aciona o colega que as fecha. */
+function retriagemNode(position: { x: number; y: number }): FlowNode {
+  return {
+    id: "retriagem",
+    type: "retriagem",
+    position,
+    data: data({
+      name: "Retriagem",
+      description: "Lê as lacunas dos pareceres e consulta o especialista que as fecha (uma rodada).",
+      prompt: { system: "", outputFormat: "livre", examples: "" },
+      model: { modelId: null, temperature: 0, maxTokens: 2000, timeoutMs: 60000, maxCostUsd: 0.02, fallbackModelId: null },
+      retriagem: { maxConsultas: 2 },
     }),
   };
 }
@@ -136,7 +153,7 @@ function complianceNode(position: { x: number; y: number }): FlowNode {
       model: { modelId: null, temperature: 0, maxTokens: 1500, timeoutMs: 90000, maxCostUsd: 0.03, fallbackModelId: null },
       tools: { skills: ["checar_compliance", "verificar_citacao"], mcp: [] },
       rules: { guardrails: ((c.forbidden_terms as string[]) ?? []).map((t) => `Proibido: "${t}"`), checks: (c.required_checks as string[]) ?? [], escalation: [], zone: "amarela" },
-      cycle: { maxCycles: Number(c.max_cycles ?? 2), requiredChecks: (c.required_checks as string[]) ?? ["disclaimer", "sem_promessa", "citacoes_verificadas", "zona", "lgpd"], safeResponse: String(c.safe_response ?? "") },
+      cycle: { maxCycles: Number(c.max_cycles ?? 2), requiredChecks: (c.required_checks as string[]) ?? ["disclaimer", "sem_promessa", "citacoes_verificadas", "zona", "lgpd"], safeResponse: String(c.safe_response ?? ""), deliverWithReservations: false },
     }),
   };
 }

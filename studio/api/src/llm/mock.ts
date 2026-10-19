@@ -134,7 +134,16 @@ function respond(system: string, user: string): unknown {
         confianca: 0.5,
         precisa_humano: false,
         motivo_humano: "",
+        // "lacuna da especialidade N" na mensagem: o parecer deixa um ponto em
+        // aberto que o colega N fecha (exercita a Retriagem sem modelo real).
+        lacunas: [...norm(sectionBody(user, "Mensagem atual")).matchAll(/lacuna da especialidade (\d+)/g)].map((m) => `ponto que depende da especialidade ${m[1]}`),
+        consultar: [],
       };
+    case "retriagem": {
+      const de = user.match(/^### ([^:\n]+):/m)?.[1] ?? "";
+      const consultas = [...user.matchAll(/ponto que depende da especialidade (\d+)/g)].map((m) => ({ especialista: `sp-${m[1]}`, pergunta: `Verifique o ponto da especialidade ${m[1]} neste caso (modelo simulado).`, de }));
+      return { verificacoes: consultas.map((c) => ({ texto: c.pergunta, de, quem_responde: c.especialista })), consultas };
+    }
     case "consolidado": {
       // So a mensagem atual: a ficha traz a resposta anterior do Goga, que fala em "reclamação".
       const docs = /reclamac|notificac|modelo de|documento/.test(norm(sectionBody(user, "Mensagem atual") || user)) ? ["reclamacao-consumidor-gov"] : [];

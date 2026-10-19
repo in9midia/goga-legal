@@ -18,7 +18,8 @@ export interface ResolvedModel {
   model: LanguageModel;
 }
 
-export function buildLanguageModel(provider: ProviderRow, modelId: string): LanguageModel {
+/** `fetch` opcional: a chamada do motor passa um que mede cada requisicao ao provedor. */
+export function buildLanguageModel(provider: ProviderRow, modelId: string, fetch?: typeof globalThis.fetch): LanguageModel {
   const apiKey = provider.apiKeyEnc ? decrypt(provider.apiKeyEnc) : "";
   const baseURL = provider.baseUrl || undefined;
   if (provider.kind !== "mock" && !apiKey) {
@@ -26,18 +27,18 @@ export function buildLanguageModel(provider: ProviderRow, modelId: string): Lang
   }
   switch (provider.kind) {
     case "deepseek":
-      return createDeepSeek({ apiKey, baseURL })(modelId);
+      return createDeepSeek({ apiKey, baseURL, fetch })(modelId);
     case "gemini":
-      return createGoogleGenerativeAI({ apiKey, baseURL })(modelId);
+      return createGoogleGenerativeAI({ apiKey, baseURL, fetch })(modelId);
     case "openai_compat":
       if (!baseURL) throw new HttpError(400, `Provedor "${provider.name}" precisa de endpoint.`);
-      return createOpenAICompatible({ name: provider.name, baseURL, apiKey, fetch: sseCompatFetch() })(modelId);
+      return createOpenAICompatible({ name: provider.name, baseURL, apiKey, fetch: sseCompatFetch(fetch) })(modelId);
     case "mock":
       return mockModel(modelId);
   }
 }
 
-export async function resolveModel(modelRowId: string): Promise<ResolvedModel> {
+export async function resolveModel(modelRowId: string, fetch?: typeof globalThis.fetch): Promise<ResolvedModel> {
   const [r] = await db
     .select()
     .from(schema.model)
@@ -47,7 +48,7 @@ export async function resolveModel(modelRowId: string): Promise<ResolvedModel> {
   if (!r.model.active || !r.provider.active) {
     throw new HttpError(400, `Modelo "${r.model.label}" ou seu provedor está inativo.`);
   }
-  return { row: r.model, provider: r.provider, model: buildLanguageModel(r.provider, r.model.modelId) };
+  return { row: r.model, provider: r.provider, model: buildLanguageModel(r.provider, r.model.modelId, fetch) };
 }
 
 export async function defaultModelId(purpose: "chat" | "embedding" | "vision"): Promise<string | null> {

@@ -1,7 +1,7 @@
 import { memo, useMemo } from "react";
 import { Background, Controls, Handle, MarkerType, MiniMap, Position, ReactFlow, type Edge, type Node, type NodeProps, type OnConnect, type OnEdgesChange, type OnNodesChange } from "@xyflow/react";
 import dagre from "@dagrejs/dagre";
-import { BookOpen, Filter, Gavel, Inbox, Layers, LogOut, ShieldCheck, type LucideIcon } from "lucide-react";
+import { BookOpen, Filter, Gavel, Inbox, Layers, LogOut, Repeat2, ShieldCheck, type LucideIcon } from "lucide-react";
 import { NODE_TYPE_LABEL, type FlowGraph, type NodeData, type NodeType } from "@shared/graph";
 import { cn } from "@/lib/utils";
 
@@ -9,6 +9,7 @@ export const NODE_META: Record<NodeType, { icon: LucideIcon; color: string }> = 
   entry: { icon: Inbox, color: "#60a5fa" },
   classifier: { icon: Filter, color: "#a78bfa" },
   specialist: { icon: Gavel, color: "#34d399" },
+  retriagem: { icon: Repeat2, color: "#22d3ee" },
   consolidator: { icon: Layers, color: "#fbbf24" },
   compliance: { icon: ShieldCheck, color: "#f472b6" },
   output: { icon: LogOut, color: "#9a9aa3" },
@@ -42,7 +43,9 @@ const AgentNode = memo(function AgentNode({ data, selected }: NodeProps<Node<Can
         ? `limiar ${d.routing.routingThreshold} · máx ${d.routing.maxSpecialists}`
         : data.type === "compliance" && d.cycle
           ? `até ${d.cycle.maxCycles} ciclo(s)`
-          : NODE_TYPE_LABEL[data.type];
+          : data.type === "retriagem"
+            ? `até ${d.retriagem?.maxConsultas ?? 2} consulta(s)`
+            : NODE_TYPE_LABEL[data.type];
   return (
     <div
       className={cn(

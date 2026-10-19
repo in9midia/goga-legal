@@ -60,7 +60,7 @@ export function NodeInspector({ node, cats, onChange, onDelete, readOnly, errors
   const models = cats.models.data ?? [];
   const specs = cats.specialties.data ?? [];
   const spaces = cats.kb.data?.spaces ?? [];
-  const isAgent = ["classifier", "specialist", "consolidator", "compliance"].includes(node.type);
+  const isAgent = ["classifier", "specialist", "retriagem", "consolidator", "compliance"].includes(node.type);
   const mcpOptions = (cats.mcp.data ?? []).flatMap((s) =>
     s.enabled ? (s.toolsCache ?? []).map((t) => ({ value: `${s.id}:${t.name}`, label: `${s.name} · ${t.name}`, hint: t.description?.slice(0, 90) })) : [{ value: `${s.id}:*`, label: `${s.name} (desabilitado)`, hint: s.description, disabled: true }],
   );
@@ -89,6 +89,7 @@ export function NodeInspector({ node, cats, onChange, onDelete, readOnly, errors
     ...(isAgent ? [["tools", "Ferramentas"], ["regras", "Regras"]] : []),
     ...(node.type === "classifier" ? [["routing", "Roteamento"]] : []),
     ...(node.type === "compliance" ? [["ciclo", "Ciclo"]] : []),
+    ...(node.type === "retriagem" ? [["consultas", "Consultas"]] : []),
   ];
 
   return (
@@ -257,9 +258,20 @@ export function NodeInspector({ node, cats, onChange, onDelete, readOnly, errors
             </TabsContent>
           )}
 
+          {node.type === "retriagem" && (
+            <TabsContent value="consultas" className="space-y-4">
+              <Field
+                label="Máx. consultas por turno"
+                hint="Depois da primeira rodada, a Retriagem lê as lacunas dos pareceres e consulta até N especialistas do fluxo que ainda não rodaram. Cada consulta é mais uma chamada a modelo; 0 desliga a segunda rodada."
+              >
+                <Num value={d.retriagem?.maxConsultas ?? 2} min={0} max={5} onChange={(v) => set("retriagem", { maxConsultas: v })} />
+              </Field>
+            </TabsContent>
+          )}
+
           {d.cycle && (
             <TabsContent value="ciclo" className="space-y-4">
-              <Field label="Máx. ciclos de revisão" hint="Reprovou: volta ao Consolidador com os motivos. Esgotou: resposta segura padrão e flag no trace."><Num value={d.cycle.maxCycles} min={0} max={5} onChange={(v) => set("cycle", { ...d.cycle!, maxCycles: v })} /></Field>
+              <Field label="Máx. ciclos de revisão" hint="Reprovou: volta ao Consolidador com os motivos. Objeção repetida ou texto igual encerra o ciclo antes do teto; melhoria não reprova."><Num value={d.cycle.maxCycles} min={0} max={5} onChange={(v) => set("cycle", { ...d.cycle!, maxCycles: v })} /></Field>
               <Field label="Checagens obrigatórias">
                 <div className="grid grid-cols-2 gap-2">
                   {DETERMINISTIC_CHECKS.map((c) => (
@@ -270,6 +282,13 @@ export function NodeInspector({ node, cats, onChange, onDelete, readOnly, errors
                   ))}
                 </div>
               </Field>
+              <label className="flex items-center justify-between gap-3 rounded-md border border-line px-3 py-2 text-sm">
+                <span>
+                  Entregar com ressalva
+                  <span className="block text-[0.7rem] text-text-dim">esgotados os ciclos só com objeção do modelo (checagens ok, zona não vermelha): entrega a última versão com a flag compliance_ressalvas em vez da resposta segura</span>
+                </span>
+                <Switch checked={d.cycle.deliverWithReservations ?? false} onCheckedChange={(v) => set("cycle", { ...d.cycle!, deliverWithReservations: v })} />
+              </label>
               <Field label="Resposta segura padrão"><Textarea rows={8} value={d.cycle.safeResponse} onChange={(e) => set("cycle", { ...d.cycle!, safeResponse: e.target.value })} /></Field>
             </TabsContent>
           )}

@@ -187,10 +187,11 @@ function Editor({ initial }: { initial: FlowResponse }) {
           tools: { skills: [...new Set(["buscar_kb", "verificar_citacao", ...s.defaultSkills])], mcp: [] },
           rules: { escalation: s.escalationRules, zone: s.zone === "amarela" ? "amarela" : "verde" },
         })
-      : nodeDataSchema.parse({ name: type === "specialist" ? "Novo especialista" : type === "compliance" ? "Compliance" : "Novo nó", cycle: type === "compliance" ? {} : undefined, routing: type === "classifier" ? {} : undefined });
+      : nodeDataSchema.parse({ name: type === "specialist" ? "Novo especialista" : type === "compliance" ? "Compliance" : type === "retriagem" ? "Retriagem" : "Novo nó", cycle: type === "compliance" ? {} : undefined, routing: type === "classifier" ? {} : undefined, retriagem: type === "retriagem" ? {} : undefined });
     const node: FlowNode = { id, type, position: { x: (cls?.position.x ?? 300) + 300, y: (cls?.position.y ?? 200) + 40 * (graph.nodes.length % 8) }, data };
     const edges = [...graph.edges];
-    if (type === "specialist") {
+    // Retriagem fica entre Classificador e Consolidador; solta, nao seria alcancavel.
+    if (type === "specialist" || type === "retriagem") {
       const classifier = graph.nodes.find((n) => n.type === "classifier");
       const consolidator = graph.nodes.find((n) => n.type === "consolidator");
       if (classifier) edges.push({ id: `${classifier.id}->${id}`, source: classifier.id, target: id });
@@ -253,6 +254,7 @@ function Editor({ initial }: { initial: FlowResponse }) {
                 <DropdownMenuItem onClick={() => addNode("specialist")}>Especialista em branco</DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem disabled={graph.nodes.some((n) => n.type === "compliance")} onClick={() => addNode("compliance")}>Compliance</DropdownMenuItem>
+                <DropdownMenuItem disabled={graph.nodes.some((n) => n.type === "retriagem")} onClick={() => addNode("retriagem")}>Retriagem (consulta entre especialistas)</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           )}
