@@ -140,10 +140,10 @@ export const SKILLS: SkillDef[] = [
     id: "verificar_citacao",
     name: "Verificar citações",
     description: "Extrai citações (lei, súmula, tema, REsp…) do texto e confere se estão VERIFICADAS na auditoria/KB. Bloqueia as EM VERIFICAÇÃO.",
-    input: z.object({ texto: z.string() }),
+    input: z.object({ texto: z.string(), caso: z.string().optional().describe("mensagem, histórico e anexos do usuário: números de processo daqui são do caso, não precedentes") }),
     llmTool: false,
     async run(i, { node }) {
-      return { citacoes: await verifyCitations(i.texto, node.data.knowledge.spaces) };
+      return { citacoes: await verifyCitations(i.texto, node.data.knowledge.spaces, i.caso) };
     },
   }),
   def({

@@ -159,6 +159,9 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
   // sem caracteres invisiveis nem os delimitadores do motor (`<<dado>>`,
   // `<<formato:...>>`), que serviriam para "falar como sistema".
   const message = neutralize(input.message);
+  // Material do proprio usuario: numero de processo que vem daqui e do caso,
+  // nao precedente a conferir na KB (verificar_citacao).
+  const userMaterial = [input.message, ...input.history.filter((h) => h.role === "user").map((h) => h.content), ...ctx.files.map((f) => f.text ?? "")].join("\n");
   const historyMsgs: ModelMessage[] = input.history.slice(-HISTORY_TURNS).map((h) => ({ role: h.role, content: neutralize(h.content) }));
   // Heuristicas de injecao: nao bloqueiam (relato juridico cita "ignore" e
   // "sistema" o tempo todo), so poem o alerta no prompt dos nos seguintes.
@@ -565,7 +568,7 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
         let citacoes: CitationCheck[] = [];
         if (await hasSkill(ctx, n, "verificar_citacao")) {
           const txt = parecer.fundamentos.map((f) => f.citacao).join("\n");
-          citacoes = ((await runSkill("verificar_citacao", { texto: txt }, env)) as { citacoes: CitationCheck[] }).citacoes;
+          citacoes = ((await runSkill("verificar_citacao", { texto: txt, caso: userMaterial }, env)) as { citacoes: CitationCheck[] }).citacoes;
           const st = new Map(citacoes.map((c) => [c.citacao, c.status]));
           parecer.fundamentos = parecer.fundamentos.map((f) => ({ ...f, status: st.get(f.citacao) ?? f.status }));
         }
@@ -756,7 +759,7 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
         const det = await ctx.tracer.wrap({ kind: "guardrail", name: "Checagens determinísticas", nodeId: compliance.id, parentId: span.id, input: { checks: cycle.requiredChecks } }, async () => {
           const r = checkCompliance(text, { disclaimer, checks: cycle.requiredChecks });
           if (cycle.requiredChecks.includes("citacoes_verificadas")) {
-            const { citacoes } = (await runSkill("verificar_citacao", { texto: text }, env)) as { citacoes: CitationCheck[] };
+            const { citacoes } = (await runSkill("verificar_citacao", { texto: text, caso: userMaterial }, env)) as { citacoes: CitationCheck[] };
             const bad = citacoes.filter((c) => c.bloqueada);
             r.push({ check: "citacoes_verificadas", ok: !bad.length, detalhe: bad.length ? `citações não verificadas: ${bad.map((c) => `${c.citacao} (${c.status})`).join(", ")}` : `${citacoes.length} citação(ões) verificada(s)` });
           }

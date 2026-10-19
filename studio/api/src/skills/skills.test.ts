@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { calcularCorrecao, calcularPrazo, elegibilidadeJuizado } from "./legal.js";
 import { checkCompliance, findPromise } from "./compliance.js";
-import { extractCitations, normalizeCitation } from "./citations.js";
+import { caseNumbers, extractCitations, normalizeCitation, verifyCitations } from "./citations.js";
 import { extractJson } from "../llm/json.js";
 import { renderTemplate } from "../files/documents.js";
 import type { IndexTables } from "./indices.js";
@@ -80,6 +80,24 @@ describe("citações", () => {
     expect(c).toHaveLength(3);
     expect(normalizeCitation("Súmula nº 297 do STJ")).toBe(normalizeCitation("Súmula 297/STJ"));
     expect(normalizeCitation("Lei 14.905/2024")).toBe("lei-14905-2024");
+  });
+
+  it("número de processo do material do usuário é do caso, em qualquer grafia", () => {
+    const caso = "Recurso no STJ: AREsp nº 3.257.402 - SP. Fundamento: Lei 8.906/1994 e Súmula 297/STJ.";
+    const nums = caseNumbers(caso);
+    expect(nums).toEqual(new Set(["aresp:3257402"]));
+  });
+
+  it("não bloqueia o número do processo que o usuário trouxe", async () => {
+    const r = await verifyCitations("No STJ (AREsp 3257402/SP) os polos se inverteram.", [], "anexo: autos do AREsp nº 3.257.402 - SP");
+    expect(r).toEqual([expect.objectContaining({ citacao: "AREsp 3257402/SP", status: "DO_CASO", bloqueada: false })]);
+  });
+
+  it("outro número de processo, fora do material do usuário, continua sendo conferido", async () => {
+    const r = await verifyCitations("Ver AREsp 1234567/RJ.", [], "anexo: autos do AREsp 3257402/SP");
+    expect(r).toHaveLength(1);
+    expect(r[0].status).not.toBe("DO_CASO");
+    expect(r[0].bloqueada).toBe(true);
   });
 });
 

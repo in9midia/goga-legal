@@ -69,6 +69,7 @@ const STATUS: Record<string, [string, Tone]> = {
   INCORRETA: ["INCORRETA", "bad"],
   NAO_ENCONTRADA: ["NÃO ENCONTRADA", "bad"],
   KB_INDISPONIVEL: ["KB indisponível", "neutral"],
+  DO_CASO: ["DO CASO", "neutral"],
 };
 
 export function Pill({ children, tone = "neutral", className, title }: { children: ReactNode; tone?: Tone; className?: string; title?: string }) {
