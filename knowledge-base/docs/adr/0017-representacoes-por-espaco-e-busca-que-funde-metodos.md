@@ -101,7 +101,9 @@ Custos e armadilhas:
   representações tomaria o pool inteiro e travaria o resto da API;
 - **um método que falha não derruba a busca.** Ele sai da fusão e o trace diz o
   que aconteceu. Uma busca sem o braço lexical é pior que uma completa e muito
-  melhor que um erro;
+  melhor que um erro. O mesmo vale para o método que passa do prazo
+  (`KB_METODO_TIMEOUT_MS`): ele sai da fusão e a busca não espera por ele
+  (ADR-0033);
 - **a mesma escolha já teve três formatos gravados** (`okf: true`,
   `mode: okf`, `enrichment: conceito`), e os três foram para produção. A leitura
   dos antigos fica em `chunking._enriquecimento`: sem ela, um Espaço gravado num

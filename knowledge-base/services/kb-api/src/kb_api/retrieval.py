@@ -45,6 +45,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 
 from . import graph, okf, providers, representations
+from .config import settings
 from .db import as_vector, conn
 from .embedding import EmbeddingError, EmbedResult, embed
 
@@ -382,6 +383,7 @@ def semantica(query: str, spaces: list[str], limit: int,
     if consultas:
         with conn() as connection, connection.cursor() as cur:
             _preparar_sessao(cur)
+            _limitar_tempo(cur)
             for vetor, alvo in consultas:
                 # ⚠ A EXPRESSAO PRECISA SER IDENTICA A DO INDICE (migracao 0008).
                 # Indice de expressao so entra se o `ORDER BY` a escreve igual;
@@ -457,16 +459,133 @@ def semantica(query: str, spaces: list[str], limit: int,
 # a recuperacao lexical (sigla, codigo de documento, nome proprio) e sobra so o
 # vetor.
 #
-# A conversao passa pelo `to_tsvector` do proprio Postgres e depois junta os
-# lexemas com ` | `: aproveita o stemmer e a lista de stopwords do dicionario
-# portugues e nunca concatena texto do usuario em SQL.
-_TSQUERY = """
-    NULLIF(
-        array_to_string(
-            tsvector_to_array(to_tsvector('portuguese', unaccent(%s))), ' | '
-        ), ''
-    )::tsquery
-"""
+# O OR tem o defeito oposto quando a base cresce: termo comum casa com quase
+# tudo. Com 231 mil trechos, "sobre" estava em 57% deles, e a pergunta "manifestacao
+# sobre embargos em agravo em recurso especial" casava com 187 mil -- o
+# `ts_rank_cd` ranqueava a base inteira para devolver 40, levava 18 s com o banco
+# ocioso e minutos sob concorrencia. Por isso o OR leva os termos do mais raro
+# para o mais comum, ate o orcamento de linhas (ADR-0033).
+#
+# Os lexemas saem do `to_tsvector` do proprio Postgres (stemmer e stopwords do
+# dicionario portugues), e o texto do usuario nunca e concatenado em SQL: vai
+# como parametro, ja como tsquery com cada lexema entre aspas.
+
+# As estatisticas mudam no ritmo do ANALYZE, nao da busca.
+_ESTATISTICA_TTL_S = 3600.0
+_estatisticas: dict[str, tuple[float, dict[str, float], float, dict[str, int]]] = {}
+_estatisticas_lock = threading.Lock()
+
+# Os trechos que cada metodo lexical consulta, por tabela.
+_UNIVERSO_LEXICO = {
+    "chunk": "parent_id IS NOT NULL",
+    "wiki_page": "TRUE",
+}
+
+
+def _limitar_tempo(cur) -> None:
+    """Teto das consultas do metodo, so nesta transacao (`is_local`).
+
+    `set_config(..., true)` e nao `SET`: o pool reusa conexoes, e um `SET` de
+    sessao deixaria o teto de 8 s valendo na proxima consulta da conexao -- a
+    ingestao, que roda consultas longas de proposito, passaria a falhar.
+    """
+    cur.execute(
+        "SELECT set_config('statement_timeout', %s, true)", (str(settings.metodo_timeout_ms),)
+    )
+
+
+def _estatistica(cur, tabela: str) -> tuple[dict[str, float], float, dict[str, int]]:
+    """Frequencia dos lexemas comuns e trechos por Espaco, com cache.
+
+    A frequencia vem de `pg_stats.most_common_elems`, que o ANALYZE ja calcula
+    para colunas tsvector: contar os trechos de cada termo na hora era o mesmo
+    custo que se queria evitar ("sobre" sao 124 mil linhas a ler). Sem
+    estatistica (base nova, nunca analisada), nada e cortado.
+    """
+    agora = time.monotonic()
+    guardada = _estatisticas.get(tabela)
+    if guardada and agora - guardada[0] < _ESTATISTICA_TTL_S:
+        return guardada[1], guardada[2], guardada[3]
+    cur.execute(
+        """
+        SELECT most_common_elems::text::text[], most_common_elem_freqs
+          FROM pg_stats
+         WHERE schemaname = current_schema() AND tablename = %s AND attname = 'tsv'
+        """,
+        (tabela,),
+    )
+    linha = cur.fetchone()
+    frequencias: dict[str, float] = {}
+    if linha and linha[0]:
+        # `most_common_elem_freqs` traz tres numeros a mais no fim (minimo,
+        # maximo e nulos); o zip para no ultimo lexema.
+        frequencias = dict(zip(linha[0], linha[1], strict=False))
+    # Lexema fora da lista e mais raro que o menos comum dela; metade dele e a
+    # mesma estimativa que o planejador do Postgres usa.
+    piso = min(frequencias.values()) / 2 if frequencias else 0.0
+    cur.execute(
+        f"SELECT space_slug, count(*) FROM {tabela} WHERE {_UNIVERSO_LEXICO[tabela]} GROUP BY 1"
+    )
+    por_espaco = {slug: int(n) for slug, n in cur.fetchall()}
+    with _estatisticas_lock:
+        _estatisticas[tabela] = (agora, frequencias, piso, por_espaco)
+    return frequencias, piso, por_espaco
+
+
+def escolher_termos(
+    lexemas: list[str],
+    frequencias: dict[str, float],
+    piso: float,
+    universo: int,
+    orcamento: int,
+) -> tuple[list[str], list[str]]:
+    """Os lexemas que entram no OR e os que ficam de fora.
+
+    Do mais raro para o mais comum, enquanto a soma estimada de linhas couber no
+    orcamento. A estimativa e frequencia x trechos dos Espacos pedidos: numa
+    busca so em `cdc`, "consumidor" cabe; em todas as bases, nao. Termo que
+    sozinho estoura o orcamento nao distingue nada e sai mesmo sendo o unico.
+    """
+    estimados = sorted(
+        ((frequencias.get(lexema, piso) * universo, lexema) for lexema in dict.fromkeys(lexemas)),
+    )
+    mantidos: list[str] = []
+    cortados: list[str] = []
+    soma = 0.0
+    for linhas, lexema in estimados:
+        if soma + linhas <= orcamento:
+            mantidos.append(lexema)
+            soma += linhas
+        else:
+            cortados.append(lexema)
+    return mantidos, cortados
+
+
+def como_tsquery(lexemas: list[str]) -> str:
+    """OR dos lexemas, cada um entre aspas: lexema com `:` ou `&` nao vira operador."""
+    return " | ".join(
+        "'" + lexema.replace("\\", "\\\\").replace("'", "''") + "'" for lexema in lexemas
+    )
+
+
+def _termos_lexicos(cur, query: str, tabela: str, spaces: list[str]) -> tuple[str | None, dict]:
+    """A tsquery do metodo lexical e o que entrou no trace."""
+    cur.execute("SELECT tsvector_to_array(to_tsvector('portuguese', unaccent(%s)))", (query,))
+    lexemas = list(cur.fetchone()[0] or [])
+    if not lexemas:
+        return None, {"estado": "pergunta sem termo"}
+    frequencias, piso, por_espaco = _estatistica(cur, tabela)
+    universo = sum(por_espaco.get(slug, 0) for slug in spaces)
+    mantidos, cortados = escolher_termos(
+        lexemas, frequencias, piso, universo, settings.lexical_max_linhas
+    )
+    trace: dict = {"termos": mantidos}
+    if cortados:
+        trace["termos_comuns_fora"] = cortados
+    if not mantidos:
+        trace["estado"] = "so termos comuns: nenhum distingue os trechos"
+        return None, trace
+    return como_tsquery(mantidos), trace
 
 
 def lexical(query: str, spaces: list[str], limit: int,
@@ -478,20 +597,24 @@ def lexical(query: str, spaces: list[str], limit: int,
     candidatos: list[Candidato] = []
     recorte, recorte_params = _onde_documento(filtros)
     with conn() as connection, connection.cursor() as cur:
+        _limitar_tempo(cur)
+        tsquery, termos = _termos_lexicos(cur, query, "chunk", spaces)
+        if tsquery is None:
+            return [], {"tecnica": representations.METODOS["lexical"].tecnica, "espacos": len(spaces), **termos}
         cur.execute(
             f"""
             SELECT c.id, c.document_id, c.space_slug, c.parent_id, c.content, c.page,
                    d.okf->>'armadilha' AS armadilha,
-                   ts_rank_cd(c.tsv, {_TSQUERY}) AS rank
+                   ts_rank_cd(c.tsv, %s::tsquery) AS rank
               FROM chunk c
               JOIN document d ON d.id = c.document_id AND d.active
              WHERE c.parent_id IS NOT NULL
                AND c.space_slug = ANY(%s::text[])
-               AND c.tsv @@ {_TSQUERY}
+               AND c.tsv @@ %s::tsquery
 {recorte}             ORDER BY rank DESC
              LIMIT %s
             """,
-            (query, spaces, query, *recorte_params, limit),
+            (tsquery, spaces, tsquery, *recorte_params, limit),
         )
         for linha in cur.fetchall():
             chunk_id, document_id, space, parent_id, content, page, aviso, score = linha
@@ -511,6 +634,7 @@ def lexical(query: str, spaces: list[str], limit: int,
     trace = {
         "tecnica": representations.METODOS["lexical"].tecnica,
         "espacos": len(spaces),
+        **termos,
     }
     if filtros is not None and filtros.ativo:
         trace["recorte"] = filtros.to_dict()
@@ -562,6 +686,7 @@ def paginas(query: str, spaces: list[str], limit: int,
     if consultas:
         with conn() as connection, connection.cursor() as cur:
             _preparar_sessao(cur)
+            _limitar_tempo(cur)
             for vetor, alvo in consultas:
                 cur.execute(
                     f"""
@@ -635,18 +760,22 @@ def lexical_paginas(query: str, spaces: list[str], limit: int,
     candidatos: list[Candidato] = []
     recorte, recorte_params = _onde_wiki(filtros)
     with conn() as connection, connection.cursor() as cur:
+        _limitar_tempo(cur)
+        tsquery, termos = _termos_lexicos(cur, query, "wiki_page", spaces)
+        if tsquery is None:
+            return [], {"tecnica": representations.METODOS["paginas_lexical"].tecnica, "espacos": len(spaces), **termos}
         cur.execute(
             f"""
             SELECT p.id, p.space_slug, p.title, p.content,
                    p.frontmatter->>'armadilha' AS armadilha,
-                   ts_rank_cd(p.tsv, {_TSQUERY}) AS rank
+                   ts_rank_cd(p.tsv, %s::tsquery) AS rank
               FROM wiki_page p
              WHERE p.space_slug = ANY(%s::text[])
-               AND p.tsv @@ {_TSQUERY}
+               AND p.tsv @@ %s::tsquery
 {recorte}             ORDER BY rank DESC
              LIMIT %s
             """,
-            (query, spaces, query, *recorte_params, limit),
+            (tsquery, spaces, tsquery, *recorte_params, limit),
         )
         for page_id, space, titulo, conteudo, aviso, score in cur.fetchall():
             candidatos.append(
@@ -665,6 +794,7 @@ def lexical_paginas(query: str, spaces: list[str], limit: int,
     trace = {
         "tecnica": representations.METODOS["paginas_lexical"].tecnica,
         "espacos": len(spaces),
+        **termos,
     }
     if filtros is not None and filtros.ativo:
         trace["recorte"] = filtros.to_dict()
@@ -700,6 +830,7 @@ def travessia(query: str, spaces: list[str], limit: int,
     recorte, recorte_params = _onde_documento(filtros)
     if por_chunk:
         with conn() as connection, connection.cursor() as cur:
+            _limitar_tempo(cur)
             # O recorte vale aqui pelo mesmo motivo que nos outros metodos: o
             # grafo alcanca o chunk, mas quem decide se aquele conteudo pode ser
             # entregue e o documento. Sem esta clausula, a travessia seria a

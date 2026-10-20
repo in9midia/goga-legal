@@ -471,6 +471,19 @@ class Settings:
     # Constante do Reciprocal Rank Fusion (BUS-05). 60 e o valor do artigo
     # original e o default de praticamente toda implementacao.
     rrf_k: int = field(default_factory=lambda: _env_int("KB_RRF_K", 60))
+    # Tempo maximo de cada metodo de acesso, em ms. Vale como `statement_timeout`
+    # das consultas do metodo e como prazo da busca para esperar por ele: o que
+    # estoura sai sem candidatos e a busca segue com os outros. Sem teto, uma
+    # consulta lexical em todas as bases levava minutos sob concorrencia, e quem
+    # chamava (Studio, 30 s) desistia da busca inteira.
+    metodo_timeout_ms: int = field(default_factory=lambda: _env_int("KB_METODO_TIMEOUT_MS", 8000))
+    # Orcamento de linhas do metodo lexical: os termos da pergunta entram no OR
+    # do mais raro para o mais comum enquanto a soma estimada de trechos que
+    # eles casam couber aqui. Medido em producao (231 mil trechos): "sobre",
+    # "art" e "processual" sozinhos casavam com 81% da base, e ranquear isso
+    # levava 18 s com o banco ocioso. Cortar so o que passa de 10% ainda
+    # deixava 58 mil trechos (11 s); ranquear 741 trechos levou 60 ms.
+    lexical_max_linhas: int = field(default_factory=lambda: _env_int("KB_LEXICAL_MAX_LINHAS", 5000))
 
     @property
     def pg_dsn(self) -> str:

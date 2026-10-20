@@ -39,7 +39,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -307,11 +307,30 @@ def search(
             return metodo, [], {"erro": str(exc)[:200]}
         return metodo, candidatos, trace
 
-    with ThreadPoolExecutor(max_workers=MAX_PARALELO) as executor:
-        for metodo, candidatos, trace in executor.map(rodar, sorted(grupos)):
-            resultados[metodo] = candidatos
-            embed_tokens += int(trace.pop("tokens", 0) or 0)
-            stages[metodo] = {**trace, "candidatos": len(candidatos)}
+    # Prazo da busca para os metodos. O `statement_timeout` (o mesmo numero)
+    # derruba a consulta no banco, mas nao cobre o resto do metodo (embedding,
+    # Memgraph): sem o prazo aqui, um provedor lento ainda segurava a busca
+    # inteira. `shutdown(wait=False)` e nao o `with`: o `with` esperaria o
+    # atrasado terminar, que e exatamente o que o prazo existe para evitar.
+    executor = ThreadPoolExecutor(max_workers=MAX_PARALELO)
+    futuros = {executor.submit(rodar, metodo): metodo for metodo in sorted(grupos)}
+    prazo_s = settings.metodo_timeout_ms / 1000
+    try:
+        _, atrasados = wait(futuros, timeout=prazo_s)
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+    # Na ordem dos metodos, e nao na de chegada: a fusao percorre `resultados`,
+    # e o ranking nao pode depender de qual metodo terminou primeiro.
+    for futuro, metodo in futuros.items():
+        if futuro in atrasados:
+            log.warning("metodo de acesso %s passou de %s ms e saiu da busca", metodo, settings.metodo_timeout_ms)
+            resultados[metodo] = []
+            stages[metodo] = {"estado": f"tempo esgotado ({settings.metodo_timeout_ms} ms)", "candidatos": 0}
+            continue
+        _, candidatos, trace = futuro.result()
+        resultados[metodo] = candidatos
+        embed_tokens += int(trace.pop("tokens", 0) or 0)
+        stages[metodo] = {**trace, "candidatos": len(candidatos)}
 
     # O gasto do slot de melhoria entra na conta: ele e IA gasta nesta busca, e
     # deixa-lo de fora faria a comparacao entre ligado e desligado parecer de

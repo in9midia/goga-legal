@@ -143,4 +143,6 @@ memória.
 - **índice lexical dedicado.** O braço lexical usa `ts_rank_cd` sem índice GIN
   sobre `to_tsvector`. Não apareceu como gargalo na medição (o vetorial dominava
   tudo), e criar índice antes de medir é o erro que este ADR existe para não
-  repetir. É o próximo lugar a olhar quando a base crescer.
+  repetir. É o próximo lugar a olhar quando a base crescer. Olhado em 2026-10: com
+  231 mil trechos o gargalo era o OR casando com a base inteira, e não a falta
+  de índice (ADR-0033).

@@ -36,7 +36,9 @@ Para o braço lexical, três detalhes que custaram caro:
   acento (como as pessoas escrevem) não casa com nada. O sintoma era o braço
   lexical devolver zero em quase toda pergunta, sem erro;
 - os lexemas são unidos por **OR**, não AND. Com AND, uma palavra fora do
-  documento zera o braço inteiro;
+  documento zera o braço inteiro. O OR leva os termos do mais raro para o mais
+  comum até um orçamento de linhas: com a base grande, termo comum casava com
+  quase tudo (ADR-0033);
 - `ts_rank_cd` e não `ts_rank`, porque a proximidade entre os termos importa.
 
 ## Consequências
