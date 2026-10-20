@@ -6,6 +6,7 @@ import type { RunContext } from "../engine/context.js";
 import { errorMessage } from "../engine/tracer.js";
 import { costOf, resolveModel } from "./models.js";
 import { extractJson } from "./json.js";
+import { onlyToolMarkup } from "./markup.js";
 
 export interface LlmCall {
   ctx: RunContext;
@@ -166,8 +167,13 @@ async function callOnce(c: LlmCall, modelRowId: string): Promise<LlmResult> {
     // O ultimo passo, com as ferramentas desligadas, as vezes termina em "stop"
     // sem texto. O reparo de JSON nao tem o que as ferramentas trouxeram e o
     // parecer caia; aqui ainda se escreve com elas.
-    if (!rescue && !result.text.trim() && consulted()) {
-      rescue = "o último passo terminou sem texto: resposta escrita com o que as ferramentas trouxeram";
+    // Marcacao de ferramenta escrita como texto (ver markup.ts) e o mesmo caso:
+    // o modelo queria consultar mais e nao respondeu.
+    const markup = onlyToolMarkup(result.text);
+    if (!rescue && (!result.text.trim() || markup) && consulted()) {
+      rescue = markup
+        ? "o último passo escreveu chamadas de ferramenta como texto: resposta escrita com o que as ferramentas trouxeram"
+        : "o último passo terminou sem texto: resposta escrita com o que as ferramentas trouxeram";
       result = await writeWithWhatWeHave(
         "Você já consultou as ferramentas. Escreva agora a resposta, no formato pedido, com o que as consultas acima trouxeram; o que ficou sem consultar, diga que não foi verificado.",
       );
