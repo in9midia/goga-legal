@@ -472,14 +472,8 @@ def semantica(query: str, spaces: list[str], limit: int,
 
 # As estatisticas mudam no ritmo do ANALYZE, nao da busca.
 _ESTATISTICA_TTL_S = 3600.0
-_estatisticas: dict[str, tuple[float, dict[str, float], float, dict[str, int]]] = {}
+_estatisticas: dict[str, tuple[float, dict[str, float], float, EstimativaPorEspaco]] = {}
 _estatisticas_lock = threading.Lock()
-
-# Os trechos que cada metodo lexical consulta, por tabela.
-_UNIVERSO_LEXICO = {
-    "chunk": "parent_id IS NOT NULL",
-    "wiki_page": "TRUE",
-}
 
 
 def _limitar_tempo(cur) -> None:
@@ -494,7 +488,7 @@ def _limitar_tempo(cur) -> None:
     )
 
 
-def _estatistica(cur, tabela: str) -> tuple[dict[str, float], float, dict[str, int]]:
+def _estatistica(cur, tabela: str) -> tuple[dict[str, float], float, EstimativaPorEspaco]:
     """Frequencia dos lexemas comuns e trechos por Espaco, com cache.
 
     A frequencia vem de `pg_stats.most_common_elems`, que o ANALYZE ja calcula
@@ -523,13 +517,67 @@ def _estatistica(cur, tabela: str) -> tuple[dict[str, float], float, dict[str, i
     # Lexema fora da lista e mais raro que o menos comum dela; metade dele e a
     # mesma estimativa que o planejador do Postgres usa.
     piso = min(frequencias.values()) / 2 if frequencias else 0.0
+    # Trechos por Espaco tambem pela estatistica, e nao por `count(*) GROUP BY`:
+    # a contagem varria os 231 mil trechos, e na primeira busca depois de subir
+    # o pod (cache frio) levava o metodo lexical alem do prazo de 8 s.
     cur.execute(
-        f"SELECT space_slug, count(*) FROM {tabela} WHERE {_UNIVERSO_LEXICO[tabela]} GROUP BY 1"
+        """
+        SELECT c.reltuples, s.most_common_vals::text::text[], s.most_common_freqs,
+               s.n_distinct, p.null_frac
+          FROM pg_class c
+          LEFT JOIN pg_stats s ON s.schemaname = current_schema()
+                              AND s.tablename = c.relname AND s.attname = 'space_slug'
+          LEFT JOIN pg_stats p ON p.schemaname = current_schema()
+                              AND p.tablename = c.relname AND p.attname = 'parent_id'
+         WHERE c.oid = to_regclass(%s)
+        """,
+        (tabela,),
     )
-    por_espaco = {slug: int(n) for slug, n in cur.fetchall()}
+    linha = cur.fetchone()
+    por_espaco = estimar_por_espaco(*linha) if linha else EstimativaPorEspaco({}, 0.0)
     with _estatisticas_lock:
         _estatisticas[tabela] = (agora, frequencias, piso, por_espaco)
     return frequencias, piso, por_espaco
+
+
+@dataclass(frozen=True)
+class EstimativaPorEspaco:
+    """Trechos estimados de cada Espaco; `resto` vale para o que ficou fora da lista."""
+
+    linhas: dict[str, float]
+    resto: float
+
+    def de(self, slug: str) -> float:
+        return self.linhas.get(slug, self.resto)
+
+
+def estimar_por_espaco(
+    reltuples: float | None,
+    valores: list[str] | None,
+    frequencias: list[float] | None,
+    n_distinct: float | None,
+    fracao_pais: float | None,
+) -> EstimativaPorEspaco:
+    """Trechos por Espaco a partir do `pg_stats`, sem tocar na tabela.
+
+    Linhas da tabela x frequencia do Espaco (`most_common_vals` de `space_slug`)
+    x fracao de filhos (`null_frac` de `parent_id`: o pai tem `parent_id` nulo e
+    o metodo lexical so consulta filhos). Supor as duas colunas independentes
+    erra pouco: medido em producao, `cdc` estimado em 99 mil contra 98,8 mil
+    reais. Sem ANALYZE (`reltuples` -1) a estimativa e vazia e nada e cortado,
+    como sem estatistica de lexema.
+    """
+    if reltuples is None or reltuples <= 0:
+        return EstimativaPorEspaco({}, 0.0)
+    filhos = reltuples * (1 - (fracao_pais or 0.0))
+    valores = valores or []
+    frequencias = list(frequencias or [])[: len(valores)]
+    linhas = {slug: filhos * f for slug, f in zip(valores, frequencias, strict=True)}
+    # `n_distinct` negativo e fracao das linhas, nao contagem.
+    distintos = n_distinct if n_distinct and n_distinct > 0 else -(n_distinct or 0) * reltuples
+    fora = max(distintos - len(valores), 0)
+    resto = filhos * max(1 - sum(frequencias), 0.0) / fora if fora else 0.0
+    return EstimativaPorEspaco(linhas, resto)
 
 
 def escolher_termos(
@@ -575,7 +623,7 @@ def _termos_lexicos(cur, query: str, tabela: str, spaces: list[str]) -> tuple[st
     if not lexemas:
         return None, {"estado": "pergunta sem termo"}
     frequencias, piso, por_espaco = _estatistica(cur, tabela)
-    universo = sum(por_espaco.get(slug, 0) for slug in spaces)
+    universo = int(sum(por_espaco.de(slug) for slug in spaces))
     mantidos, cortados = escolher_termos(
         lexemas, frequencias, piso, universo, settings.lexical_max_linhas
     )

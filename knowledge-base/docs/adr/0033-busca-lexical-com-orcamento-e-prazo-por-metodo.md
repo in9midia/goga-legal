@@ -47,6 +47,11 @@ vezes os trechos dos Espaços pedidos:
   estimativa do planejador;
 - a escala é a das bases pedidas, e não a da base inteira: numa busca só em
   `cdc`, "consumidor" cabe e fica; em todas as bases, não;
+- os trechos de cada base também vêm da estatística (`reltuples` x
+  `most_common_freqs` de `space_slug` x fração de filhos pelo `null_frac` de
+  `parent_id`), e não de `count(*) GROUP BY`. A contagem varria a tabela e, na
+  primeira busca com cache frio, levava o lexical além do prazo de 8 s. Medido
+  em produção, a estimativa de `cdc` deu 99 mil contra 98,8 mil reais;
 - sem estatística (base nova, nunca analisada) nada é cortado, o comportamento
   de antes;
 - termo que sozinho estoura o orçamento não distingue nada e sai. Pergunta só

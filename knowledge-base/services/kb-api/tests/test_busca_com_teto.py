@@ -108,6 +108,38 @@ def test_tsquery_poe_cada_lexema_entre_aspas():
     )
 
 
+def test_trechos_por_base_saem_do_pg_stats():
+    # Numeros de producao (2026-10-20): 272 mil linhas, 15,6% pais, `cdc` em
+    # 42,8% delas. Estimado 99 mil; a contagem real dava 98,8 mil.
+    est = retrieval.estimar_por_espaco(
+        272_065, ["cdc", "civil-contratos"], [0.428, 0.12], 31, 0.1556
+    )
+    assert 98_000 < est.de("cdc") < 100_000
+    assert 27_000 < est.de("civil-contratos") < 28_000
+    # Base fora da lista: o que sobra das frequencias, dividido entre as outras.
+    resto = 272_065 * (1 - 0.1556) * (1 - 0.548) / 29
+    assert est.de("outra") == pytest.approx(resto)
+
+
+def test_n_distinct_negativo_e_fracao_das_linhas():
+    est = retrieval.estimar_por_espaco(1000, ["a"], [0.5], -0.004, 0.0)
+    # -0,004 x 1000 = 4 distintos; 3 fora da lista dividem os outros 50%.
+    assert est.de("b") == pytest.approx(500 / 3)
+
+
+def test_sem_analyze_a_estimativa_e_vazia():
+    # `reltuples` -1: tabela nunca analisada. Universo zero, nada e cortado.
+    assert retrieval.estimar_por_espaco(-1, None, None, None, None).de("cdc") == 0
+    mantidos, cortados = retrieval.escolher_termos(PERGUNTA, PRODUCAO, 0.0005, 0, 15_000)
+    assert cortados == []
+
+
+def test_tabela_sem_parent_id_conta_todas_as_linhas():
+    # A wiki nao tem `parent_id`: o LEFT JOIN devolve `null_frac` nulo.
+    est = retrieval.estimar_por_espaco(1234, ["a"], [1.0], 1, None)
+    assert est.de("a") == pytest.approx(1234)
+
+
 # ── prazo da busca ────────────────────────────────────────────────────────
 
 
@@ -235,6 +267,16 @@ def test_lexical_corta_o_termo_que_esta_em_todo_trecho(base, monkeypatch):
     assert "sobr" in trace["termos_comuns_fora"]
     assert "embarg" in trace["termos"]
     assert len(candidatos) == 1 and "Embargos" in candidatos[0].content
+
+
+@pg
+def test_trechos_por_base_vem_da_estatistica(base):
+    from kb_api.db import conn
+
+    with conn() as connection, connection.cursor() as cur:
+        _, _, por_espaco = retrieval._estatistica(cur, "chunk")
+    # 400 filhos e 1 pai: a estimativa sai do ANALYZE, sem contar a tabela.
+    assert por_espaco.de("teto") == pytest.approx(400, rel=0.02)
 
 
 @pg
