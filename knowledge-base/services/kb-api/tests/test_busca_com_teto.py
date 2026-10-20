@@ -62,14 +62,15 @@ PERGUNTA = [
 
 
 def test_em_todas_as_bases_os_termos_comuns_saem_do_or():
+    orcamento = settings.lexical_max_linhas
     mantidos, cortados = retrieval.escolher_termos(
-        PERGUNTA, PRODUCAO, 0.0005, TODAS_AS_BASES, 5000
+        PERGUNTA, PRODUCAO, 0.0005, TODAS_AS_BASES, orcamento
     )
     # Os raros (fora da lista do pg_stats) ficam; o que casava com meia base sai.
     assert {"manifestaca", "regular", "representaca"} <= set(mantidos)
     assert {"sobr", "processual", "recurs", "especial", "stj"} <= set(cortados)
     estimado = sum(PRODUCAO.get(t, 0.0005) * TODAS_AS_BASES for t in mantidos)
-    assert estimado <= 5000
+    assert estimado <= orcamento
 
 
 def test_numa_base_so_o_termo_do_assunto_continua():

@@ -38,7 +38,7 @@ trechos casados pelos termos que ficam, e não a frequência de cada um.
 
 **1. O OR lexical tem orçamento de linhas.** Os lexemas da pergunta entram do
 mais raro para o mais comum enquanto a soma estimada de trechos casados couber
-em `KB_LEXICAL_MAX_LINHAS` (padrão 5000). A estimativa é a frequência do lexema
+em `KB_LEXICAL_MAX_LINHAS` (padrão 15000). A estimativa é a frequência do lexema
 vezes os trechos dos Espaços pedidos:
 
 - a frequência vem de `pg_stats.most_common_elems`, que o ANALYZE já calcula
@@ -52,6 +52,20 @@ vezes os trechos dos Espaços pedidos:
 - termo que sozinho estoura o orçamento não distingue nada e sai. Pergunta só
   de termos comuns fica sem braço lexical, e o trace diz isso
   (`estado: so termos comuns`); o semântico cobre.
+
+O número veio de medida em produção, com as perguntas que estouravam, em todas
+as bases:
+
+| Orçamento | Termos que ficaram (CNH; embargos no STJ) | Trechos casados de fato | Tempo do lexical |
+|---|---|---|---|
+| 5000 (primeira versão) | `cassaca`; `manifestaca` | não medido | 10 a 45 ms |
+| **15000** | `cassaca`, `cnh`, `excess`; `manifestaca`, `regular`, `representaca` | 4,5 a 7,2 mil | 0,2 a 0,6 s, com cache em parte quente |
+| 20000 | igual na CNH; + `agrav` nos embargos | 16 mil | 5 s com cache frio |
+
+Com 5000 a busca em todas as bases ficava com um termo só, e saía até "cnh".
+Com 20000 o tempo encostava no prazo do método. A estimativa erra para cima (o
+orçamento de 15000 escolhe termos que casam 4 a 7 mil trechos), o que deixa
+folga sob concorrência.
 
 O trace do método mostra os `termos` que entraram e os `termos_comuns_fora`.
 Vale para os dois braços lexicais (trechos e páginas da wiki).
