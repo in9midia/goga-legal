@@ -452,8 +452,10 @@ class Settings:
     pdf_escaneado_texto_min: int = field(
         default_factory=lambda: _env_int("KB_PDF_ESCANEADO_TEXTO_MIN", 300)
     )
-    # Mais tracos vetoriais que isto na pagina = provavel tabela (as grades sao
-    # linhas desenhadas). Pagina de texto corrido tem de 0 a poucos.
+    # Mais tracos vetoriais que isto na pagina = CANDIDATA a tabela (as grades
+    # sao linhas desenhadas). Pagina de texto corrido tem de 0 a poucos. So
+    # candidata: ilustracao vetorial tambem passa daqui, e quem decide e o
+    # `find_tables` (hibrido._tem_tabela).
     pdf_tabela_desenhos: int = field(default_factory=lambda: _env_int("KB_PDF_TABELA_DESENHOS", 40))
 
     # --- Documento longo: grafo e wiki alem do comeco (fase 3) ---

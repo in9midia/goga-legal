@@ -689,7 +689,8 @@ Registradas porque o custo delas foi descoberto rodando, não lendo:
     **O conserto (`hibrido.py`):** PDF a partir de `KB_PDF_HIBRIDO_MIN_PAGINAS`
     (80) passa por uma triagem por página em ~1,5 s. Vai para o docling só a
     página sem texto, com imagem grande (`KB_PDF_IMAGEM_AREA`), com texto
-    corrompido ou com cara de tabela (`KB_PDF_TABELA_DESENHOS`); o resto sai
+    corrompido ou com tabela (`KB_PDF_TABELA_DESENHOS`, confirmada pelo
+    `find_tables`, ver 29c); o resto sai
     pelo PyMuPDF, com o cabeçalho e o rodapé correntes removidos. O sumário
     embutido no PDF vira os títulos `#`/`##` que o corte `markdown` usa. Se mais
     da metade das páginas precisa do docling (escaneado), o arquivo vai inteiro
@@ -773,6 +774,45 @@ Registradas porque o custo delas foi descoberto rodando, não lendo:
     300 caracteres de texto. Medido localmente com o docling de
     verdade: o processo pai ficou em 84 MB, os filhos chegaram a 1,5 GB, e a
     segunda tentativa reaproveitou os três lotes em 0,0 s.
+
+29c. **Ilustração vetorial passava por tabela.** A triagem mandava ao docling,
+    como "tabela", a página com mais de `KB_PDF_TABELA_DESENHOS` (40) traços
+    vetoriais. Os livros da Embrapa são texto com ilustração desenhada (o boneco
+    do algodoeiro, a lavoura), e cada curva conta como traço: há página com 14
+    mil. Nos 32 livros, **1.139 páginas** passavam do limite e só **11** tinham
+    tabela. O Algodão (2004), 271 páginas quase todas com texto, mandou 96 ao
+    docling (80 por "tabela") em 67 faixas, e cada faixa sobe o docling num
+    processo novo (29b) por ~23 s com 1 CPU: **2.342 s** na fila de produção.
+    O Pera ia inteiro ao docling (235 de 237 páginas).
+
+    **O conserto:** passar do limite só faz da página uma candidata; quem
+    decide é o `find_tables` do PyMuPDF. Nos 32 livros, as páginas ao docling
+    caem de 1.920 para 792, e a confirmação custa até 8 s por livro.
+
+    O que continua de fora, e já ficava antes: tabela com menos de 40 traços.
+    O `find_tables` acha 49 delas nos mesmos livros (41 só no Suínos), e hoje
+    saem pelo PyMuPDF como texto corrido.
+
+29d. **Ilustração em pedaços travava a triagem e passava por foto.** A área
+    de imagem da página era `get_image_rects` para cada entrada de
+    `get_images`. O Gado de Corte (2011) tem ilustração montada com milhares
+    de pedacinhos: a página 243 do PDF tem 32.124 entradas, 4.082 imagens
+    distintas, uma delas repetida 1.956 vezes. Dois defeitos juntos:
+
+    - **custo quadrático.** Cada `get_image_rects` percorre a página inteira:
+      39 s nessa página, 252 s no livro num Mac, e o Job de 1 CPU passou de
+      9 min sem sair da triagem;
+    - **área multiplicada.** Para cada repetição, `get_image_rects` devolve
+      todas as posições da imagem, e elas eram somadas de novo. A página saía
+      "691% coberta" com 4% de verdade, e o livro mandava 24 páginas ao
+      docling como "imagem".
+
+    **O conserto:** `get_image_info()`, uma passada só, com a caixa de cada
+    imagem desenhada, recortada pela página. O Gado de Corte cai para 14 s de
+    triagem e 5 páginas ao docling. De quebra, ela enxerga a imagem embutida
+    direto no conteúdo da página (*inline*), que `get_images` não lista:
+    capas e aberturas de capítulo com ilustração grande, ~30 páginas a mais
+    nos 32 livros, quase sempre a página 4.
 
 30. **Cabeçalho HTTP é latin-1, e o nome do arquivo não é.** `Content-Disposition`
     leva o nome do documento, e o Starlette codifica todo cabeçalho em latin-1 —

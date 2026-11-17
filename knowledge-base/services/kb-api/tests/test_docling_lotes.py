@@ -315,3 +315,67 @@ def test_escaneada_com_camada_de_texto_sai_pelo_pymupdf():
     _pagina_escaneada(doc, "")
     triagem = hibrido.triar(doc)
     assert triagem.docling == {2: "imagem", 3: "sem texto"}
+
+
+# ── 5. ilustracao vetorial nao e tabela ────────────────────────────────────
+
+
+_TEXTO = "O algodoeiro e uma planta da familia das malvaceas, cultivada pela fibra. " * 8
+
+
+def _pagina_com_ilustracao(doc) -> None:
+    """Texto corrido e um desenho feito de curvas, como o boneco do algodoeiro."""
+    page = doc.new_page()
+    page.insert_textbox(pymupdf.Rect(60, 60, 540, 400), _TEXTO, fontsize=9)
+    for i in range(80):
+        x = 100 + i * 4
+        page.draw_bezier((x, 500), (x + 20, 450), (x + 40, 550), (x + 60, 500))
+
+
+def _pagina_com_tabela(doc) -> None:
+    """Texto e uma grade de 12 linhas por 4 colunas, desenhada celula a celula."""
+    page = doc.new_page()
+    page.insert_textbox(pymupdf.Rect(60, 60, 540, 200), _TEXTO, fontsize=9)
+    for linha in range(12):
+        for coluna in range(4):
+            celula = pymupdf.Rect(60 + coluna * 120, 250 + linha * 20,
+                                  180 + coluna * 120, 270 + linha * 20)
+            page.draw_rect(celula)
+            page.insert_text((celula.x0 + 4, celula.y1 - 6), f"{linha}-{coluna}", fontsize=8)
+
+
+def test_ilustracao_vetorial_nao_vai_ao_docling_como_tabela():
+    """O Algodao (2004): 80 paginas de texto com ilustracao iam ao docling como
+    "tabela", 67 faixas e 39 min. Nenhuma tinha tabela."""
+    from kb_api import hibrido
+
+    doc = pymupdf.open()
+    _pagina_com_ilustracao(doc)
+    _pagina_com_tabela(doc)
+    assert len(doc[0].get_drawings()) > hibrido.settings.pdf_tabela_desenhos
+    assert len(doc[1].get_drawings()) > hibrido.settings.pdf_tabela_desenhos
+    assert hibrido.triar(doc).docling == {2: "tabela"}
+
+
+# ── 6. ilustracao montada com milhares de pedacos de imagem ────────────────
+
+
+def test_ilustracao_em_pedacos_nao_soma_cada_repeticao():
+    """O Gado de Corte (2011): ilustracao montada com 32 mil pedacos de imagem,
+    a mesma imagem reaproveitada centenas de vezes. A conta antiga somava cada
+    repeticao de novo ("691% coberta" com 4% de verdade) e levava 39 s na
+    pagina; a pagina ia ao docling como "imagem"."""
+    from kb_api import hibrido
+
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_textbox(pymupdf.Rect(60, 60, 540, 400), _TEXTO, fontsize=9)
+    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 4, 4), 0)
+    pix.clear_with(120)
+    xref = 0
+    for i in range(300):
+        tile = pymupdf.Rect(100 + (i % 30) * 4, 450 + (i // 30) * 4, 104 + (i % 30) * 4, 454 + (i // 30) * 4)
+        xref = page.insert_image(tile, pixmap=pix) if not xref else page.insert_image(tile, xref=xref)
+    area_real = 300 * 16
+    assert abs(hibrido._area_de_imagem(page) - area_real) < 1
+    assert hibrido.triar(doc).docling == {}

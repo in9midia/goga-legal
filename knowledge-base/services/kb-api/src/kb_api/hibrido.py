@@ -21,7 +21,9 @@ Vai para o docling a pagina que tiver qualquer um destes (limiares em config):
   (menos a pagina escaneada que ja traz a camada de texto: ali a imagem e o
   fundo, e o texto sai pelo PyMuPDF)
 - texto com caracteres corrompidos           -> fonte mal codificada
-- muitos tracos vetoriais                    -> provavel tabela
+- muitos tracos vetoriais E uma tabela que   -> tabela em Markdown
+  o `find_tables` reconhece (so o numero de
+  tracos confundia ilustracao com tabela)
 
 O resto sai pelo PyMuPDF. Se a maior parte do PDF precisa do docling
 (escaneado, apresentacao), a triagem desiste e o arquivo vai inteiro para ele,
@@ -98,6 +100,44 @@ def _corrompido(texto: str) -> bool:
     return ruins / len(texto) > 0.02
 
 
+def _tem_tabela(page) -> bool:
+    """Confirma pelo `find_tables` do PyMuPDF a pagina que tem desenho demais.
+
+    Contar desenhos sozinho confundia ilustracao com tabela: o boneco do
+    algodoeiro e a lavoura desenhada dos livros da Embrapa sao milhares de
+    curvas. Nos 32 livros da colecao, 1.139 paginas passavam do limite e so 11
+    tinham tabela; o Algodao mandou 80 paginas de texto ao docling, em 67
+    faixas, e levou 39 min. O `find_tables` custa de 5 a 250 ms por pagina
+    candidata (ate ~1 s na pagina com 270 mil curvas), 8 s no pior livro.
+    """
+    try:
+        return bool(page.find_tables().tables)
+    except Exception:  # noqa: BLE001 - na duvida, o docling ve a pagina
+        return True
+
+
+def _area_de_imagem(page) -> float:
+    """Area da pagina ocupada por imagem, numa passada so.
+
+    Era `get_image_rects` por imagem de `get_images`, e as duas coisas
+    quebravam juntas em ilustracao montada com milhares de pedacos. A pagina
+    243 do PDF do Gado de Corte tem 32.124 entradas de imagem (4.082 distintas, uma
+    repetida 1.956 vezes): cada `get_image_rects` percorre a pagina inteira,
+    o custo cresce ao quadrado (39 s nessa pagina, 252 s no livro, e o Job
+    de 1 CPU passou de 9 min so na triagem); e cada repeticao devolvia de novo
+    TODAS as posicoes da imagem, somadas outra vez, e a pagina saia "691%
+    coberta" com 4% de verdade. O livro mandava 24 paginas ao docling como
+    "imagem"; agora manda 2, e a conta custa 8 s no livro inteiro.
+    """
+    import pymupdf
+
+    try:
+        infos = page.get_image_info()
+    except Exception:  # noqa: BLE001 - imagem quebrada nao decide nada
+        return 0.0
+    return sum(abs(pymupdf.Rect(i["bbox"]) & page.rect) for i in infos)
+
+
 def triar(doc) -> Triagem:
     """Quais paginas precisam do docling, e por que. So PyMuPDF, ~1 ms por pagina."""
     docling: dict[int, str] = {}
@@ -110,12 +150,7 @@ def triar(doc) -> Triagem:
             docling[numero] = "texto corrompido"
             continue
         area = abs(page.rect) or 1.0
-        coberta = 0.0
-        for info in page.get_images(full=True):
-            try:
-                coberta += sum(abs(r) for r in page.get_image_rects(info[0]))
-            except Exception:  # noqa: BLE001 - imagem quebrada nao decide nada
-                continue
+        coberta = _area_de_imagem(page)
         escaneada_com_texto = (
             coberta / area >= settings.pdf_escaneado_area
             and len(texto.strip()) >= settings.pdf_escaneado_texto_min
@@ -127,7 +162,7 @@ def triar(doc) -> Triagem:
             desenhos = len(page.get_drawings())
         except Exception:  # noqa: BLE001
             desenhos = 0
-        if desenhos > settings.pdf_tabela_desenhos:
+        if desenhos > settings.pdf_tabela_desenhos and _tem_tabela(page):
             docling[numero] = "tabela"
     return Triagem(total=doc.page_count, docling=docling)
 
