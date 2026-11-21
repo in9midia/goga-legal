@@ -61,6 +61,16 @@ Dentro do repo a skill já é descoberta (`.agents/skills/` → Codex e Gemini, 
 Claude Code, ambos links para `api/agent-skill/`). Ações sensíveis (publicar, excluir, restaurar,
 lote, escrita genérica) voltam 428 sem `confirm: true`, e a skill manda o agente pedir aprovação.
 
+## Agente de conversa (na frente do fluxo)
+
+Capacidades › Agente de conversa (tabela `chat_agent`, prompt no texto do motor `conversa.agente`;
+src/engine/frontdesk.ts). No Simulador e no WhatsApp, toda mensagem passa por ele e ganha resposta
+na hora. Ele decide `responder` (saudação, "e aí?", agradecimento) ou `fluxo`: sem turno rodando, inicia
+o fluxo; com turno rodando, o fato novo é acrescentado ao turno (`addContext`, run.ts) e entra em toda
+chamada a modelo seguinte (`withAddenda`, llm/call.ts; menos Guarda). Complemento que chegou depois da
+última chamada que escreve a resposta vira o turno seguinte. Falha do agente ou agente desligado =
+comportamento antigo (fluxo direto, um turno por vez). Modelo padrão: o DeepSeek "flash", sem thinking.
+
 ## WhatsApp (não oficial, Evolution API)
 
 Tela **Administração › WhatsApp** (só administradores): cadastra um ou mais números, cada um

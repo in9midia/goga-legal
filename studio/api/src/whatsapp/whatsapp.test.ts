@@ -72,6 +72,7 @@ describe.skipIf(!dbUp)("WhatsApp: Evolution falso + fluxo simulado", () => {
   let flowId: string;
   const jid = "5511912345678@s.whatsapp.net";
   let seq = 0;
+  let frontBefore: { enabled: boolean; modelId: string | null } | null = null;
 
   const sent = () => evo.calls.filter((c) => c.path.startsWith("/message/send"));
   const webhook = (event: string, data: unknown, opts: { token?: string; apikey?: string } = {}) =>
@@ -106,6 +107,10 @@ describe.skipIf(!dbUp)("WhatsApp: Evolution falso + fluxo simulado", () => {
     const [model] = await db.db.select().from(schema.model).where(eq(schema.model.modelId, "goga-simulado"));
     const graph = m.flows.buildFlow(m.flows.FULL_FLOW, m.flows.FULL_CHAINS, model.id);
     const [f] = await db.db.insert(schema.flow).values({ name: "teste whatsapp", graph }).returning();
+    // Agente de conversa com o modelo simulado (o padrao seria um modelo real).
+    const front = await import("../engine/frontdesk.js");
+    frontBefore = await front.frontConfig(true);
+    await front.saveFrontConfig({ enabled: true, modelId: model.id }, "teste");
     flowId = f.id;
     const id = crypto.randomUUID();
     await db.db.insert(schema.whatsappNumber).values({ id, name: "teste", instanceName: `goga-${id.slice(0, 8)}`, useProduction: false, flowId });
@@ -113,6 +118,7 @@ describe.skipIf(!dbUp)("WhatsApp: Evolution falso + fluxo simulado", () => {
   });
 
   afterAll(async () => {
+    if (frontBefore) await (await import("../engine/frontdesk.js")).saveFrontConfig(frontBefore, "teste");
     if (m) {
       await m.db.db.delete(m.db.schema.chatSession).where(eq(m.db.schema.chatSession.flowId, flowId));
       await m.db.db.delete(m.db.schema.whatsappNumber).where(eq(m.db.schema.whatsappNumber.id, numberId));
@@ -166,6 +172,16 @@ describe.skipIf(!dbUp)("WhatsApp: Evolution falso + fluxo simulado", () => {
     // lido + digitando
     expect(evo.calls.some((x) => x.path.startsWith("/chat/markMessageAsRead/"))).toBe(true);
   }, 40_000);
+
+  it("agente de conversa: saudação responde na hora, sem turno", async () => {
+    const c0 = await contact();
+    const runsBefore = (await m.db.db.select().from(m.db.schema.run).where(eq(m.db.schema.run.sessionId, c0.sessionId!))).length;
+    const before = sent().length;
+    await say("obrigado");
+    await until(() => sent().length > before);
+    expect(sent().at(-1)!.body.text).toMatch(/simulado/);
+    expect((await m.db.db.select().from(m.db.schema.run).where(eq(m.db.schema.run.sessionId, c0.sessionId!))).length).toBe(runsBefore);
+  }, 30_000);
 
   it("/ajuda responde a lista de comandos sem rodar o fluxo", async () => {
     const before = sent().length;

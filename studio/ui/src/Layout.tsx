@@ -1,6 +1,6 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { BookOpen, Bot, BrainCircuit, ClipboardList, ExternalLink, FileCode2, FlaskConical, History, LibraryBig, LogOut, type LucideIcon, MessageCircle, MessagesSquare, Plug, Sparkles, Receipt, ShieldCheck, TerminalSquare, Users, Workflow } from "lucide-react";
+import { BookOpen, Bot, BrainCircuit, ClipboardList, ExternalLink, FileCode2, FlaskConical, History, LibraryBig, LogOut, type LucideIcon, MessageCircle, MessageCircleMore, MessagesSquare, Plug, Sparkles, Receipt, ShieldCheck, TerminalSquare, Users, Workflow } from "lucide-react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useAssistant } from "@/lib/assistant";
@@ -27,6 +27,7 @@ const groups: { label?: string; items: Item[] }[] = [
   {
     label: "Capacidades",
     items: [
+      { to: "/chat-agent", label: "Agente de conversa", icon: MessageCircleMore },
       { to: "/prompts", label: "Prompts do motor", icon: FileCode2 },
       { to: "/skills", label: "Skills", icon: Sparkles },
       { to: "/mcp", label: "Servidores MCP", icon: Plug },

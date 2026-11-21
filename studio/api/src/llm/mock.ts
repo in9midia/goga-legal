@@ -164,6 +164,18 @@ function respond(system: string, user: string): unknown {
     }
     case "compliance":
       return { aprovado: true, zona: "verde", motivos: [], correcoes: [] };
+    case "conversa": {
+      // Agente de conversa simulado: conversa fiada e cobranca so respondem;
+      // o resto vai para a analise (ou para a que esta rodando).
+      const msg = norm(sectionBody(user, "Mensagem atual da pessoa"));
+      const running = user.includes("Análise em andamento: SIM");
+      if (/^(oi|ola|bom dia|boa tarde|boa noite|obrigad\w*|valeu|ok|e ai|cade|vai demorar|tchau)\b/.test(msg) && msg.length < 40 && !user.includes("(Arquivos enviados"))
+        return { acao: "responder", resposta: running ? "Calma, ainda estou analisando o seu caso. (simulado)" : "Olá! Me conte o que aconteceu. (simulado)", contexto: "" };
+      const raw = sectionBody(user, "Mensagem atual da pessoa").split("\n(Arquivos")[0]!.trim();
+      return running
+        ? { acao: "fluxo", resposta: "Anotado, vou considerar isso na análise. (simulado)", contexto: raw }
+        : { acao: "fluxo", resposta: "Entendi. Vou analisar e já te respondo. (simulado)", contexto: "" };
+    }
     default:
       return null;
   }

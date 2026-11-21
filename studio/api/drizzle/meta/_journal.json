@@ -71,6 +71,13 @@
       "when": 1795273084870,
       "tag": "0009_whatsapp",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1795275636443,
+      "tag": "0010_agente_conversa",
+      "breakpoints": true
     }
   ]
 }

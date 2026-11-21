@@ -65,6 +65,16 @@ export function SimulatorPage() {
     }
   }, [detail.data, selectedRun]);
 
+  // Turno aberto pelo servidor (complemento que chegou tarde vira o turno
+  // seguinte): a tela passa a acompanha-lo sozinha.
+  useEffect(() => {
+    const live = detail.data?.runs.find((r) => r.status === "running" && r.id !== activeRun);
+    if (live && (!activeRun || stream.status)) {
+      setActiveRun(live.id);
+      setSelectedRun(live.id);
+    }
+  }, [detail.data, activeRun, stream.status]);
+
   const traceRunId = selectedRun ?? activeRun;
   const isLive = !!activeRun && traceRunId === activeRun && !stream.status;
   const runDetail = useQuery({ queryKey: ["run", traceRunId], queryFn: () => api.get<RunDetail>(`/runs/${traceRunId}`), enabled: !!traceRunId });
@@ -261,18 +271,21 @@ function Chat({
   const send = useMutation({
     mutationFn: async () => {
       const sid = await ensureSession();
-      return api.post<{ runId: string }>(`/sessions/${sid}/messages`, { content: text.trim(), fileIds: pending.map((f) => f.id) });
+      return api.post<{ runId: string | null; complementedRunId?: string }>(`/sessions/${sid}/messages`, { content: text.trim(), fileIds: pending.map((f) => f.id) });
     },
     onSuccess: (r) => {
       setText("");
       setPending([]);
-      onSent(r.runId);
+      // Sem runId: o agente de conversa so respondeu, ou acrescentou ao turno em andamento.
+      if (r.runId) onSent(r.runId);
       qc.invalidateQueries({ queryKey: ["session"] });
     },
     onError: (e) => toast.error((e as Error).message),
   });
 
-  const canSend = text.trim().length > 0 && !running && !send.isPending && uploading === 0 && (target.useProduction || !!target.flowId);
+  // Com o turno rodando tambem se manda: o agente de conversa responde na hora e
+  // acrescenta ao turno o que for relevante (sem o agente, a API recusa com 409).
+  const canSend = text.trim().length > 0 && !send.isPending && uploading === 0 && (target.useProduction || !!target.flowId);
 
   return (
     <div
@@ -304,6 +317,7 @@ function Chat({
         {messages.map((m) =>
           m.role === "user" ? (
             <div key={m.id} className="group relative ml-auto max-w-[85%] rounded-lg rounded-br-sm bg-ink-700 px-3.5 py-2.5 text-sm">
+              {m.payload?.complemento && <div className="mb-1 text-[0.66rem] text-text-dim">acrescentado à análise em andamento</div>}
               <div className="whitespace-pre-wrap select-text">{m.content}</div>
               <div className="-mb-1 mt-1 flex justify-end"><CopyButton text={m.content} title="Copiar pergunta" label="Copiar" className="h-6 text-text-muted" /></div>
               {m.attachments.length > 0 && (
@@ -311,6 +325,11 @@ function Chat({
                   {m.attachments.map((id) => <FileChip key={id} file={filesById.get(id)} id={id} />)}
                 </div>
               )}
+            </div>
+          ) : m.payload?.frente ? (
+            <div key={m.id} className="max-w-[85%] rounded-lg rounded-bl-sm border border-line bg-ink-900/60 px-3.5 py-2 text-sm" title={m.payload.fallback ? `Agente de conversa falhou: ${m.payload.fallback}` : "Resposta imediata do agente de conversa"}>
+              <div className="mb-0.5 text-[0.66rem] text-text-dim">agente de conversa</div>
+              <div className="whitespace-pre-wrap select-text text-text-muted">{m.content}</div>
             </div>
           ) : (
             <AssistantMessage

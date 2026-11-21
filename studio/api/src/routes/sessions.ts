@@ -7,7 +7,8 @@ import { HttpError, badRequest, notFound } from "../lib/errors.js";
 import { readFileStream, saveUpload } from "../files/storage.js";
 import { extractFile } from "../files/extract.js";
 import { config } from "../config.js";
-import { cancelRun, startTurn } from "../engine/run.js";
+import { addContext, cancelRun, liveRunOfSession, resolveTarget, runInfo, startTurn } from "../engine/run.js";
+import { decide, frontActive } from "../engine/frontdesk.js";
 import { channel, hasChannel } from "../engine/tracer.js";
 import { runTranscript, sessionTranscript } from "../engine/transcript.js";
 import type { RunEvent, SpanRecord } from "../shared/graph.js";
@@ -141,7 +142,40 @@ export async function sessionRoutes(app: FastifyInstance) {
       flowId: b.data.flowId !== undefined ? b.data.flowId : s.flowId,
       useProduction: b.data.useProduction ?? (b.data.flowId ? false : s.useProduction),
     };
-    return startTurn({ user: me, sessionId: s.id, message: b.data.content, fileIds: b.data.fileIds, target });
+    const { content, fileIds } = b.data;
+    const running = liveRunOfSession(s.id);
+    // Sem o agente de conversa: um turno por vez, como sempre foi.
+    if (!(await frontActive())) {
+      if (running) throw new HttpError(409, "Aguarde a resposta em andamento (ou pare a execução).");
+      return startTurn({ user: me, sessionId: s.id, message: content, fileIds, target });
+    }
+    // Agente de conversa: resposta na hora; decide se so responde, se inicia o
+    // fluxo ou se acrescenta ao turno que esta rodando (mesma logica do WhatsApp).
+    const files = fileIds.length ? await db.select().from(schema.file).where(and(inArray(schema.file.id, fileIds), eq(schema.file.sessionId, s.id))) : [];
+    const resolved = running ? null : await resolveTarget(target);
+    const d = await decide({ channel: "simulador", sessionId: s.id, flowId: running ? null : resolved!.flowId, userId: me.id, message: content, files: files.map((f) => ({ name: f.name })), running: running ? runInfo(running) : null });
+    const reply = async () => (d.resposta ? (await db.insert(schema.message).values({ sessionId: s.id, role: "assistant", content: d.resposta, payload: { frente: true, acao: d.acao, ...(d.fallback && { fallback: d.fallback }) } }).returning())[0] : null);
+    if (d.acao === "responder") {
+      await db.insert(schema.message).values({ sessionId: s.id, role: "user", content, attachments: fileIds });
+      return { runId: null, frente: await reply() };
+    }
+    if (running) {
+      const text = [d.contexto || content, ...files.map((f) => `[arquivo ${f.name}] ${(f.extractedText ?? "").slice(0, 6000)}`)].join("\n");
+      const [u] = await db.insert(schema.message).values({ sessionId: s.id, role: "user", content, attachments: fileIds, runId: running, payload: { complemento: true, contexto: d.contexto || content } }).returning();
+      const added = addContext(running, {
+        id: u.id,
+        text,
+        // Chegou tarde para o turno ver: sai dele e abre o turno seguinte.
+        onUnseen: async () => {
+          await db.delete(schema.message).where(eq(schema.message.id, u.id));
+          await startTurn({ user: me, sessionId: s.id, message: content, fileIds, target });
+        },
+      });
+      if (added) return { runId: null, complementedRunId: running, frente: await reply() };
+      await db.delete(schema.message).where(eq(schema.message.id, u.id));
+    }
+    const started = await startTurn({ user: me, sessionId: s.id, message: content, fileIds, target });
+    return { ...started, frente: await reply() };
   });
 
   // Reexecuta a mesma pergunta (e anexos) numa conversa NOVA com outro fluxo,

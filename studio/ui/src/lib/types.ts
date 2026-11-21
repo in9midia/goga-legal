@@ -279,7 +279,8 @@ export interface Message {
   sessionId: string;
   role: "user" | "assistant";
   content: string;
-  payload: (Outcome & { error?: string }) | null;
+  /** frente: resposta imediata do agente de conversa; complemento: mensagem acrescentada a um turno em andamento. */
+  payload: (Outcome & { error?: string; frente?: boolean; complemento?: boolean; contexto?: string; fallback?: string }) | null;
   attachments: string[];
   runId: string | null;
   createdAt: string;

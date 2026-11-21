@@ -3,7 +3,7 @@ import { db, schema } from "../db/index.js";
 import { flowGraphSchema, type FlowGraph } from "../shared/graph.js";
 import { HttpError, notFound } from "../lib/errors.js";
 import type { SessionUser } from "../lib/auth.js";
-import type { RunContext } from "./context.js";
+import type { Addendum, RunContext } from "./context.js";
 import { executeTurn, readCase, type TurnInput, type TurnOutcome } from "./executor.js";
 import { RunTracer, errorMessage, publish } from "./tracer.js";
 import { CancelledError } from "../llm/call.js";
@@ -32,6 +32,38 @@ export function cancelRun(runId: string): boolean {
 
 export function isLive(runId: string) {
   return live.has(runId);
+}
+
+/** Turno rodando nesta conversa (neste processo), se houver. */
+export function liveRunOfSession(sessionId: string): string | null {
+  for (const [id, r] of live) if (r.ctx.sessionId === sessionId && !r.ctx.aborted) return id;
+  return null;
+}
+
+/** Estado do turno em andamento, para o agente de conversa. */
+export function runInfo(runId: string) {
+  const r = live.get(runId);
+  if (!r) return null;
+  return { question: r.ctx.question ?? "", seconds: Math.round((Date.now() - (r.ctx.startedAt ?? Date.now())) / 1000), addenda: (r.ctx.addenda ?? []).map((a) => a.text) };
+}
+
+/**
+ * Acrescenta um complemento da pessoa ao turno em andamento. Devolve false se
+ * o turno ja terminou (ou foi interrompido): o chamador trata como mensagem nova.
+ */
+export function addContext(runId: string, a: Omit<Addendum, "seen">): boolean {
+  const r = live.get(runId);
+  if (!r || r.ctx.aborted) return false;
+  (r.ctx.addenda ??= []).push({ ...a, seen: false });
+  return true;
+}
+
+/** Complementos que nenhuma chamada viu, de turnos ja encerrados (sem `onUnseen`). */
+const unseenByRun = new Map<string, Addendum[]>();
+export function takeUnseenAddenda(runId: string): Addendum[] {
+  const a = unseenByRun.get(runId) ?? [];
+  unseenByRun.delete(runId);
+  return a;
 }
 
 /**
@@ -157,6 +189,8 @@ export async function startTurn(args: {
     maxRunCostUsd: target.graph.settings.maxRunCostUsd || 0.5,
     files: sessionFiles.map((f) => ({ id: f.id, name: f.name, mime: f.mime, text: f.extractedText ?? "" })),
     generated: [],
+    question: args.message,
+    startedAt: Date.now(),
   };
 
   // Execucao EM PROCESSO, sem fila (decisao de arquitetura do MVP). O POST
@@ -203,6 +237,15 @@ async function runInBackground(ctx: RunContext, input: TurnInput, _userMsgId: st
     status = "error";
   } finally {
     live.delete(ctx.runId);
+    // Complemento que chegou tarde demais para alguma chamada ver: vira o
+    // proximo turno (antes do `done`, para a tela ja achar o turno novo).
+    const unseen = (ctx.addenda ?? []).filter((a) => !a.seen);
+    const leftover: Addendum[] = [];
+    for (const a of unseen) {
+      if (!a.onUnseen) leftover.push(a);
+      else await a.onUnseen().catch((err) => console.error(`[run ${ctx.runId}] complemento não aplicado: ${errorMessage(err)}`));
+    }
+    if (leftover.length) unseenByRun.set(ctx.runId, leftover);
     publish(ctx.runId, { type: "done", runId: ctx.runId, status, ...(messageId ? { messageId } : {}) });
   }
 }

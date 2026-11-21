@@ -19,6 +19,7 @@ import { assistantRoutes } from "./routes/assistant.js";
 import { agentRoutes } from "./routes/agent.js";
 import { textRoutes } from "./routes/texts.js";
 import { whatsappRoutes } from "./routes/whatsapp.js";
+import { chatAgentRoutes } from "./routes/chatAgent.js";
 
 export async function buildApp() {
   const app = Fastify({ logger: { level: config.isProd ? "info" : "warn" }, bodyLimit: 5 * 1024 * 1024, trustProxy: true });
@@ -61,5 +62,6 @@ export async function buildApp() {
   await app.register(agentRoutes);
   await app.register(textRoutes);
   await app.register(whatsappRoutes);
+  await app.register(chatAgentRoutes);
   return app;
 }

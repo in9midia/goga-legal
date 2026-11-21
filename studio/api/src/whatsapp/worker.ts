@@ -4,7 +4,8 @@ import { db, schema } from "../db/index.js";
 import { config } from "../config.js";
 import { saveFile, type FileRow } from "../files/storage.js";
 import { extractText } from "../files/extract.js";
-import { cancelRun, isLive, startTurn } from "../engine/run.js";
+import { addContext, cancelRun, isLive, runInfo, startTurn, takeUnseenAddenda } from "../engine/run.js";
+import { decide, frontActive } from "../engine/frontdesk.js";
 import { CancelledError } from "../llm/call.js";
 import { EvolutionError, evolution, isConnectionClosed } from "./evolution.js";
 import { chunks, HELP_TEXT, isYes, parseCommand, resolveOption, toWhatsApp, withOptions } from "./format.js";
@@ -80,7 +81,7 @@ export async function receive(n: NumberRow, msgs: InboundMessage[]): Promise<num
       // A resposta em preparo e da conversa que vai ser trocada ou apagada:
       // interrompe, e o comando roda assim que o turno fecha (em segundos).
       if (running) cancelRun(contact.busyRunId!);
-    } else if (running && !waitNoticeSent.has(contact.busyRunId!)) {
+    } else if (running && !waitNoticeSent.has(contact.busyRunId!) && !(await frontActive())) {
       // Mensagem durante o turno: entra no proximo, e a pessoa fica sabendo.
       waitNoticeSent.add(contact.busyRunId!);
       await enqueueText(n.id, contact, "Recebi. Ainda estou terminando a resposta anterior; em seguida considero esta mensagem também.");
@@ -158,25 +159,43 @@ async function step(name: string, fn: () => Promise<unknown>) {
 
 // ── Turnos ──────────────────────────────────────────────────────────────
 
+/** Complemento que nenhuma chamada do turno viu: volta como `queued` e vai direto ao fluxo, sem o agente de novo. */
+const UNSEEN = "complemento não visto pelo turno";
+
 async function dispatchInbound() {
   const ready = new Date(Date.now() - DEBOUNCE_MS);
+  // Com o agente de conversa, o contato com turno rodando tambem e atendido
+  // (resposta na hora + complemento do turno); sem ele, espera o turno acabar.
+  const front = await frontActive();
   const contacts = await db
     .selectDistinct({ c: schema.whatsappContact })
     .from(schema.whatsappContact)
     .innerJoin(schema.whatsappInbound, eq(schema.whatsappInbound.contactId, schema.whatsappContact.id))
-    .where(and(eq(schema.whatsappInbound.status, "pending"), isNull(schema.whatsappContact.busyRunId), lte(schema.whatsappContact.lastInboundAt, ready)))
+    .where(and(inArray(schema.whatsappInbound.status, ["pending", "queued"]), lte(schema.whatsappContact.lastInboundAt, ready), front ? undefined : isNull(schema.whatsappContact.busyRunId)))
     .limit(20);
-  for (const { c } of contacts) await step(`contato ${c.id.slice(0, 8)}`, () => processContact(c));
+  for (const { c } of contacts) {
+    // Turno encerrando (fora do processo vivo e ainda nao finalizado): espera o finalize.
+    if (c.busyRunId && !isLive(c.busyRunId)) continue;
+    await step(`contato ${c.id.slice(0, 8)}`, () => processContact(c, front));
+  }
 }
 
-async function processContact(contact: Contact) {
+async function processContact(contact: Contact, front: boolean) {
   const n = await loadNumber(contact.numberId);
-  const items = await db
-    .update(schema.whatsappInbound)
-    .set({ status: "processing" })
-    .where(and(eq(schema.whatsappInbound.contactId, contact.id), eq(schema.whatsappInbound.status, "pending")))
-    .returning();
+  const claimable = await db
+    .select({ id: schema.whatsappInbound.id, status: schema.whatsappInbound.status })
+    .from(schema.whatsappInbound)
+    .where(and(eq(schema.whatsappInbound.contactId, contact.id), inArray(schema.whatsappInbound.status, ["pending", "queued"])));
+  if (!claimable.length) return;
+  const items = await db.update(schema.whatsappInbound).set({ status: "processing" }).where(inArray(schema.whatsappInbound.id, claimable.map((x) => x.id))).returning();
   if (!items.length) return;
+  const wasQueued = claimable.some((x) => x.status === "queued");
+  const busyRun = contact.busyRunId && isLive(contact.busyRunId) ? contact.busyRunId : null;
+  // /nova, /limpar e a confirmacao do /limpar esperam o turno (ja interrompido no recebimento) fechar.
+  if (busyRun && (contact.pendingCommand || items.some((it) => it.kind === "text" && ["nova", "limpar"].includes(parseCommand(it.text) ?? "")))) {
+    for (const x of claimable) await db.update(schema.whatsappInbound).set({ status: x.status }).where(eq(schema.whatsappInbound.id, x.id));
+    return;
+  }
   items.sort((a, b) => a.receivedAt.getTime() - b.receivedAt.getTime() || a.createdAt.getTime() - b.createdAt.getTime());
   const done = (ids: string[], error?: string) => (ids.length ? db.update(schema.whatsappInbound).set({ status: "done", ...(error && { error }) }).where(inArray(schema.whatsappInbound.id, ids)) : Promise.resolve());
   if (!n.enabled) {
@@ -265,6 +284,39 @@ async function processContact(contact: Contact) {
     return;
   }
 
+  // Agente de conversa: resposta na hora e decisao (so responder, iniciar o
+  // fluxo, ou acrescentar ao turno que esta rodando). Complemento que o turno
+  // nao chegou a ver (`queued`) vai direto ao fluxo.
+  let frontReply: string | null = null;
+  if (front && !wasQueued) {
+    const info = busyRun ? runInfo(busyRun) : null;
+    const d = await decide({ channel: "whatsapp", sessionId, flowId: n.flowId, userId: null, message, files: files.map((f) => ({ name: f.name })), running: info, pendingOptions: c.pendingOptions });
+    let reply = d.resposta;
+    if (reply && firstEver) reply += "\n\n_Dica: envie /ajuda para ver os comandos._";
+    if (reply) await enqueueText(n.id, c, toWhatsApp(reply));
+    if (d.acao === "responder") {
+      await logExchange(sessionId, message, files, reply, null, null);
+      await done(ids);
+      await db.update(schema.whatsappContact).set({ pendingOptions: [], updatedAt: new Date() }).where(eq(schema.whatsappContact.id, c.id));
+      return;
+    }
+    if (busyRun) {
+      const text = [d.contexto || message, ...files.map((f) => `[arquivo ${f.name}] ${(f.extractedText ?? "").slice(0, 6000)}`)].join("\n");
+      const msgId = await logExchange(sessionId, message, files, reply, busyRun, d.contexto || message);
+      if (addContext(busyRun, { id: ids.join(","), text, meta: { inboundIds: ids, messageId: msgId } })) {
+        await db.update(schema.whatsappInbound).set({ runId: busyRun }).where(inArray(schema.whatsappInbound.id, ids));
+        return;
+      }
+      // O turno acabou entre a leitura e agora: vira o proximo turno.
+      await db.delete(schema.message).where(eq(schema.message.id, msgId));
+      await db.update(schema.whatsappInbound).set({ status: "queued" }).where(inArray(schema.whatsappInbound.id, ids));
+      return;
+    }
+    if (reply) firstContact.delete(c.id);
+    else if (firstEver) firstContact.add(c.id);
+    frontReply = reply || null;
+  }
+
   let runId: string;
   try {
     ({ runId } = await startTurn({
@@ -282,8 +334,24 @@ async function processContact(contact: Contact) {
   }
   await db.update(schema.whatsappInbound).set({ runId }).where(inArray(schema.whatsappInbound.id, ids));
   await db.update(schema.whatsappContact).set({ busyRunId: runId, pendingOptions: [], updatedAt: new Date() }).where(eq(schema.whatsappContact.id, c.id));
-  if (firstEver) firstContact.add(c.id);
+  if (!front && firstEver) firstContact.add(c.id);
+  // A resposta imediata do agente fica no historico, depois da pergunta.
+  if (front && !wasQueued && frontReply) await db.insert(schema.message).values({ sessionId, role: "assistant", content: frontReply, payload: { frente: true } });
   sendPresence(n, c.jid);
+}
+
+/**
+ * Grava no historico a mensagem que nao abriu turno: a que o agente so
+ * respondeu (runId null) ou o complemento de um turno rodando (runId dele).
+ * Devolve o id da mensagem da pessoa.
+ */
+async function logExchange(sessionId: string, text: string, files: FileRow[], reply: string, runId: string | null, contexto: string | null) {
+  const [u] = await db
+    .insert(schema.message)
+    .values({ sessionId, role: "user", content: text, attachments: files.map((f) => f.id), runId, ...(contexto && { payload: { complemento: true, contexto } }) })
+    .returning({ id: schema.message.id });
+  if (reply) await db.insert(schema.message).values({ sessionId, role: "assistant", content: reply, payload: { frente: true } });
+  return u.id;
 }
 
 /** Contatos no primeiro turno da vida: a resposta ganha a dica do /ajuda. */
@@ -318,6 +386,13 @@ async function finalize(c: Contact, run: typeof schema.run.$inferSelect | null, 
     await release();
     console.warn(`[whatsapp ${n.name}] turno ${runId.slice(0, 8)} interrompido pelo reinício: na fila de novo`);
     return;
+  }
+
+  // Complemento que chegou tarde demais para o turno: sai deste turno e vira o proximo.
+  for (const a of takeUnseenAddenda(runId)) {
+    const ids = (a.meta?.inboundIds as string[] | undefined) ?? [];
+    if (ids.length) await db.update(schema.whatsappInbound).set({ status: "queued", runId: null, error: UNSEEN }).where(inArray(schema.whatsappInbound.id, ids));
+    if (a.meta?.messageId) await db.delete(schema.message).where(eq(schema.message.id, a.meta.messageId as string));
   }
 
   const payload = (answer?.payload ?? null) as { resposta_simples?: string; opcoes?: string[]; status?: string; documentos?: { fileId: string; name: string }[]; error?: string } | null;
@@ -519,11 +594,13 @@ async function presence() {
     .innerJoin(schema.whatsappNumber, eq(schema.whatsappNumber.id, schema.whatsappContact.numberId))
     .innerJoin(schema.run, eq(schema.run.id, schema.whatsappContact.busyRunId))
     .where(isNotNull(schema.whatsappContact.busyRunId));
+  // Com o agente de conversa, quem fala com a pessoa e ele: sem aviso automatico.
+  const front = await frontActive();
   for (const { c, n, startedAt } of busy) {
     const runId = c.busyRunId!;
     if (!isLive(runId)) continue;
     sendPresence(n, c.jid);
-    if (!progressSent.has(runId) && !waitNoticeSent.has(runId) && Date.now() - startedAt.getTime() > PROGRESS_AFTER_MS) {
+    if (!front && !progressSent.has(runId) && !waitNoticeSent.has(runId) && Date.now() - startedAt.getTime() > PROGRESS_AFTER_MS) {
       progressSent.add(runId);
       await enqueueText(n.id, c, "Estou analisando o seu caso com cuidado. A resposta completa pode levar alguns minutos; aviso assim que estiver pronta.");
     }

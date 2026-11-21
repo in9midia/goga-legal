@@ -495,7 +495,7 @@ export const whatsappInbound = pgTable(
     // key + message do Baileys: o Evolution baixa a midia so com eles.
     raw: jsonb("raw"),
     media: jsonb("media").$type<{ mime: string; filename?: string; size?: number } | null>(),
-    status: text("status", { enum: ["pending", "processing", "done", "ignored"] }).notNull().default("pending"),
+    status: text("status", { enum: ["pending", "queued", "processing", "done", "ignored"] }).notNull().default("pending"),
     runId: uuid("run_id"),
     error: text("error"),
     receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
@@ -528,3 +528,15 @@ export const whatsappOutbound = pgTable(
   },
   (t) => [index("whatsapp_outbound_due_idx").on(t.status, t.nextAttemptAt)],
 );
+
+// Agente de conversa (singleton, id = 1): fica FORA do fluxo, na frente dele,
+// no Simulador e no WhatsApp. Responde na hora a toda mensagem e decide se ela
+// so pede resposta, se inicia o fluxo ou se complementa o fluxo em andamento.
+// O prompt e o texto do motor `conversa.agente` (tela Prompts).
+export const chatAgent = pgTable("chat_agent", {
+  id: integer("id").primaryKey().default(1),
+  enabled: boolean("enabled").notNull().default(true),
+  modelId: uuid("model_id").references(() => model.id, { onDelete: "set null" }),
+  updatedBy: text("updated_by").notNull().default("system"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
