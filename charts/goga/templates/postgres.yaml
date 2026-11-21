@@ -20,6 +20,8 @@ data:
     CREATE USER studio WITH PASSWORD :'stpw';
     CREATE DATABASE studio OWNER studio;
     SQL
+    # O banco do Evolution (WhatsApp) e criado pelo initContainer dele
+    # (templates/evolution.yaml), que roda tambem em volume ja existente.
     psql -v ON_ERROR_STOP=1 -U postgres -d knowledge_base <<'SQL'
     CREATE EXTENSION IF NOT EXISTS vector;
     CREATE EXTENSION IF NOT EXISTS pg_trgm;

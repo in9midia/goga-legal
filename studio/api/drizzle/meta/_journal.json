@@ -64,6 +64,13 @@
       "when": 1795264454060,
       "tag": "0008_textos_do_motor",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1795273084870,
+      "tag": "0009_whatsapp",
+      "breakpoints": true
     }
   ]
 }

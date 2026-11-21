@@ -106,6 +106,8 @@ export interface TurnOutcome {
   intencao?: Intencao;
   /** Caminho que o turno tomou: completo, conversa, reuso de pareceres ou documento. */
   atalho?: "completo" | "conversa" | "reuso" | "documento";
+  /** Respostas sugeridas para a pergunta do turno (esclarecimento ou escolha de documento). */
+  opcoes?: string[];
   /** `documento` = o turno pediu campos de um documento (proximo turno completa). */
   pendencia?: "documento";
   caso: CaseState;
@@ -471,7 +473,8 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
           : !asked.has(T["resposta.esclarecimento"].trim())
             ? T["resposta.esclarecimento"].trim()
             : T["resposta.esclarecimento_final"].trim();
-      return finish({ ...base, status: "clarify", resposta_simples: q, resposta_tecnica: `Score máximo ${top.toFixed(2)} abaixo do limiar de esclarecimento ${routing.clarifyThreshold} ou lacuna apontada pelo classificador (regra-mãe: uma lacuna por vez).`, citacoes: [], documentos: [], especialistas: [] });
+      const opcoes = q === own ? cls.opcoes_esclarecimento : [];
+      return finish({ ...base, status: "clarify", resposta_simples: q, ...(opcoes.length >= 2 && { opcoes }), resposta_tecnica: `Score máximo ${top.toFixed(2)} abaixo do limiar de esclarecimento ${routing.clarifyThreshold} ou lacuna apontada pelo classificador (regra-mãe: uma lacuna por vez).`, citacoes: [], documentos: [], especialistas: [] });
     }
 
     // ── Atalho: conversa ────────────────────────────────────────────────
@@ -525,7 +528,7 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
       if (!tpl) {
         caso = { ...caso, documento_pendente: { modelo: "", campos: {} } };
         if (output) mark(output.id);
-        return finish({ ...docBase, status: "clarify", pendencia: "documento", resposta_simples: `Qual documento você precisa? Posso preparar: ${templates.map((t) => t.title).join("; ")}.`, resposta_tecnica: `Modelo "${fill.modelo}" não reconhecido.`, documentos: [] });
+        return finish({ ...docBase, status: "clarify", pendencia: "documento", resposta_simples: `Qual documento você precisa? Posso preparar: ${templates.map((t) => t.title).join("; ")}.`, ...(templates.length >= 2 && templates.length <= 8 && { opcoes: templates.map((t) => t.title) }), resposta_tecnica: `Modelo "${fill.modelo}" não reconhecido.`, documentos: [] });
       }
       const campos: Record<string, string> = {};
       for (const [k, v] of Object.entries({ ...pend?.campos, ...fill.campos })) if (v.trim()) campos[k] = v.trim();

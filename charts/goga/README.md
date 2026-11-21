@@ -62,6 +62,11 @@ helm upgrade goga charts/goga -n goga --reset-then-reuse-values \
 
 ## Cuidados
 
+- **WhatsApp (Evolution):** a sessão dos números mora no banco `evolution` do Postgres e no volume
+  `evolution-instances` (keep). Perder os dois exige ler o QR de novo em cada número; inclua os dois
+  em backup/restore. Segredos `evolution.apiKey`/`evolution.dbPassword` (fora de `postgres.*` para
+  não reiniciar a KB ao trocar).
+
 - `kb.secretKey` e `studio.secretKey` cifram credenciais gravadas no banco:
   nao troque depois do primeiro deploy.
 - As senhas do Postgres so valem no primeiro boot (initdb). Depois, `ALTER USER`.

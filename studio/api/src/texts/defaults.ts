@@ -43,6 +43,7 @@ export const TEXTS = {
  "polo":"autor|reu|indefinido","urgencia":"baixa|normal|alta","foro":"...",
  "complexidade":"baixa|media|alta","fora_de_escopo":bool,"conflito_interesse":bool,
  "precisa_esclarecimento":bool,"pergunta_esclarecimento":"uma única pergunta, se precisar",
+ "opcoes_esclarecimento":["2 a 5 respostas curtas prováveis, quando a pergunta for de escolha; [] se for aberta"],
  "intencao":"nova_consulta|continuacao|pedido_documento|conversa","fatos_novos":bool,
  "resposta_conversa":"só quando intencao=conversa",
  "consulta_busca":"o caso como consulta à base jurídica, em uma linha"}

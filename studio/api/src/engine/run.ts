@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { flowGraphSchema, type FlowGraph } from "../shared/graph.js";
 import { HttpError, notFound } from "../lib/errors.js";
@@ -55,6 +55,8 @@ export async function reapOrphanRuns(): Promise<number> {
 export interface RunTarget {
   flowId: string | null;
   useProduction: boolean;
+  /** Fluxo especifico: roda a ultima versao publicada dele (sem publicacao, o rascunho). Canal de atendimento (WhatsApp). */
+  preferRelease?: boolean;
 }
 
 /** Resolve o grafo que vai rodar: o rascunho atual do fluxo ou a release de producao. */
@@ -72,11 +74,16 @@ export async function resolveTarget(t: RunTarget) {
   if (!t.flowId) throw new HttpError(400, "Escolha um fluxo.");
   const [f] = await db.select().from(schema.flow).where(eq(schema.flow.id, t.flowId));
   if (!f) throw notFound("fluxo");
+  if (t.preferRelease) {
+    const [rel] = await db.select().from(schema.flowRelease).where(eq(schema.flowRelease.flowId, f.id)).orderBy(desc(schema.flowRelease.revision)).limit(1);
+    if (rel) return { flowId: f.id, flowName: f.name, revision: rel.revision, releaseId: rel.id, graph: flowGraphSchema.parse(rel.graph), isProduction: false };
+  }
   return { flowId: f.id, flowName: f.name, revision: f.revision, releaseId: null, graph: flowGraphSchema.parse(f.graph), isProduction: false };
 }
 
 export async function startTurn(args: {
-  user: SessionUser;
+  /** null = turno de um canal de atendimento (WhatsApp), sem usuario do Studio. */
+  user: SessionUser | null;
   sessionId: string;
   message: string;
   fileIds: string[];
@@ -124,7 +131,7 @@ export async function startTurn(args: {
       graph: target.graph,
       isProduction: target.isProduction,
       sessionId: args.sessionId,
-      userId: args.user.id,
+      userId: args.user?.id ?? null,
       question: args.message,
     })
     .returning();
@@ -138,7 +145,7 @@ export async function startTurn(args: {
 
   const ctx: RunContext = {
     runId: runRow.id,
-    userId: args.user.id,
+    userId: args.user?.id ?? null,
     flowId: target.flowId,
     sessionId: args.sessionId,
     graph: target.graph,

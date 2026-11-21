@@ -36,6 +36,13 @@ export const classifierSchema = z.object({
   conflito_interesse: z.boolean().catch(false),
   precisa_esclarecimento: z.boolean().catch(false),
   pergunta_esclarecimento: z.string().nullable().catch("").transform((v) => v ?? ""),
+  // Respostas provaveis da pergunta de esclarecimento: viram botoes no
+  // Simulador e lista numerada no WhatsApp. Vazio = pergunta aberta.
+  opcoes_esclarecimento: z
+    .array(z.string().nullable().catch(null))
+    .nullable()
+    .catch([])
+    .transform((v) => (v ?? []).filter((o): o is string => !!o && !!o.trim()).map((o) => o.trim().slice(0, 80)).slice(0, 6)),
   // Intencao do turno. O padrao (`nova_consulta`) e o caminho completo: se o
   // modelo nao souber dizer, o motor faz o que sempre fez em vez de pegar atalho.
   intencao: z.enum(INTENCOES).catch("nova_consulta"),

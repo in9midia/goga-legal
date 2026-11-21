@@ -12,6 +12,7 @@ import { CostsPage } from "./pages/Costs";
 import { AuditPage } from "./pages/Audit";
 import { ProvidersPage } from "./pages/admin/Providers";
 import { UsersPage } from "./pages/admin/Users";
+import { WhatsAppPage } from "./pages/admin/WhatsApp";
 import { CatalogsPage } from "./pages/admin/Catalogs";
 import { EvalPage } from "./pages/Eval";
 import { SkillsPage } from "./pages/Skills";
@@ -56,6 +57,7 @@ const router = createBrowserRouter([
           { path: "audit", element: <AuditPage /> },
           { path: "admin/providers", element: <ProvidersPage /> },
           { path: "admin/users", element: <UsersPage /> },
+          { path: "admin/whatsapp", element: <WhatsAppPage /> },
           { path: "admin/catalogs", element: <CatalogsPage /> },
           { path: "skills", element: <SkillsPage /> },
           { path: "mcp", element: <McpPage /> },

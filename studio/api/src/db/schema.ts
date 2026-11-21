@@ -9,6 +9,7 @@ import {
   serial,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 
@@ -213,6 +214,9 @@ export const chatSession = pgTable("session", {
   userId: uuid("user_id").references(() => appUser.id),
   flowId: uuid("flow_id").references(() => flow.id, { onDelete: "set null" }),
   useProduction: boolean("use_production").notNull().default(false),
+  // Conversa de um contato do WhatsApp (sem usuario do Studio). O /limpar do
+  // contato apaga todas as conversas com este vinculo.
+  whatsappContactId: uuid("whatsapp_contact_id"),
   createdAt: createdAt(),
 });
 
@@ -415,4 +419,112 @@ export const assistantMessage = pgTable(
     createdAt: createdAt(),
   },
   (t) => [index("assistant_message_session_idx").on(t.sessionId, t.createdAt)],
+);
+
+// ── WhatsApp nao oficial (Evolution API) ────────────────────────────────
+// Um numero = uma instancia do Evolution, ligada a UM fluxo de atendimento.
+// O estado da sessao (QR, conectado, caiu) espelha o Evolution: webhook
+// CONNECTION_UPDATE + verificacao a cada minuto.
+export const whatsappNumber = pgTable("whatsapp_number", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  instanceName: text("instance_name").notNull().unique(),
+  // Fluxo que atende: o de producao (segue a publicacao) ou um fluxo especifico
+  // (a ultima versao publicada dele; sem publicacao, o rascunho).
+  useProduction: boolean("use_production").notNull().default(true),
+  flowId: uuid("flow_id").references(() => flow.id, { onDelete: "set null" }),
+  enabled: boolean("enabled").notNull().default(true),
+  state: text("state", { enum: ["not_created", "connecting", "open", "close"] }).notNull().default("not_created"),
+  qrCode: text("qr_code"),
+  pairingCode: text("pairing_code"),
+  qrUpdatedAt: timestamp("qr_updated_at", { withTimezone: true }),
+  number: text("number"),
+  profileName: text("profile_name"),
+  statusReason: integer("status_reason"),
+  connectedAt: timestamp("connected_at", { withTimezone: true }),
+  disconnectedAt: timestamp("disconnected_at", { withTimezone: true }),
+  lastEventAt: timestamp("last_event_at", { withTimezone: true }),
+  restartRequestedAt: timestamp("restart_requested_at", { withTimezone: true }),
+  createdBy: uuid("created_by").references(() => appUser.id),
+  createdAt: createdAt(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const whatsappContact = pgTable(
+  "whatsapp_contact",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    numberId: uuid("number_id")
+      .notNull()
+      .references(() => whatsappNumber.id, { onDelete: "cascade" }),
+    // JID do WhatsApp (telefone@s.whatsapp.net ou id@lid): o destino das respostas.
+    jid: text("jid").notNull(),
+    phone: text("phone"),
+    name: text("name"),
+    // Conversa atual do contato (o /nova abre outra).
+    sessionId: uuid("session_id").references(() => chatSession.id, { onDelete: "set null" }),
+    // Opcoes da ultima pergunta do Goga: "2" vira o texto da opcao 2.
+    pendingOptions: jsonb("pending_options").$type<string[]>().notNull().default([]),
+    // Comando esperando confirmacao (ex.: limpar).
+    pendingCommand: text("pending_command"),
+    // Turno em execucao: enquanto houver, as mensagens novas esperam na fila.
+    busyRunId: uuid("busy_run_id"),
+    lastInboundAt: timestamp("last_inbound_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("whatsapp_contact_number_jid_idx").on(t.numberId, t.jid)],
+);
+
+// Mensagem recebida: gravada ANTES de responder 200 ao webhook (o Evolution
+// reenvia o que nao foi aceito) e processada pela fila. Nada se perde se o
+// Studio cair no meio: o que estava em `processing` volta para a fila no boot.
+export const whatsappInbound = pgTable(
+  "whatsapp_inbound",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    numberId: uuid("number_id")
+      .notNull()
+      .references(() => whatsappNumber.id, { onDelete: "cascade" }),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => whatsappContact.id, { onDelete: "cascade" }),
+    externalId: text("external_id").notNull(),
+    kind: text("kind").notNull(),
+    text: text("text").notNull().default(""),
+    // key + message do Baileys: o Evolution baixa a midia so com eles.
+    raw: jsonb("raw"),
+    media: jsonb("media").$type<{ mime: string; filename?: string; size?: number } | null>(),
+    status: text("status", { enum: ["pending", "processing", "done", "ignored"] }).notNull().default("pending"),
+    runId: uuid("run_id"),
+    error: text("error"),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("whatsapp_inbound_ext_idx").on(t.numberId, t.externalId), index("whatsapp_inbound_status_idx").on(t.status, t.contactId)],
+);
+
+// Mensagem a enviar. Envio com o Evolution fora do ar ou a sessao caida fica
+// na fila e e tentado de novo com espera crescente.
+export const whatsappOutbound = pgTable(
+  "whatsapp_outbound",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    numberId: uuid("number_id")
+      .notNull()
+      .references(() => whatsappNumber.id, { onDelete: "cascade" }),
+    contactId: uuid("contact_id").references(() => whatsappContact.id, { onDelete: "cascade" }),
+    jid: text("jid").notNull(),
+    text: text("text").notNull().default(""),
+    fileId: uuid("file_id"),
+    runId: uuid("run_id"),
+    status: text("status", { enum: ["pending", "sent", "failed"] }).notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
+    error: text("error"),
+    externalId: text("external_id"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("whatsapp_outbound_due_idx").on(t.status, t.nextAttemptAt)],
 );

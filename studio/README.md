@@ -61,6 +61,31 @@ Dentro do repo a skill já é descoberta (`.agents/skills/` → Codex e Gemini, 
 Claude Code, ambos links para `api/agent-skill/`). Ações sensíveis (publicar, excluir, restaurar,
 lote, escrita genérica) voltam 428 sem `confirm: true`, e a skill manda o agente pedir aprovação.
 
+## WhatsApp (não oficial, Evolution API)
+
+Tela **Administração › WhatsApp** (só administradores): cadastra um ou mais números, cada um
+ligado a **um fluxo** (o de produção, que segue a publicação, ou um fluxo específico, que roda a
+última versão publicada dele). Ao criar, o Studio cria a instância no Evolution, configura o webhook
+autenticado e mostra o QR code; no celular: *Aparelhos conectados › Conectar um aparelho*.
+
+O que a pessoa faz pelo WhatsApp: conversa com o fluxo, manda fotos e documentos (PDF, DOCX, imagem,
+texto; o arquivo vira anexo do turno, como no Simulador) e recebe os documentos gerados. Pergunta de
+esclarecimento com opções (`opcoes` do desfecho; o Classificador devolve `opcoes_esclarecimento`)
+chega como lista numerada, e responder "2" vale a opção 2. Comandos (com `/`, `#` ou `!`):
+`/nova` (conversa nova, a anterior fica guardada), `/limpar` (pede confirmação e apaga conversas,
+execuções e arquivos do contato), `/cancelar` (interrompe a resposta em preparo) e `/ajuda`.
+
+Nada se perde (src/whatsapp/worker.ts): o webhook só responde 200 depois de gravar a mensagem
+(`whatsapp_inbound`; o Evolution reenvia por ~3 h o que não foi aceito); um turno por contato, com
+as mensagens seguidas agrupadas; o turno interrompido por reinício do Studio roda de novo; a resposta
+vai para `whatsapp_outbound` e é reenviada com espera crescente se o Evolution cair ou o número
+desconectar (até 24 h). Sessão travada (Evolution diz `open`, envio diz *Connection Closed*): o número
+fica *desconectado* com motivo 428 e o Studio reinicia o Evolution (no máximo a cada 15 min), que volta
+sem QR porque a sessão fica só em armazenamento durável (Postgres + volume; sem Redis). Desenho e
+lições vêm do In9 CRM (`services/evolution-api` e `channels/adapters/whatsapp_evolution`).
+Infra: `charts/goga/templates/evolution.yaml`. Variáveis: `EVOLUTION_API_URL`, `EVOLUTION_API_KEY`,
+`EVOLUTION_WEBHOOK_BASE_URL`, `EVOLUTION_RESTART_TARGET`, `WHATSAPP_WORKER`.
+
 ## Testes
 
 ```bash

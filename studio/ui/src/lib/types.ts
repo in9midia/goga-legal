@@ -228,6 +228,8 @@ export interface Outcome {
   /** Caminho que o turno tomou no fluxo. */
   atalho?: Atalho;
   pendencia?: "documento";
+  /** Respostas sugeridas para a pergunta do turno (no WhatsApp viram lista numerada). */
+  opcoes?: string[];
   flags: string[];
   compliance?: { aprovado: boolean; ciclos: number; motivos: string[] };
   path: { nodes: string[]; edges: string[] };

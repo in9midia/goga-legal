@@ -51,5 +51,17 @@ export const config = {
   // Lista fechada: sem ela o endpoint seria um open redirect.
   ssoHosts: env("STUDIO_SSO_HOSTS").split(",").map((h) => h.trim().toLowerCase()).filter(Boolean),
   // Tabela de precos do LiteLLM (a mesma da KB). Vazio desliga a busca de preco.
+  // WhatsApp nao oficial (Evolution API, rede interna do cluster). Sem chave,
+  // a tela do WhatsApp avisa que o Evolution nao esta configurado.
+  evolutionUrl: env("EVOLUTION_API_URL", "http://evolution-api:8080").replace(/\/$/, ""),
+  evolutionApiKey: env("EVOLUTION_API_KEY"),
+  // Base que o Evolution usa para chamar o Studio (webhook). No cluster, o
+  // Service interno; vazio = STUDIO_PUBLIC_URL ou http://localhost:PORT.
+  evolutionWebhookBase: env("EVOLUTION_WEBHOOK_BASE_URL").replace(/\/$/, ""),
+  // <namespace>/<deployment> do Evolution que o Studio reinicia quando a sessao
+  // trava (Evolution diz "open", envio diz "Connection Closed"). Vazio = desligado.
+  evolutionRestartTarget: env("EVOLUTION_RESTART_TARGET"),
+  // Liga a fila do WhatsApp neste processo (0 = desliga, p.ex. em testes).
+  whatsappWorker: env("WHATSAPP_WORKER", "1") !== "0",
   priceCatalogUrl: env("STUDIO_PRICE_CATALOG_URL", "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"),
 };

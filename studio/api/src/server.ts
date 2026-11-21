@@ -6,6 +6,7 @@ import { seed } from "./seed/index.js";
 import { recoverInterruptedTurns } from "./assistant/agent.js";
 import { reapOrphanRuns } from "./engine/run.js";
 import { getIndices } from "./skills/indices.js";
+import { startWorker } from "./whatsapp/worker.js";
 
 await runMigrations();
 await seed((m) => console.log(`[seed] ${m}`));
@@ -20,4 +21,7 @@ setInterval(() => pruneSessions().catch(() => undefined), 3600_000).unref();
 
 const app = await buildApp();
 await app.listen({ port: config.port, host: "0.0.0.0" });
+// Fila do WhatsApp: depois do reapOrphanRuns (o que ficou rodando no reinicio
+// volta para a fila) e com o servidor ja ouvindo (o webhook nao espera).
+if (config.whatsappWorker) await startWorker();
 console.log(`studio-api ouvindo em :${config.port}`);

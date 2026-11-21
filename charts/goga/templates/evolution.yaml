@@ -1,0 +1,200 @@
+{{- if .Values.evolution.enabled }}
+# Evolution API: WhatsApp nao oficial (QR code) para o atendimento do Goga.
+# Mesmo desenho do Evolution do In9 CRM (services/evolution-api no repo crm),
+# que passou por producao. O que nao e obvio:
+#
+# - A SESSAO FICA SO EM ARMAZENAMENTO DURAVEL: credencial principal (`creds`) no
+#   Postgres (tabela Session do banco `evolution`) e chaves do Signal em arquivos
+#   no volume /evolution/instances. Sem Redis: com CACHE_REDIS_ENABLED=true as
+#   chaves iriam para ele, e um Redis sem disco ou com despejo por memoria apaga
+#   a sessao (novo QR code; incidente do CRM em 01/11/2026). Com os dois
+#   preservados, reiniciar ou recriar o pod volta conectado, sem QR.
+# - Uma replica (o volume e RWO) e Recreate.
+# - Webhook POR INSTANCIA, configurado pelo Studio ao conectar o numero
+#   (cabecalho x-goga-webhook-token + apikey da instancia); o global fica
+#   desligado. Webhook recusado (Studio fora) e reenviado por ~3 h.
+# - v2.3.7: a v2.3.1 conectava mas nao recebia mensagens (timeout nas "init
+#   queries" do Baileys).
+# - O Studio reinicia este Deployment quando a sessao trava (Evolution diz
+#   `open`, envio diz "Connection Closed"): Role abaixo, so get/patch nele.
+{{- $evoPw := include "goga.req" (list . "evolution.dbPassword") }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: evolution-secrets
+  labels: {{- include "goga.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  AUTHENTICATION_API_KEY: {{ include "goga.req" (list . "evolution.apiKey") | quote }}
+  DATABASE_CONNECTION_URI: {{ printf "postgresql://evolution:%s@postgres:5432/evolution?schema=public" (urlquery $evoPw) | quote }}
+  EVOLUTION_DB_PASSWORD: {{ $evoPw | quote }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: evolution-instances
+  labels: {{- include "goga.labels" . | nindent 4 }}
+  annotations:
+    # Chaves da sessao do WhatsApp: perder o volume obriga a ler o QR de novo.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: {{ .Values.postgres.storageClass }}
+  resources: { requests: { storage: {{ .Values.evolution.storage }} } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: evolution-api
+  labels: {{- include "goga.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: evolution-api } }
+  template:
+    metadata:
+      labels: { app: evolution-api }
+      annotations:
+        checksum/secret: {{ printf "%s|%s" (include "goga.req" (list . "evolution.apiKey")) $evoPw | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      # A imagem roda como root: na partida copia as migracoes do Prisma.
+      # Compensado por capabilities removidas e sem escalonamento de privilegio.
+      securityContext:
+        runAsNonRoot: false
+        runAsUser: 0
+        fsGroup: 0
+        seccompProfile: { type: RuntimeDefault }
+      initContainers:
+        # Banco e usuario do Evolution no Postgres unico, idempotente a cada
+        # partida (o init do Postgres so roda no primeiro boot do volume).
+        - name: db-init
+          image: {{ .Values.postgres.image }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: postgres-secret, key: POSTGRES_PASSWORD } }
+            - name: EVOLUTION_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: evolution-secrets, key: EVOLUTION_DB_PASSWORD } }
+          command:
+            - bash
+            - -ec
+            - |
+              until pg_isready -h postgres -U postgres -q; do echo "esperando o postgres"; sleep 2; done
+              psql -h postgres -U postgres -v ON_ERROR_STOP=1 -v pw="$EVOLUTION_DB_PASSWORD" <<'SQL'
+              SELECT format('CREATE ROLE evolution LOGIN PASSWORD %L', :'pw') WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'evolution') \gexec
+              SELECT format('ALTER ROLE evolution PASSWORD %L', :'pw') \gexec
+              SELECT 'CREATE DATABASE evolution OWNER evolution' WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'evolution') \gexec
+              SQL
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+      containers:
+        - name: evolution-api
+          image: {{ .Values.evolution.image }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: SERVER_TYPE, value: http }
+            - { name: SERVER_PORT, value: "8080" }
+            - { name: SERVER_URL, value: "http://evolution-api.{{ .Release.Namespace }}.svc.cluster.local:8080" }
+            - { name: LOG_LEVEL, value: "ERROR,WARN,INFO" }
+            - { name: LOG_BAILEYS, value: error }
+            - { name: DEL_INSTANCE, value: "false" }
+            # Persistencia da sessao (ver o comentario do topo).
+            - { name: DATABASE_ENABLED, value: "true" }
+            - { name: DATABASE_PROVIDER, value: postgresql }
+            - { name: DATABASE_CONNECTION_CLIENT_NAME, value: evolution_goga }
+            - { name: DATABASE_SAVE_DATA_INSTANCE, value: "true" }
+            - { name: DATABASE_SAVE_DATA_NEW_MESSAGE, value: "false" }
+            - { name: DATABASE_SAVE_MESSAGE_UPDATE, value: "false" }
+            - { name: DATABASE_SAVE_DATA_CONTACTS, value: "false" }
+            - { name: DATABASE_SAVE_DATA_CHATS, value: "false" }
+            - { name: CACHE_REDIS_ENABLED, value: "false" }
+            - { name: CACHE_REDIS_SAVE_INSTANCES, value: "false" }
+            - { name: CACHE_LOCAL_ENABLED, value: "true" }
+            # Webhook por instancia (o Studio configura); global desligado.
+            - { name: WEBHOOK_GLOBAL_ENABLED, value: "false" }
+            - { name: WEBHOOK_GLOBAL_URL, value: "" }
+            - { name: WEBHOOK_GLOBAL_WEBHOOK_BY_EVENTS, value: "false" }
+            - { name: WEBHOOK_EVENTS_MESSAGES_UPSERT, value: "true" }
+            - { name: WEBHOOK_EVENTS_CONNECTION_UPDATE, value: "true" }
+            - { name: WEBHOOK_EVENTS_QRCODE_UPDATED, value: "true" }
+            # Studio fora: reenvio com espera exponencial de 5 s a 5 min, 40
+            # tentativas ~ 3 h (o padrao, 10, cobre so ~20 min).
+            - { name: WEBHOOK_RETRY_MAX_ATTEMPTS, value: "40" }
+            - { name: WEBHOOK_RETRY_INITIAL_DELAY_SECONDS, value: "5" }
+            - { name: WEBHOOK_RETRY_MAX_DELAY_SECONDS, value: "300" }
+            - { name: GROUPS_IGNORE, value: "true" }
+            - { name: QRCODE_LIMIT, value: "30" }
+            # Padrao azul (#175197); preto le melhor no celular.
+            - { name: QRCODE_COLOR, value: "#000000" }
+            - { name: CONFIG_SESSION_PHONE_CLIENT, value: {{ .Values.evolution.phoneClientName | quote }} }
+            - { name: TELEMETRY_ENABLED, value: "false" }
+          envFrom:
+            - secretRef: { name: evolution-secrets }
+          ports: [{ containerPort: 8080, name: http }]
+          startupProbe:
+            tcpSocket: { port: 8080 }
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            tcpSocket: { port: 8080 }
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: { port: 8080 }
+            periodSeconds: 20
+          resources: {{- toYaml .Values.evolution.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          volumeMounts: [{ name: instances, mountPath: /evolution/instances }]
+      volumes:
+        - name: instances
+          persistentVolumeClaim: { claimName: evolution-instances }
+---
+# A API do Evolution NAO sai na internet: o Studio fala com ela pela rede do cluster.
+apiVersion: v1
+kind: Service
+metadata:
+  name: evolution-api
+  labels: {{- include "goga.labels" . | nindent 4 }}
+spec:
+  selector: { app: evolution-api }
+  ports: [{ name: http, port: 8080, targetPort: 8080 }]
+---
+# O studio-api reinicia o Evolution quando a sessao trava (mesmo que
+# `kubectl rollout restart`): so get/patch neste Deployment.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: studio-api
+  labels: {{- include "goga.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: studio-evolution-restart
+  labels: {{- include "goga.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["evolution-api"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: studio-evolution-restart
+  labels: {{- include "goga.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: studio-evolution-restart
+subjects:
+  - kind: ServiceAccount
+    name: studio-api
+    namespace: {{ .Release.Namespace }}
+{{- end }}

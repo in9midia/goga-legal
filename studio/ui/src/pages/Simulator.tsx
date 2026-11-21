@@ -251,6 +251,13 @@ function Chat({
     }
   };
 
+  // Opcao clicada numa pergunta do Goga: vira o texto do campo, para revisar e enviar.
+  useEffect(() => {
+    const pick = (e: Event) => setText((e as CustomEvent<string>).detail);
+    window.addEventListener("studio:simulator-option", pick);
+    return () => window.removeEventListener("studio:simulator-option", pick);
+  }, []);
+
   const send = useMutation({
     mutationFn: async () => {
       const sid = await ensureSession();
@@ -432,6 +439,15 @@ function AssistantMessage({ m, run, selected, onSelect, flows, onCompare }: { m:
         </Tabs>
       ) : (
         <div className="whitespace-pre-wrap">{m.content}</div>
+      )}
+      {o?.opcoes && o.opcoes.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1.5" onClick={(e) => e.stopPropagation()}>
+          {o.opcoes.map((op, i) => (
+            <button key={op} type="button" title="Usar esta resposta" className="rounded-full border border-line bg-ink-850 px-2.5 py-1 text-xs text-text-muted hover:border-ink-500 hover:text-text" onClick={() => window.dispatchEvent(new CustomEvent("studio:simulator-option", { detail: op }))}>
+              {i + 1}. {op}
+            </button>
+          ))}
+        </div>
       )}
       {o?.citacoes && o.citacoes.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-1">

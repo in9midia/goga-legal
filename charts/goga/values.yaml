@@ -118,6 +118,20 @@ kb:
       # kb-api passando de 30 s (64 buscas com timeout entre 06 e 13/10).
       limits: { cpu: "1", memory: 4Gi }
 
+# WhatsApp nao oficial (Evolution API) — templates/evolution.yaml. Segredos em
+# secrets.yaml: evolution.apiKey e evolution.dbPassword.
+evolution:
+  enabled: true
+  # Nome completo (CRI-O do OKE). Mesma versao do In9 CRM, estavel em producao.
+  image: docker.io/evoapicloud/evolution-api:v2.3.7
+  # Chaves da sessao do WhatsApp (poucos MB). oci-bv: minimo de 50Gi.
+  storage: 50Gi
+  # Nome do "aparelho conectado" que aparece no celular.
+  phoneClientName: Goga
+  resources:
+    requests: { cpu: 100m, memory: 384Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
 studio:
   adminEmail: admin@goga.legal
   # Cookie de sessao para todos os subdominios: e o que faz o SSO com a KB.

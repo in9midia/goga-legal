@@ -31,6 +31,10 @@ spec:
         {{- include "goga.rollout" (list . "studio-api") | nindent 8 }}
     spec:
       {{- include "goga.pullSecrets" . | nindent 6 }}
+      {{- if .Values.evolution.enabled }}
+      # Conta com permissao de reiniciar o Evolution (templates/evolution.yaml).
+      serviceAccountName: studio-api
+      {{- end }}
       securityContext: { fsGroup: 1000 }
       containers:
         - name: studio-api
@@ -47,6 +51,14 @@ spec:
             # SSO: sessao valida nos subdominios, e o /auth/sso so devolve para a KB.
             - { name: STUDIO_COOKIE_DOMAIN, value: {{ .Values.studio.cookieDomain | quote }} }
             - { name: STUDIO_SSO_HOSTS, value: {{ .Values.ingress.kbHost | quote }} }
+            {{- if .Values.evolution.enabled }}
+            # WhatsApp: o Studio chama o Evolution e recebe os webhooks pela rede interna.
+            - { name: EVOLUTION_API_URL, value: "http://evolution-api.{{ .Release.Namespace }}.svc.cluster.local:8080" }
+            - { name: EVOLUTION_WEBHOOK_BASE_URL, value: "http://studio-api.{{ .Release.Namespace }}.svc.cluster.local" }
+            - { name: EVOLUTION_RESTART_TARGET, value: "{{ .Release.Namespace }}/evolution-api" }
+            - name: EVOLUTION_API_KEY
+              valueFrom: { secretKeyRef: { name: evolution-secrets, key: AUTHENTICATION_API_KEY } }
+            {{- end }}
           envFrom:
             - secretRef: { name: studio-secrets }
           ports: [{ containerPort: 8787, name: http }]
