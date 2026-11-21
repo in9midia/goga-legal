@@ -30,7 +30,7 @@ import { loadNumber, markStale, monitoredNumbers, recentlyClosed, refresh, type 
 const DEBOUNCE_MS = 2500;
 const TICK_MS = 1500;
 const MONITOR_MS = 60_000;
-const PRESENCE_MS = 15_000;
+const PRESENCE_MS = 10_000;
 const OUTBOUND_MAX_AGE_MS = 24 * 3600_000;
 const OUTBOUND_MAX_ATTEMPTS = 8;
 const MB = 1024 * 1024;
@@ -67,12 +67,23 @@ export async function receive(n: NumberRow, msgs: InboundMessage[]): Promise<num
       .returning();
     if (!row) continue;
     fresh++;
-    // /cancelar vale na hora, mesmo com o turno rodando (as outras mensagens esperam).
+    // Comandos nao esperam o turno em andamento (que pode levar minutos).
+    const running = !!contact.busyRunId && isLive(contact.busyRunId);
     if (cmd === "cancelar") {
-      const running = contact.busyRunId && isLive(contact.busyRunId);
       if (running) cancelRun(contact.busyRunId!);
       await db.update(schema.whatsappInbound).set({ status: "done" }).where(eq(schema.whatsappInbound.id, row.id));
       await enqueueText(n.id, contact, running ? "Ok, interrompi a resposta. Pode mandar a mensagem de novo quando quiser." : "Não há nenhuma resposta em preparo agora.");
+    } else if (cmd === "ajuda") {
+      await db.update(schema.whatsappInbound).set({ status: "done" }).where(eq(schema.whatsappInbound.id, row.id));
+      await enqueueText(n.id, contact, HELP_TEXT);
+    } else if (cmd === "nova" || cmd === "limpar") {
+      // A resposta em preparo e da conversa que vai ser trocada ou apagada:
+      // interrompe, e o comando roda assim que o turno fecha (em segundos).
+      if (running) cancelRun(contact.busyRunId!);
+    } else if (running && !waitNoticeSent.has(contact.busyRunId!)) {
+      // Mensagem durante o turno: entra no proximo, e a pessoa fica sabendo.
+      waitNoticeSent.add(contact.busyRunId!);
+      await enqueueText(n.id, contact, "Recebi. Ainda estou terminando a resposta anterior; em seguida considero esta mensagem também.");
     }
   }
   if (fresh) kick();
@@ -495,13 +506,30 @@ function sendPresence(n: NumberRow, jid: string) {
   void evolution("POST", `/chat/sendPresence/${encodeURIComponent(n.instanceName)}`, { number: destination(jid), presence: "composing", delay: PRESENCE_MS + 2000 }, PRESENCE_MS + 10_000).catch(() => undefined);
 }
 
+/** Turnos que ja ganharam o aviso de "estou analisando" / "recebi, espere". */
+const progressSent = new Set<string>();
+const waitNoticeSent = new Set<string>();
+/** Turno mais longo que isto ganha um aviso (o fluxo completo leva minutos). */
+const PROGRESS_AFTER_MS = 20_000;
+
 async function presence() {
   const busy = await db
-    .select({ c: schema.whatsappContact, n: schema.whatsappNumber })
+    .select({ c: schema.whatsappContact, n: schema.whatsappNumber, startedAt: schema.run.startedAt })
     .from(schema.whatsappContact)
     .innerJoin(schema.whatsappNumber, eq(schema.whatsappNumber.id, schema.whatsappContact.numberId))
+    .innerJoin(schema.run, eq(schema.run.id, schema.whatsappContact.busyRunId))
     .where(isNotNull(schema.whatsappContact.busyRunId));
-  for (const { c, n } of busy) if (isLive(c.busyRunId!)) sendPresence(n, c.jid);
+  for (const { c, n, startedAt } of busy) {
+    const runId = c.busyRunId!;
+    if (!isLive(runId)) continue;
+    sendPresence(n, c.jid);
+    if (!progressSent.has(runId) && !waitNoticeSent.has(runId) && Date.now() - startedAt.getTime() > PROGRESS_AFTER_MS) {
+      progressSent.add(runId);
+      await enqueueText(n.id, c, "Estou analisando o seu caso com cuidado. A resposta completa pode levar alguns minutos; aviso assim que estiver pronta.");
+    }
+  }
+  if (progressSent.size > 500) progressSent.clear();
+  if (waitNoticeSent.size > 500) waitNoticeSent.clear();
 }
 
 // ── Verificacao periodica ───────────────────────────────────────────────

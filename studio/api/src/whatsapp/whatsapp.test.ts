@@ -174,6 +174,19 @@ describe.skipIf(!dbUp)("WhatsApp: Evolution falso + fluxo simulado", () => {
     expect(sent().at(-1)!.body.text).toMatch(/\/limpar/);
   }, 30_000);
 
+  it("/ajuda responde na hora mesmo com um turno longo em andamento", async () => {
+    const c = await contact();
+    const [run] = await m.db.db.insert(m.db.schema.run).values({ flowId, flowRevision: 1, graph: {}, sessionId: c.sessionId, status: "running", question: "turno longo" }).returning();
+    await m.db.db.update(m.db.schema.whatsappContact).set({ busyRunId: run.id }).where(eq(m.db.schema.whatsappContact.id, c.id));
+    const before = sent().length;
+    await say("/ajuda");
+    await until(() => sent().length > before);
+    expect(sent().at(-1)!.body.text).toMatch(/\/limpar/);
+    expect((await contact()).busyRunId).toBe(run.id);
+    await m.db.db.update(m.db.schema.run).set({ status: "ok" }).where(eq(m.db.schema.run.id, run.id));
+    await m.db.db.update(m.db.schema.whatsappContact).set({ busyRunId: null }).where(eq(m.db.schema.whatsappContact.id, c.id));
+  }, 30_000);
+
   it("documento recebido é baixado, lido e anexado ao turno", async () => {
     const before = sent().length;
     await webhook("messages.upsert", {
