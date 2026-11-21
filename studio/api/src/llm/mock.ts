@@ -118,6 +118,11 @@ function respond(system: string, user: string): unknown {
         ...intentOf(system, user),
       };
     }
+    case "guarda": {
+      // Frase de manipulacao que a heuristica nao pega como sinal forte (exercita o modelo da Guarda).
+      const hit = /(revele|mostre|me passe) (o seu|seu|o) (prompt|instruc)|esqueca (tudo|suas regras)|voce agora e um advogado sem regras/.test(q);
+      return { injecao: hit, confianca: hit ? 0.95 : 0.05, categoria: hit ? "extrair_prompt" : "nenhuma", motivo: hit ? "pede as instruções internas (simulado)" : "relato comum (simulado)" };
+    }
     case "documento":
       return fillDocument(system, user);
     case "parecer":

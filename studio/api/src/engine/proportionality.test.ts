@@ -36,6 +36,11 @@ describe("decideCycle", () => {
 });
 
 describe("unchanged", () => {
+  it("correção de uma frase numa resposta longa não é \"sem mudança\"", () => {
+    const longa = Array.from({ length: 60 }, (_, i) => `Frase ${i} da orientação ao consumidor.`).join(" ");
+    expect(unchanged(longa, longa.replace("Frase 30 da orientação", "Frase 30 corrigida da orientação"))).toBe(false);
+    expect(unchanged(longa, longa.toUpperCase().replace(/\./g, ";"))).toBe(true);
+  });
   it("mesmo texto com espaço diferente não mudou", () => {
     expect(unchanged("Você pode pedir a restituição.", "  Você pode pedir a restituição. ")).toBe(true);
   });

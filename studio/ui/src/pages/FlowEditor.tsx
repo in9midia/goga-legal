@@ -196,9 +196,16 @@ function Editor({ initial }: { initial: FlowResponse }) {
           tools: { skills: [...new Set(["buscar_kb", "verificar_citacao", ...s.defaultSkills])], mcp: [] },
           rules: { escalation: s.escalationRules, zone: s.zone === "amarela" ? "amarela" : "verde" },
         })
-      : nodeDataSchema.parse({ name: type === "specialist" ? "Novo especialista" : type === "compliance" ? "Compliance" : type === "retriagem" ? "Retriagem" : "Novo nó", cycle: type === "compliance" ? {} : undefined, routing: type === "classifier" ? {} : undefined, retriagem: type === "retriagem" ? {} : undefined });
-    const node: FlowNode = { id, type, position: { x: (cls?.position.x ?? 300) + 300, y: (cls?.position.y ?? 200) + 40 * (graph.nodes.length % 8) }, data };
-    const edges = [...graph.edges];
+      : nodeDataSchema.parse({ name: type === "specialist" ? "Novo especialista" : type === "compliance" ? "Compliance" : type === "retriagem" ? "Retriagem" : type === "guard" ? "Guarda" : "Novo nó", guard: type === "guard" ? {} : undefined, cycle: type === "compliance" ? {} : undefined, routing: type === "classifier" ? {} : undefined, retriagem: type === "retriagem" ? {} : undefined });
+    const entry = graph.nodes.find((n) => n.type === "entry");
+    const position = type === "guard" && entry ? { x: entry.position.x + 140, y: entry.position.y + 140 } : { x: (cls?.position.x ?? 300) + 300, y: (cls?.position.y ?? 200) + 40 * (graph.nodes.length % 8) };
+    const node: FlowNode = { id, type, position, data };
+    let edges = [...graph.edges];
+    // Guarda entra no lugar da aresta Entrada -> Classificador.
+    if (type === "guard" && entry && cls) {
+      edges = edges.filter((e) => !(e.source === entry.id && e.target === cls.id));
+      edges.push({ id: `${entry.id}->${id}`, source: entry.id, target: id }, { id: `${id}->${cls.id}`, source: id, target: cls.id });
+    }
     // Retriagem fica entre Classificador e Consolidador; solta, nao seria alcancavel.
     if (type === "specialist" || type === "retriagem") {
       const classifier = graph.nodes.find((n) => n.type === "classifier");
@@ -264,6 +271,7 @@ function Editor({ initial }: { initial: FlowResponse }) {
                 <DropdownMenuSeparator />
                 <DropdownMenuItem disabled={graph.nodes.some((n) => n.type === "compliance")} onClick={() => addNode("compliance")}>Compliance</DropdownMenuItem>
                 <DropdownMenuItem disabled={graph.nodes.some((n) => n.type === "retriagem")} onClick={() => addNode("retriagem")}>Retriagem (consulta entre especialistas)</DropdownMenuItem>
+                <DropdownMenuItem disabled={graph.nodes.some((n) => n.type === "guard")} onClick={() => addNode("guard")}>Guarda (contra manipulação)</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           )}

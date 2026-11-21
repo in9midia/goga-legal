@@ -125,7 +125,8 @@ export function applyFlowOps(
                 rules: { escalation: s.escalationRules, zone: s.zone === "amarela" ? "amarela" : "verde" },
               }
             : {
-                name: op.tipo === "specialist" ? "Novo especialista" : op.tipo === "compliance" ? "Compliance" : op.tipo === "retriagem" ? "Retriagem" : "Novo nó",
+                name: op.tipo === "specialist" ? "Novo especialista" : op.tipo === "compliance" ? "Compliance" : op.tipo === "retriagem" ? "Retriagem" : op.tipo === "guard" ? "Guarda" : "Novo nó",
+                guard: op.tipo === "guard" ? {} : undefined,
                 cycle: op.tipo === "compliance" ? {} : undefined,
                 retriagem: op.tipo === "retriagem" ? {} : undefined,
                 routing: op.tipo === "classifier" ? {} : undefined,
@@ -133,7 +134,14 @@ export function applyFlowOps(
           const data = nodeDataSchema.parse(deepMerge(base, op.dados ?? {}));
           const cls = g.nodes.find((n) => n.type === "classifier");
           const position = { x: (cls?.position.x ?? 300) + 300, y: (cls?.position.y ?? 200) + 90 * (g.nodes.filter((n) => n.type === "specialist").length % 8) - 200 };
-          g.nodes.push({ id, type: op.tipo, position, data });
+          const entryNode = g.nodes.find((n) => n.type === "entry");
+          g.nodes.push({ id, type: op.tipo, position: op.tipo === "guard" && entryNode ? { x: entryNode.position.x + 140, y: entryNode.position.y + 140 } : position, data });
+          // Guarda entra no lugar da aresta Entrada -> Classificador.
+          if (op.tipo === "guard" && entryNode && cls) {
+            g.edges = g.edges.filter((e) => !(e.source === entryNode.id && e.target === cls.id));
+            link(entryNode.id, id);
+            link(id, cls.id);
+          }
           // Retriagem entra sempre ligada (Classificador -> Retriagem -> Consolidador): solta, nao seria alcancavel.
           if ((op.tipo === "specialist" && op.conectar) || op.tipo === "retriagem") {
             const consolidator = g.nodes.find((n) => n.type === "consolidator");

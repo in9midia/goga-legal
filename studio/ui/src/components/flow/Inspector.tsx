@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Trash2 } from "lucide-react";
-import { DETERMINISTIC_CHECKS, NODE_TYPE_LABEL, type FlowNode, type FlowSettings, type NodeData } from "@shared/graph";
+import { DETERMINISTIC_CHECKS, NODE_TYPE_LABEL, guardConfigSchema, type GuardConfig, type FlowNode, type FlowSettings, type NodeData } from "@shared/graph";
 import { api } from "@/lib/api";
 import type { KbSpace, Model, Specialty } from "@/lib/types";
 import { useSkillList } from "@/pages/Skills";
@@ -60,7 +60,7 @@ export function NodeInspector({ node, cats, onChange, onDelete, readOnly, errors
   const models = cats.models.data ?? [];
   const specs = cats.specialties.data ?? [];
   const spaces = cats.kb.data?.spaces ?? [];
-  const isAgent = ["classifier", "specialist", "retriagem", "consolidator", "compliance"].includes(node.type);
+  const isAgent = ["guard", "classifier", "specialist", "retriagem", "consolidator", "compliance"].includes(node.type);
   const mcpOptions = (cats.mcp.data ?? []).flatMap((s) =>
     s.enabled ? (s.toolsCache ?? []).map((t) => ({ value: `${s.id}:${t.name}`, label: `${s.name} · ${t.name}`, hint: t.description?.slice(0, 90) })) : [{ value: `${s.id}:*`, label: `${s.name} (desabilitado)`, hint: s.description, disabled: true }],
   );
@@ -90,6 +90,7 @@ export function NodeInspector({ node, cats, onChange, onDelete, readOnly, errors
     ...(node.type === "classifier" ? [["routing", "Roteamento"]] : []),
     ...(node.type === "compliance" ? [["ciclo", "Ciclo"]] : []),
     ...(node.type === "retriagem" ? [["consultas", "Consultas"]] : []),
+    ...(node.type === "guard" ? [["guarda", "Guarda"]] : []),
   ];
 
   return (
@@ -268,6 +269,48 @@ export function NodeInspector({ node, cats, onChange, onDelete, readOnly, errors
               </Field>
             </TabsContent>
           )}
+
+          {node.type === "guard" && (() => {
+            const gc = guardConfigSchema.parse(d.guard ?? {});
+            const setG = (patch: Partial<GuardConfig>) => set("guard", { ...gc, ...patch });
+            return (
+              <TabsContent value="guarda" className="space-y-4">
+                <p className="text-[0.72rem] text-text-dim">
+                  Roda entre a Entrada e o Classificador. Heurísticas sem modelo (texto escondido, tags de papel, marcadores do motor) decidem sozinhas quando o sinal é forte; o modelo julga a frase suspeita. O que ele lê está em Prompts › Guarda.
+                </p>
+                <Field label="Ao detectar manipulação" hint="Bloquear: o turno termina com a resposta de recusa. Sinalizar: segue, com alerta no prompt dos agentes seguintes e a flag injecao_suspeita.">
+                  <Select value={gc.modo} onValueChange={(v) => setG({ modo: v as GuardConfig["modo"] })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="bloquear">Bloquear</SelectItem>
+                      <SelectItem value="sinalizar">Sinalizar e seguir</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field label={`Confiança mínima do modelo: ${gc.limiar.toFixed(2)}`} hint="Abaixo disso, o veredito do modelo não conta. Relato jurídico cita “ignore” e “sistema” o tempo todo: limiar alto evita recusar caso legítimo.">
+                  <Slider value={[gc.limiar]} min={0.5} max={1} step={0.05} onValueChange={([v]) => setG({ limiar: v })} />
+                </Field>
+                <label className="flex items-center justify-between gap-3 rounded-md border border-line px-3 py-2 text-sm">
+                  <span>Usar modelo<span className="block text-[0.7rem] text-text-dim">uma chamada curta por turno; sem ela, sinal fraco só sinaliza</span></span>
+                  <Switch checked={gc.usarModelo} onCheckedChange={(v) => setG({ usarModelo: v })} />
+                </label>
+                <label className="flex items-center justify-between gap-3 rounded-md border border-line px-3 py-2 text-sm">
+                  <span>Verificar anexos<span className="block text-[0.7rem] text-text-dim">o texto extraído dos anexos entra na verificação</span></span>
+                  <Switch checked={gc.verificarAnexos} onCheckedChange={(v) => setG({ verificarAnexos: v })} />
+                </label>
+                <Field label="Se o modelo da Guarda falhar">
+                  <Select value={gc.seFalhar} onValueChange={(v) => setG({ seFalhar: v as GuardConfig["seFalhar"] })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="seguir">Seguir só com as heurísticas (flag guarda_indisponivel)</SelectItem>
+                      <SelectItem value="bloquear">Recusar o turno</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field label="Resposta de recusa"><Textarea rows={5} value={gc.respostaRecusa} onChange={(e) => setG({ respostaRecusa: e.target.value })} /></Field>
+              </TabsContent>
+            );
+          })()}
 
           {d.cycle && (
             <TabsContent value="ciclo" className="space-y-4">

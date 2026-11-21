@@ -121,56 +121,10 @@ export const complianceSchema = z.object({
 export type ComplianceVerdict = z.infer<typeof complianceSchema>;
 
 // O marcador `<<formato:...>>` e lido pelo modelo simulado (llm/mock.ts). Para
-// um modelo real ele e inofensivo: vem junto da descricao do formato.
-export const FORMAT = {
-  classificador: `<<formato:classificador>>
-Responda APENAS com um objeto JSON, sem texto fora dele:
-{"ranking":[{"nodeId":"<id do candidato>","score":0.0-1.0,"justificativa":"..."}],
- "polo":"autor|reu|indefinido","urgencia":"baixa|normal|alta","foro":"...",
- "complexidade":"baixa|media|alta","fora_de_escopo":bool,"conflito_interesse":bool,
- "precisa_esclarecimento":bool,"pergunta_esclarecimento":"uma única pergunta, se precisar",
- "intencao":"nova_consulta|continuacao|pedido_documento|conversa","fatos_novos":bool,
- "resposta_conversa":"só quando intencao=conversa",
- "consulta_busca":"o caso como consulta à base jurídica, em uma linha"}
-Intenção da MENSAGEM ATUAL (olhe a conversa anterior):
-- nova_consulta: um problema jurídico novo, ou um assunto diferente do caso em andamento. Assunto diferente: o ranking considera SÓ a mensagem atual, não o caso anterior.
-- continuacao: sobre o caso em andamento: responde a uma pergunta do Goga, acrescenta fatos ou pergunta sobre a orientação já dada ("e se a loja não responder?", "explica o item 2"). fatos_novos=true se trouxe fato novo relevante; false se só pergunta sobre o que já foi orientado.
-- pedido_documento: pede para gerar/redigir um documento (carta, reclamação, notificação) do caso.
-- conversa: saudação, agradecimento, despedida ou pergunta sobre o próprio Goga, sem conteúdo jurídico. Escreva resposta_conversa: curta, cordial, sem orientação jurídica, sem prometer resultado; convide a contar o problema se ainda não contou.
-Inclua no ranking SOMENTE os candidatos plausíveis (score >= 0.1), no máximo 5, usando exatamente o nodeId informado; candidato omitido vale score 0. Justificativa com no máximo 15 palavras. Seja breve: a resposta tem limite de tamanho.
-consulta_busca: o caso como consulta à base jurídica, em até 25 palavras: o problema, a relação (consumo, bancária, locação…), o tipo de réu e os termos jurídicos que o relato sugere (ex.: "cobrança indevida de tarifa bancária não contratada, restituição em dobro, dano moral"). Sem saudação, desabafo, nomes de pessoas, documentos pessoais ou datas. Em continuação, junte o que veio antes ao que a mensagem atual acrescenta. Em conversa, vazio.`,
-  parecer: `<<formato:parecer>>
-Responda APENAS com um objeto JSON (parecer padronizado), sem texto fora dele:
-{"especialidade":"...","resumo_fatos":"...","enquadramento":["..."],"direitos":["..."],
- "fundamentos":[{"citacao":"ex.: CDC, art. 14","fonte_kb":"título do trecho da KB usado","status":"VERIFICADA|a verificar"}],
- "prazos":["..."],"provas_necessarias":["..."],"vias":["..."],"riscos":["..."],
- "confianca":0.0-1.0,"precisa_humano":bool,"motivo_humano":"...",
- "lacunas":["o que você não conseguiu apurar e a orientação precisa"]}
-Cite SOMENTE o que estiver nas evidências da KB ou for retornado por ferramenta. Nunca invente número de lei, súmula, tema ou processo.`,
-  consolidado: `<<formato:consolidado>>
-Responda APENAS com um objeto JSON, sem texto fora dele:
-{"resposta_simples":"linguagem simples, para o cidadão","resposta_tecnica":"versão técnica com fundamentos",
- "citacoes":["..."],"documentos_solicitados":["slug do modelo, só se o usuário pediu um documento"],
- "campos_documento":{"campo":"valor"}}`,
-  documento: `<<formato:documento>>
-Responda APENAS com um objeto JSON, sem texto fora dele:
-{"modelo":"slug do modelo escolhido","campos":{"campo":"valor"},"pergunta":"uma única pergunta pelos campos obrigatórios que faltam, ou vazio"}
-Preencha os campos SOMENTE com fatos que o usuário informou ou que estão nos pareceres. Nunca invente nome, CPF, endereço, número de pedido ou data: campo sem informação fica de fora e entra na pergunta.`,
-  compliance: `<<formato:compliance>>
-Responda APENAS com um objeto JSON, sem texto fora dele:
-{"aprovado":bool,"zona":"verde|amarela|vermelha","objecoes":[{"motivo":"o que está errado","correcao":"o que o Consolidador deve mudar","gravidade":"bloqueante|melhoria"}]}
-aprovado=true quando não há objeção bloqueante (melhorias não reprovam).
-Gravidade:
-- bloqueante: afirmação jurídica errada ou sem base nos pareceres e nas citações conferidas, citação não verificada, promessa de resultado, zona vermelha orientada em vez de encaminhada, dado pessoal exposto, ou fuga da pergunta (o direito, o prazo ou a via está num parecer e a resposta não o dá). Algo que levaria a pessoa a agir errado.
-- melhoria: todo o resto, mesmo que verdadeiro: ordem, ênfase, cautela a mais, redação, um detalhe a mais.
-Na dúvida entre as duas, é melhoria: cada ciclo a mais atrasa a resposta, e o motor não repete objeção já feita.
-Como julgar:
-- Sustentação: confira a resposta contra os pareceres e as citações conferidas. Não reprove por falta de sustentação o que está neles.
-- Orientar a pessoa a agir ("guarde os comprovantes", "registre no Procon") não é promessa nem ação do Goga.
-- Numa revisão de correção, verifique se as correções anteriores foram atendidas; não invente objeções novas sobre o que já estava aceitável. Correção já atendida não volta como objeção com outras palavras: aprove.
-- O disclaimer final é texto fixo que o sistema acrescenta: nunca peça para removê-lo.
-- A resposta vem em duas partes rotuladas. Só a "Resposta ao usuário" chega à pessoa e termina no disclaimer. A "Versão técnica" é o registro interno com os fundamentos, NUNCA enviado ao usuário: não reprove a resposta por ela existir, por vir depois do disclaimer nem por usar linguagem técnica; nela julgue só a correção jurídica e as citações.`,
-};
+// um modelo real ele e inofensivo. Ele vem do motor, nao do texto editavel
+// (texts/defaults.ts): quem edita o formato no Studio nao consegue apaga-lo.
+export type FormatKind = "classificador" | "parecer" | "consolidado" | "documento" | "compliance" | "retriagem" | "guarda";
+export const withFormat = (kind: FormatKind, body: string) => `<<formato:${kind}>>\n${body.trim()}`;
 
 export const REVIEW_LABELS = {
   usuario: "=== Resposta ao usuário (é o que a pessoa lê) ===",
@@ -236,29 +190,13 @@ const colleagueList = (cs: Colleague[]) =>
   `<<colegas>>\n${cs.map((c) => `- ${c.nodeId}: ${c.name}${c.escopo ? ` — ${c.escopo.slice(0, 200)}` : ""}${c.ferramentas.length ? ` [ferramentas: ${c.ferramentas.join(", ")}]` : ""}`).join("\n")}\n<</colegas>>`;
 
 /** Secao do parecer da primeira rodada: os colegas que podem ser acionados e como pedir. */
-export function consultSection(cs: Colleague[], max: number): string {
+export function consultSection(cs: Colleague[], max: number, template: string): string {
   if (!cs.length || max <= 0) return "";
-  return section(
-    "Consultar colegas",
-    `Se a orientação depende de algo que outro especialista apura e você não consegue apurar (o enquadramento em outra área, um prazo ou cálculo de outra relação jurídica, o direito de um réu diferente), acrescente ao JSON "consultar": [{"especialista":"<nodeId>","pergunta":"o que ele deve verificar, específica e autossuficiente"}]. No máximo ${max}. Não peça o que você mesmo pode apurar, não peça por desencargo e não transfira a pergunta inteira: peça o ponto que falta. Sem necessidade, "consultar": [].
-Colegas:
-${colleagueList(cs)}`,
-  );
+  return section("Consultar colegas", renderVars(template, { colegas: colleagueList(cs), max: String(max) }));
 }
 
-export const retriagemFormat = (cs: Colleague[], max: number) => `<<formato:retriagem>>
-Você coordena a segunda rodada do Goga. Os especialistas da primeira rodada já deram parecer; leia as lacunas de cada um e decida quem, entre os colegas abaixo, consegue FECHAR uma lacuna com o próprio escopo e as próprias ferramentas.
-Também são lacunas os pontos que o parecer deixa em aberto por depender de outra área ("se a relação for de consumo…", "o prazo depende de quem é o réu", "não calculei a correção").
-Não peça: o que nenhum colega apura (um fato que só o usuário sabe: isso é esclarecimento, não consulta); o que já está respondido nos pareceres; a mesma coisa a dois colegas. Sem lacuna real (algo que a orientação precisa e nenhum parecer trouxe), "consultas": [].
-Cada pergunta é específica e autossuficiente: o que verificar, sobre quais fatos do relato, e o que devolver.
-Faça em duas etapas:
-1. "verificacoes": liste todo ponto em aberto dos pareceres; para cada um, "quem_responde": o nodeId do colega que o fecha, ou null se nenhum fecha.
-2. "consultas": no máximo ${max}, em ordem de prioridade, as que mais mudam a orientação.
-Colegas:
-${colleagueList(cs)}
-Responda APENAS com um objeto JSON, sem texto fora dele:
-{"verificacoes":[{"texto":"o ponto em aberto","de":"<nodeId do especialista>","quem_responde":"<nodeId do colega> ou null"}],
- "consultas":[{"especialista":"<nodeId do colega>","pergunta":"o que verificar e devolver","de":"<nodeId do especialista cuja lacuna isto fecha>"}]}`;
+/** O fim do prompt da Retriagem (texto editavel `retriagem.formato`). */
+export const retriagemFormat = (cs: Colleague[], max: number, template: string) => withFormat("retriagem", renderVars(template, { colegas: colleagueList(cs), max: String(max) }));
 
 export function renderVars(template: string, vars: Record<string, string>): string {
   return template.replace(/\{\{\s*([a-z_]+)\s*\}\}/g, (m, k: string) => (k in vars ? vars[k] : m));

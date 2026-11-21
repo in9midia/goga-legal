@@ -192,6 +192,21 @@ export const SENSITIVE: Record<string, SensitiveTool> = {
       return { fileId: f.id, arquivo: `${slug}.md`, envio: r, proximo: "acompanhe com acompanhar_ingestao_kb e confira com buscar_kb quando indexar" };
     },
   },
+  salvar_prompt: {
+    description:
+      "Altera um texto do MOTOR (veja listar_prompts): formato de saída de um agente, classificador da Guarda, decisão da Retriagem, aviso/alerta, resposta padrão. Vale NA HORA para a produção (não tem rascunho nem publicação), então teste antes num rascunho/simulação e explique o efeito. Para mudar um trecho, leia o texto inteiro com ler_prompt e passe-o inteiro com a troca; texto null restaura o padrão do código. Mantenha as variáveis {{...}} obrigatórias e os nomes dos campos JSON. Pede aprovação.",
+    input: z.object({
+      chave: z.string().describe("a chave de listar_prompts, ex.: formato.compliance"),
+      texto: z.string().max(60_000).nullable().describe("o texto inteiro; null restaura o padrão"),
+      motivo: z.string().describe("por que mudar, em uma frase"),
+    }),
+    resumo: (i) => (i.texto === null ? `Restaurar o padrão do texto do motor ${i.chave} — ${i.motivo}` : `Alterar o texto do motor ${i.chave} (${String(i.texto).length} caracteres; vale na hora para a produção) — ${i.motivo}`),
+    run: async (i, { api }) => {
+      const key = encodeURIComponent(String(i.chave));
+      const r = await api.call<{ key: string; edited: boolean; text: string }>(i.texto === null ? "DELETE" : "PUT", `/texts/${key}`, i.texto === null ? undefined : { text: i.texto });
+      return { chave: r.key, editado: r.edited, caracteres: r.text.length };
+    },
+  },
   alterar_via_api: {
     description:
       "Escape para qualquer ALTERAÇÃO que as outras ferramentas não cobrem (ex.: provedores, usuários, importar MCP). Chama a API REST do Studio (prefixo /api/v1 já incluído). Pede aprovação. Prefira as ferramentas específicas.",
@@ -280,6 +295,26 @@ export function buildTools(ctx: ToolCtx): ToolSet {
       "Escape para LEITURA de qualquer rota GET da API do Studio (prefixo /api/v1 já incluído), ex.: /providers, /users, /skills/<id>/stats, /mcp/<id>/stats, /flows/<id>/releases, /eval/sets. Prefira as ferramentas específicas.",
     inputSchema: z.object({ caminho: z.string() }),
     execute: async ({ caminho }) => fit(await api.call("GET", caminho)),
+  });
+
+  // ── Textos do motor (tela Prompts) ─────────────────────────────────
+  t.listar_prompts = tool({
+    description:
+      "Lista os textos do MOTOR editáveis no Studio (tela Prompts), fora do prompt de cada nó: formatos de saída do Classificador, dos pareceres, do Consolidador e do Compliance; classificador e alerta da Guarda; decisão da Retriagem e convite a consultar colegas; aviso de dado; respostas padrão (conversa, esclarecimento, conflito, resposta segura, documento). Traz chave, grupo, para que serve, variáveis e se foi editado. O texto inteiro vem em ler_prompt; altere com salvar_prompt.",
+    inputSchema: z.object({}),
+    execute: async () => {
+      const { texts } = await api.call<{ texts: { key: string; title: string; group: string; description: string; kind: string; vars: { name: string }[]; text: string; edited: boolean; updatedBy: string | null; updatedAt: string | null }[] }>("GET", "/texts");
+      return texts.map((x) => ({ chave: x.key, titulo: x.title, grupo: x.group, tipo: x.kind, descricao: x.description, variaveis: x.vars.map((v) => v.name), editado: x.edited, por: x.updatedBy, em: x.updatedAt, caracteres: x.text.length }));
+    },
+  });
+
+  t.ler_prompt = tool({
+    description: "Um texto do motor (chave de listar_prompts): o texto em vigor e, com incluirPadrao, o padrão do código para comparar antes de alterar com salvar_prompt.",
+    inputSchema: z.object({ chave: z.string(), incluirPadrao: z.boolean().default(false) }),
+    execute: async ({ chave, incluirPadrao }) => {
+      const r = await api.call<Record<string, unknown>>("GET", `/texts/${encodeURIComponent(chave)}`);
+      return fit(incluirPadrao ? r : { ...r, default: undefined });
+    },
   });
 
   // ── Fluxos ─────────────────────────────────────────────────────────
@@ -720,7 +755,7 @@ export function buildTools(ctx: ToolCtx): ToolSet {
 
   t.consultar_auditoria = tool({
     description:
-      "Consulta o log de auditoria (quem mudou o quê, quando), com a diferença campo a campo de cada alteração. entidade: flow, production, skill, mcp_server, specialty, doc_template, model, provider, user. Só administradores.",
+      "Consulta o log de auditoria (quem mudou o quê, quando), com a diferença campo a campo de cada alteração. entidade: flow, production, skill, mcp_server, specialty, doc_template, model, provider, user, engine_text (textos do motor). Só administradores.",
     inputSchema: z.object({
       entidade: z.string().optional(),
       entidadeId: z.string().optional(),

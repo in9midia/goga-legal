@@ -106,6 +106,22 @@ export async function spaceSlugs(): Promise<Set<string> | null> {
   }
 }
 
+const SHORT_QUERY = 300;
+
+/**
+ * Consulta da retentativa: a primeira linha (o assunto; na consulta entre
+ * especialistas e a consulta do Classificador) ate 300 caracteres, cortada no
+ * fim de uma palavra. A KB segue processando a primeira depois do nosso
+ * timeout, e o tempo dela cresce com o tamanho da consulta.
+ */
+export function shortenQuery(query: string): string {
+  const line = query.split("\n").map((l) => l.trim()).find(Boolean) ?? query.trim();
+  if (line.length <= SHORT_QUERY) return line;
+  const cut = line.slice(0, SHORT_QUERY);
+  const space = cut.lastIndexOf(" ");
+  return (space > SHORT_QUERY / 2 ? cut.slice(0, space) : cut).trim();
+}
+
 export async function search(p: KbSearchParams): Promise<{ results: KbPassage[]; telemetry?: unknown }> {
   const body: Record<string, unknown> = { query: p.query, spaces: p.spaces ?? [], top_k: p.top_k ?? 6 };
   if (p.min_trust) body.min_trust = p.min_trust;
@@ -118,7 +134,7 @@ export async function search(p: KbSearchParams): Promise<{ results: KbPassage[];
     // primeiro acesso (embeddings frios) ou cai num restart. Pedido recusado
     // (4xx) daria o mesmo erro de novo.
     if (err instanceof KbError && err.status < 500) throw err;
-    return kbFetch("/v1/search", init, 20000);
+    return kbFetch("/v1/search", { ...init, body: JSON.stringify({ ...body, query: shortenQuery(p.query) }) }, 20000);
   }
 }
 

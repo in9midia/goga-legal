@@ -59,9 +59,23 @@ GOGA chamar reprocessar_documento_kb '{"documentoId":123}'
   (editar_fluxo) — ou nas `defaultSpaces` da especialidade, para nós criados depois.
 - Criar, enviar e excluir exigem papel admin no Studio.
 
+## Textos do motor (tela Prompts)
+
+```bash
+GOGA chamar listar_prompts
+GOGA chamar ler_prompt '{"chave":"formato.compliance","incluirPadrao":true}'
+GOGA chamar salvar_prompt @/tmp/prompt.json     # {"chave":..., "texto": "<inteiro>" | null, "motivo":...}
+```
+
+- São os textos fora do prompt de cada nó (formatos de saída, Guarda, Retriagem, avisos,
+  respostas padrão). Valem para todos os fluxos e na hora, sem publicar: ajuste de um fluxo
+  vai no prompt do nó (editar_fluxo); texto do motor só quando é do funcionamento de todos.
+- Mantenha as variáveis `{{...}}` obrigatórias e os nomes dos campos JSON; `texto: null`
+  restaura o padrão do código.
+
 ## Ações que pedem aprovação
 
-`publicar_fluxo`, `excluir` (inclusive bases e documentos da KB), `restaurar_padrao`, `iniciar_lote` e `alterar_via_api` não
+`publicar_fluxo`, `salvar_prompt` (texto do motor: vale na hora para a produção), `excluir` (inclusive bases e documentos da KB), `restaurar_padrao`, `iniciar_lote` e `alterar_via_api` não
 rodam sem `--confirmar`. Sem a flag, o script sai com código 3 e devolve
 `{"precisaAprovacao": true, "resumo": "..."}` **sem ter feito nada**. Então:
 

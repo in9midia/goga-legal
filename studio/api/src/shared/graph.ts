@@ -3,11 +3,12 @@
 // que o salvar do editor e a validacao do servidor nao possam divergir.
 import { z } from "zod";
 
-export const NODE_TYPES = ["entry", "classifier", "specialist", "retriagem", "consolidator", "compliance", "output"] as const;
+export const NODE_TYPES = ["entry", "guard", "classifier", "specialist", "retriagem", "consolidator", "compliance", "output"] as const;
 export type NodeType = (typeof NODE_TYPES)[number];
 
 export const NODE_TYPE_LABEL: Record<NodeType, string> = {
   entry: "Entrada",
+  guard: "Guarda",
   classifier: "Classificador",
   specialist: "Especialista",
   retriagem: "Retriagem",
@@ -34,6 +35,23 @@ export const modelConfigSchema = z.object({
   maxCostUsd: z.number().min(0).default(0.05),
   fallbackModelId: z.string().uuid().nullable().default(null),
 });
+
+export const GUARD_DEFAULT_REFUSAL =
+  "Não posso seguir instruções que tentem mudar o meu funcionamento. Se você tem um problema de consumo ou outra questão cível, me conte o que aconteceu, com quem e quando, e eu ajudo.";
+
+export const guardConfigSchema = z.object({
+  /** bloquear = recusa o turno com a resposta de recusa; sinalizar = segue, com alerta nos prompts e flag no trace. */
+  modo: z.enum(["bloquear", "sinalizar"]).default("bloquear"),
+  /** Confianca minima do classificador para tratar a mensagem como manipulacao. */
+  limiar: z.number().min(0).max(1).default(0.8),
+  /** Sem modelo, so as heuristicas: sinal forte bloqueia, sinal fraco so sinaliza. */
+  usarModelo: z.boolean().default(true),
+  verificarAnexos: z.boolean().default(true),
+  /** Modelo da Guarda fora do ar: seguir so com as heuristicas (com flag) ou recusar o turno. */
+  seFalhar: z.enum(["seguir", "bloquear"]).default("seguir"),
+  respostaRecusa: z.string().default(GUARD_DEFAULT_REFUSAL),
+});
+export type GuardConfig = z.infer<typeof guardConfigSchema>;
 
 export const nodeDataSchema = z.object({
   name: z.string().min(1),
@@ -87,6 +105,10 @@ export const nodeDataSchema = z.object({
       maxConsultas: z.number().int().min(0).max(5).default(2),
     })
     .optional(),
+  // So Guarda: a verificacao de entrada contra manipulacao (injecao de prompt),
+  // entre a Entrada e o Classificador. Sem o no, valem so as heuristicas, que
+  // nunca bloqueiam: poem um alerta no prompt dos nos seguintes.
+  guard: guardConfigSchema.optional(),
   cycle: z
     .object({
       maxCycles: z.number().int().min(0).max(5).default(2),
@@ -169,6 +191,9 @@ export function validateGraph(graph: FlowGraph, ctx: GraphContext = {}): GraphEr
   if (byType("compliance").length > 1) {
     errors.push({ code: "compliance_count", message: "No máximo 1 nó Compliance." });
   }
+  if (byType("guard").length > 1) {
+    errors.push({ code: "guard_count", message: "No máximo 1 nó Guarda." });
+  }
   if (byType("retriagem").length > 1) {
     errors.push({ code: "retriagem_count", message: "No máximo 1 nó Retriagem." });
   }
@@ -237,7 +262,7 @@ export function validateGraph(graph: FlowGraph, ctx: GraphContext = {}): GraphEr
           errors.push({ code: "model_inactive", nodeId: n.id, message: `"${n.data.name}": modelo inexistente ou inativo.` });
         }
       }
-      const needsModel = ["classifier", "specialist", "retriagem", "consolidator", "compliance"].includes(n.type);
+      const needsModel = ["guard", "classifier", "specialist", "retriagem", "consolidator", "compliance"].includes(n.type);
       if (needsModel && !m.modelId && !graph.settings.defaultModelId) {
         errors.push({ code: "model_missing", nodeId: n.id, message: `"${n.data.name}": sem modelo e o fluxo não tem modelo padrão.` });
       }
@@ -279,8 +304,17 @@ export function graphWarnings(graph: FlowGraph): GraphError[] {
       message: `${chains} encadeamento(s) entre especialistas e nenhuma Retriagem: cada nó encadeado roda em todo turno que passa pela origem. Com a Retriagem, o especialista de apoio pode ser consultado só quando um parecer tiver lacuna.`,
     });
   }
+  const guard = graph.nodes.find((n) => n.type === "guard");
+  if (guard) {
+    const has = (s: string | undefined, t: string | undefined) => graph.edges.some((e) => e.source === s && e.target === t);
+    const entryId = graph.nodes.find((n) => n.type === "entry")?.id;
+    const classifierId = graph.nodes.find((n) => n.type === "classifier")?.id;
+    if (!has(entryId, guard.id) || !has(guard.id, classifierId)) {
+      warnings.push({ code: "guard_off_path", nodeId: guard.id, message: `"${guard.data.name}": a Guarda roda sempre entre a Entrada e o Classificador; ligue Entrada → Guarda → Classificador para o desenho mostrar o caminho certo.` });
+    }
+  }
   for (const n of graph.nodes) {
-    const needsModel = ["classifier", "specialist", "retriagem", "consolidator", "compliance"].includes(n.type);
+    const needsModel = ["guard", "classifier", "specialist", "retriagem", "consolidator", "compliance"].includes(n.type);
     const primary = n.data.model.modelId ?? graph.settings.defaultModelId;
     if (needsModel && n.data.model.fallbackModelId && n.data.model.fallbackModelId === primary) {
       warnings.push({ code: "fallback_same_model", nodeId: n.id, message: `"${n.data.name}": o modelo de fallback é o mesmo do principal; se o provedor cair, o fallback cai junto.` });

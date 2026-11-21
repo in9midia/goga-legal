@@ -16,6 +16,7 @@ import { CatalogsPage } from "./pages/admin/Catalogs";
 import { EvalPage } from "./pages/Eval";
 import { SkillsPage } from "./pages/Skills";
 import { McpPage } from "./pages/Mcp";
+import { PromptsPage } from "./pages/Prompts";
 import { AssistantPage } from "./pages/Assistant";
 import { AgentsPage } from "./pages/Agents";
 import { AgentAuthorizePage } from "./pages/AgentAuthorize";
@@ -58,6 +59,7 @@ const router = createBrowserRouter([
           { path: "admin/catalogs", element: <CatalogsPage /> },
           { path: "skills", element: <SkillsPage /> },
           { path: "mcp", element: <McpPage /> },
+          { path: "prompts", element: <PromptsPage /> },
           { path: "assistant", element: <AssistantPage /> },
           { path: "assistant/:sessionId", element: <AssistantPage /> },
           { path: "agents", element: <AgentsPage /> },

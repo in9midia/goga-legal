@@ -57,6 +57,13 @@
       "when": 1791200934718,
       "tag": "0007_discussao_simulacao",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1795264454060,
+      "tag": "0008_textos_do_motor",
+      "breakpoints": true
     }
   ]
 }

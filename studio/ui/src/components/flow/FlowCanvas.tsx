@@ -1,12 +1,13 @@
 import { memo, useMemo } from "react";
 import { Background, Controls, Handle, MarkerType, MiniMap, Position, ReactFlow, type Edge, type Node, type NodeProps, type OnConnect, type OnEdgesChange, type OnNodesChange } from "@xyflow/react";
 import dagre from "@dagrejs/dagre";
-import { BookOpen, Filter, Gavel, Inbox, Layers, LogOut, Repeat2, ShieldCheck, type LucideIcon } from "lucide-react";
+import { BookOpen, Filter, Gavel, Inbox, Layers, LogOut, Repeat2, ShieldAlert, ShieldCheck, type LucideIcon } from "lucide-react";
 import { NODE_TYPE_LABEL, type FlowGraph, type NodeData, type NodeType } from "@shared/graph";
 import { cn } from "@/lib/utils";
 
 export const NODE_META: Record<NodeType, { icon: LucideIcon; color: string }> = {
   entry: { icon: Inbox, color: "#60a5fa" },
+  guard: { icon: ShieldAlert, color: "#fb7185" },
   classifier: { icon: Filter, color: "#a78bfa" },
   specialist: { icon: Gavel, color: "#34d399" },
   retriagem: { icon: Repeat2, color: "#22d3ee" },
@@ -45,6 +46,8 @@ const AgentNode = memo(function AgentNode({ data, selected }: NodeProps<Node<Can
           ? `até ${d.cycle.maxCycles} ciclo(s)`
           : data.type === "retriagem"
             ? `até ${d.retriagem?.maxConsultas ?? 2} consulta(s)`
+            : data.type === "guard"
+              ? `${d.guard?.modo === "sinalizar" ? "sinaliza" : "bloqueia"} · limiar ${d.guard?.limiar ?? 0.8}${d.guard?.usarModelo === false ? " · só heurística" : ""}`
             : NODE_TYPE_LABEL[data.type];
   return (
     <div

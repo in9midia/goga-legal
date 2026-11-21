@@ -1,4 +1,4 @@
-import { nodeDataSchema, type FlowEdge, type FlowGraph, type FlowNode, type NodeData } from "../shared/graph.js";
+import { guardConfigSchema, nodeDataSchema, type FlowEdge, type FlowGraph, type FlowNode, type NodeData } from "../shared/graph.js";
 import { readSeed } from "./files.js";
 
 export interface SpecialtySeed {
@@ -75,13 +75,14 @@ export function emptyGraph(defaultModelId: string | null = null): FlowGraph {
   const p = presets();
   const nodes: FlowNode[] = [
     { id: "entry", type: "entry", position: { x: 0, y: 200 }, data: data({ name: "Entrada", prompt: { system: p.entry?.prompt ?? "", outputFormat: "livre", examples: "" } }) },
+    guardNode({ x: 140, y: 340 }),
     classifierNode({ x: 280, y: 200 }),
     retriagemNode({ x: 740, y: -60 }),
     consolidatorNode({ x: 900, y: 200 }),
     complianceNode({ x: 1180, y: 200 }),
     { id: "output", type: "output", position: { x: 1460, y: 200 }, data: data({ name: "Saída" }) },
   ];
-  const edges: FlowEdge[] = [e("entry", "classifier"), e("classifier", "retriagem"), e("retriagem", "consolidator"), e("consolidator", "compliance"), e("compliance", "consolidator"), e("compliance", "output")];
+  const edges: FlowEdge[] = [e("entry", "guard"), e("guard", "classifier"), e("classifier", "retriagem"), e("retriagem", "consolidator"), e("consolidator", "compliance"), e("compliance", "consolidator"), e("compliance", "output")];
   return { nodes, edges, settings: flowSettings(defaultModelId) };
 }
 
@@ -105,6 +106,22 @@ function classifierNode(position: { x: number; y: number }): FlowNode {
         exclusionTriggers: (c.exclusion_triggers as string[]) ?? ["familia", "penal"],
         defendantFastPath: c.defendant_fast_path !== false,
       },
+    }),
+  };
+}
+
+/** Guarda de entrada: recusa tentativa de manipular o Goga antes de o Classificador ler a mensagem. */
+function guardNode(position: { x: number; y: number }): FlowNode {
+  return {
+    id: "guard",
+    type: "guard",
+    position,
+    data: data({
+      name: "Guarda",
+      description: "Verifica se a mensagem tenta manipular o Goga (injeção de prompt) antes de qualquer agente lê-la como caso.",
+      prompt: { system: "", outputFormat: "livre", examples: "" },
+      model: { modelId: null, temperature: 0, maxTokens: 400, timeoutMs: 30000, maxCostUsd: 0.01, fallbackModelId: null },
+      guard: guardConfigSchema.parse({}),
     }),
   };
 }

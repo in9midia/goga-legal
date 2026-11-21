@@ -37,6 +37,7 @@ const ENTITIES: Record<string, string> = {
   user: "Usuário",
   skill: "Skill",
   mcp_server: "Servidor MCP",
+  engine_text: "Prompt do motor",
 };
 
 const ACTIONS: Record<string, [string, Tone]> = {

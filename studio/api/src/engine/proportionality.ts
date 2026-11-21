@@ -75,15 +75,18 @@ export function repeatedObjection(o: Objection, previous: Objection[]): boolean 
   });
 }
 
-/** O Consolidador devolveu, em essencia, o mesmo texto (aqui conta toda palavra, numero incluso). */
+/**
+ * O Consolidador devolveu o mesmo texto: as mesmas palavras, na mesma ordem
+ * (numero incluso), mudando no maximo pontuacao, formatacao e maiusculas. Nao e
+ * semelhanca: numa resposta longa, corrigir so a frase da objecao muda poucas
+ * palavras, e essa versao precisa voltar ao Compliance. Com a medida antiga
+ * (95% das palavras em comum), a correcao pedida era tomada por "sem mudanca" e
+ * a resposta saia reprovada (no Concierge, o mesmo achado).
+ */
 export function unchanged(before: string, after: string): boolean {
   if (before.trim() === after.trim()) return true;
-  const A = new Set(normalize(before).match(/[a-z0-9]+/g) ?? []);
-  const B = new Set(normalize(after).match(/[a-z0-9]+/g) ?? []);
-  let common = 0;
-  for (const w of A) if (B.has(w)) common++;
-  const union = A.size + B.size - common;
-  return union > 0 && common / union >= 0.95;
+  const words = (t: string) => (normalize(t).match(/[a-z0-9]+/g) ?? []).join(" ");
+  return words(before) === words(after);
 }
 
 /**

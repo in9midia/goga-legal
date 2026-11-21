@@ -347,6 +347,16 @@ export const auditLog = pgTable(
   (t) => [index("audit_at_idx").on(t.at)],
 );
 
+// Textos do motor editados no Studio (tela Prompts): formatos de saida, Guarda,
+// Retriagem, respostas padrao. O padrao fica no codigo (texts/defaults.ts); so o
+// que alguem editou mora aqui, e restaurar apaga a linha.
+export const engineText = pgTable("engine_text", {
+  key: text("key").primaryKey(),
+  text: text("text").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedBy: text("updated_by").notNull().default("system"),
+});
+
 // Lote de avaliacao (F7): as perguntas de content/evaluation rodadas contra um
 // ou dois fluxos. Os resultados ficam no jsonb porque sao lidos inteiros, nunca
 // consultados por campo.

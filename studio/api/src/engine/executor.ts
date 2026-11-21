@@ -1,6 +1,6 @@
 import type { ModelMessage } from "ai";
 import { db, schema } from "../db/index.js";
-import type { FlowGraph, FlowNode } from "../shared/graph.js";
+import { guardConfigSchema, type FlowGraph, type FlowNode } from "../shared/graph.js";
 import { BudgetError, CancelledError, callLlm, generateJson, type LlmCall } from "../llm/call.js";
 import { hasSkill, runSkill, skillsPrompt, toolsFor } from "../skills/index.js";
 import { checkCompliance, checkLeak } from "../skills/compliance.js";
@@ -9,12 +9,12 @@ import { activeTemplates } from "../files/templates.js";
 import { listTools } from "../mcp/client.js";
 import type { RunContext } from "./context.js";
 import { errorMessage } from "./tracer.js";
-import { DATA_NOTICE, INJECTION_ALERT, asData, injectionSignals, neutralize } from "./guard.js";
+import { asData, decideGuard, guardInput, guardVerdictSchema, injectionSignals, neutralize, type GuardVerdict } from "./guard.js";
+import { loadEngineTexts } from "../texts/service.js";
 import { decideCycle, unchanged, type CycleStop, type Objection } from "./proportionality.js";
 import { planConsultations, type ConsultAsk, type ConsultRequest } from "./consultations.js";
 import { chainClosure, runChains } from "./chains.js";
 import {
-  FORMAT,
   classifierSchema,
   complianceSchema,
   consolidadoSchema,
@@ -27,6 +27,7 @@ import {
   reviewText,
   type Colleague,
   section,
+  withFormat,
   type Classification,
   type Consolidado,
   type Intencao,
@@ -118,10 +119,24 @@ type Specialty = typeof schema.specialty.$inferSelect;
 const HISTORY_TURNS = 6;
 /** Esclarecimentos seguidos antes de o motor rotear com o que tem. */
 const MAX_CLARIFY_STREAK = 2;
-const GENERIC_CLARIFY = "Pode me contar um pouco mais sobre o que aconteceu, com quem (empresa ou órgão) e quando?";
-const CONVERSA_PADRAO = "Olá! Eu sou o Goga e ajudo com orientação sobre problemas de consumo e outras questões cíveis. Me conte o que aconteceu, com quem e quando.";
 /** Perguntas seguidas por campos de documento antes de gerar com o que tem. */
 const MAX_DOC_CLARIFY = 2;
+
+/**
+ * O Classificador nao pediu esclarecimento, a intencao pede especialista e
+ * nenhum candidato valido teve nota para isso: o ranking veio vazio ou de
+ * enfeite. Candidato vale pelo nodeId ou pelo numero da especialidade.
+ */
+export function rankingEmpty(
+  c: Pick<Classification, "intencao" | "fatos_novos" | "precisa_esclarecimento" | "fora_de_escopo" | "conflito_interesse" | "ranking">,
+  candidates: { nodeId: string; number: number | null }[],
+  clarifyThreshold: number,
+): boolean {
+  if (c.precisa_esclarecimento || c.fora_de_escopo || c.conflito_interesse) return false;
+  if (c.intencao === "conversa" || c.intencao === "pedido_documento" || (c.intencao === "continuacao" && !c.fatos_novos)) return false;
+  const valid = c.ranking.filter((r) => candidates.some((x) => x.nodeId === r.nodeId || (r.especialidade != null && x.number === r.especialidade)));
+  return !valid.some((r) => r.score >= clarifyThreshold);
+}
 
 export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<TurnOutcome> {
   const g = ctx.graph;
@@ -131,6 +146,7 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
   const edgeId = (s: string, t: string) => g.edges.find((e) => e.source === s && e.target === t)?.id;
 
   const entry = byType("entry")[0];
+  const guard = byType("guard")[0];
   const classifier = byType("classifier")[0];
   const consolidator = byType("consolidator")[0];
   const compliance = byType("compliance")[0];
@@ -150,6 +166,8 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
   const flags: string[] = [];
   const specialties = new Map<number, Specialty>((await db.select().from(schema.specialty)).map((s) => [s.number, s]));
   const templates = await activeTemplates();
+  // Textos do motor (tela Prompts): o editado no Studio ou o padrao do codigo.
+  const T = await loadEngineTexts();
   const cycle = compliance?.data.cycle ?? { maxCycles: 2, requiredChecks: ["disclaimer", "sem_promessa", "citacoes_verificadas", "zona", "lgpd"], safeResponse: "", deliverWithReservations: false };
 
   const root = await ctx.tracer.start({ kind: "run", name: "Execução", input: { mensagem: input.message, anexos: ctx.files.map((f) => f.name) } });
@@ -163,11 +181,12 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
   // nao precedente a conferir na KB (verificar_citacao).
   const userMaterial = [input.message, ...input.history.filter((h) => h.role === "user").map((h) => h.content), ...ctx.files.map((f) => f.text ?? "")].join("\n");
   const historyMsgs: ModelMessage[] = input.history.slice(-HISTORY_TURNS).map((h) => ({ role: h.role, content: neutralize(h.content) }));
-  // Heuristicas de injecao: nao bloqueiam (relato juridico cita "ignore" e
-  // "sistema" o tempo todo), so poem o alerta no prompt dos nos seguintes.
+  // Heuristicas de injecao. Sem Guarda no fluxo, nao bloqueiam (relato
+  // juridico cita "ignore" e "sistema" o tempo todo): so poem o alerta no
+  // prompt dos nos seguintes. Com a Guarda, ela decide (passo 1b).
   const signals = [...injectionSignals(input.message, "mensagem"), ...ctx.files.flatMap((f) => injectionSignals(f.text ?? "", `anexo:${f.name}`))];
-  const injectionAlert = signals.length ? INJECTION_ALERT : "";
-  if (signals.length) flags.push("injecao_suspeita");
+  let injectionAlert = !guard && signals.length ? T["guarda.alerta"] : "";
+  if (!guard && signals.length) flags.push("injecao_suspeita");
   // Esclarecimentos seguidos no fim da conversa e as perguntas ja feitas: sem
   // isso o classificador pergunta de novo o que o usuario acabou de responder.
   const assistantTurns = input.history.filter((h) => h.role === "assistant");
@@ -238,8 +257,57 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
     let ficha = await ctx.tracer.wrap({ kind: "agent", name: entry.data.name, nodeId: entry.id, parentId: root.id, input: { mensagem: message, ...(signals.length ? { sinais_de_injecao: signals } : {}) } }, async () => buildFicha(true));
     const vars = { mensagem: message, ficha, regras_globais: globalRules, pareceres: "" };
 
+    // ── 1b. Guarda de entrada (opcional) ────────────────────────────────
+    // Antes de qualquer modelo ler a mensagem como caso: tentativa de
+    // manipular o Goga e recusada (modo bloquear) ou segue com alerta.
+    if (guard) {
+      mark(guard.id, entry.id);
+      const cfg = guard.data.guard ?? guardConfigSchema.parse({});
+      const checkedFiles = cfg.verificarAnexos ? ctx.files.map((f) => ({ name: f.name, text: f.text ?? "" })) : [];
+      const guardSignals = [...injectionSignals(input.message, "mensagem"), ...checkedFiles.flatMap((f) => injectionSignals(f.text, `anexo:${f.name}`))];
+      const strong = guardSignals.some((s) => s.forte);
+      const g1 = await ctx.tracer.wrap({ kind: "guardrail", name: guard.data.name, nodeId: guard.id, parentId: root.id, input: { modo: cfg.modo, limiar: cfg.limiar, anexos: checkedFiles.length, sinais: guardSignals } }, async (span) => {
+        let verdict: GuardVerdict | null = null;
+        let failed = false;
+        // Sinal forte decide sozinho: chamar o modelo seria gastar e dar ao atacante mais um alvo.
+        if (cfg.usarModelo && !strong) {
+          try {
+            const system =
+              (guard.data.prompt.system ? `${renderVars(guard.data.prompt.system, vars)}\n\n` : "") +
+              section("Guardrails", guard.data.rules.guardrails) +
+              // So o tipo do sinal: o trecho e texto do usuario e nao entra no prompt de sistema.
+              section("Sinais das heurísticas (indício, não prova)", [...new Set(guardSignals.map((x) => `${x.tipo} (${x.onde.split(":")[0]})`))]) +
+              "\n\n" +
+              withFormat("guarda", T["guarda.formato"]);
+            verdict = (await generateJson(baseCall(guard, span.id, "Guarda", system, [{ role: "user", content: guardInput(input.message, checkedFiles) }]), guardVerdictSchema)).value;
+          } catch (err) {
+            if (err instanceof BudgetError || err instanceof CancelledError) throw err;
+            failed = true;
+          }
+        }
+        return { ...decideGuard({ signals: guardSignals, verdict, failed, config: cfg }), verdict, falhou: failed };
+      });
+      if (g1.falhou) flags.push("guarda_indisponivel");
+      if (g1.decision === "bloquear") {
+        flags.push("injecao_bloqueada");
+        if (output) mark(output.id);
+        return finish({
+          status: "blocked",
+          resposta_simples: cfg.respostaRecusa.trim() || guardConfigSchema.parse({}).respostaRecusa,
+          resposta_tecnica: `Guarda de entrada: ${g1.motivos.join("; ")}`,
+          citacoes: [],
+          documentos: [],
+          especialistas: [],
+        });
+      }
+      if (g1.decision === "sinalizar") {
+        flags.push("injecao_suspeita");
+        injectionAlert = T["guarda.alerta"];
+      }
+    }
+
     // ── 2. Classificador ────────────────────────────────────────────────
-    mark(classifier.id, entry.id);
+    mark(classifier.id, guard ? guard.id : entry.id);
     const routing = classifier.data.routing ?? { routingThreshold: 0.55, clarifyThreshold: 0.35, maxSpecialists: 3, exclusionTriggers: ["familia", "penal"], defendantFastPath: true };
     const candidates = outs(classifier.id).map(node).filter((n) => n.type === "specialist");
     const candidateInfo = candidates.map((n) => {
@@ -265,7 +333,7 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
       const especialidades = candidateInfo.map((c) => `- ${c.nodeId}: ${c.name} — ${c.escopo}`).join("\n");
       const system =
         renderVars(classifier.data.prompt.system, { ...vars, especialidades }) +
-        `\n\n${DATA_NOTICE}` +
+        `\n\n${T["motor.aviso_dado"]}` +
         section("Regras globais", globalRules) +
         section("Alerta de manipulação", injectionAlert) +
         section("Gatilhos de exclusão (fora de escopo: só detectar e encaminhar)", routing.exclusionTriggers) +
@@ -274,12 +342,23 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
           "Perguntas de esclarecimento já feitas nesta conversa (NÃO repita; considere as respostas do usuário na conversa anterior)",
           askedQuestions,
         ) +
-        (clarifyStreak >= MAX_CLARIFY_STREAK ? section("Limite de esclarecimentos", "Já foram feitas perguntas demais. Não peça esclarecimento: classifique com os fatos disponíveis.") : "") +
+        (clarifyStreak >= MAX_CLARIFY_STREAK ? section("Limite de esclarecimentos", T["motor.limite_esclarecimentos"]) : "") +
         (await rulesOf(classifier)) +
         `\n\n## Candidatos\n<<candidatos>>${JSON.stringify(candidateInfo)}<</candidatos>>\n\n` +
-        FORMAT.classificador;
-      const { value } = await generateJson(baseCall(classifier, span.id, "Classificação", system, [...historyMsgs, { role: "user", content: ficha }]), classifierSchema);
-      return value;
+        withFormat("classificador", T["formato.classificador"]);
+      const msgs: ModelMessage[] = [...historyMsgs, { role: "user", content: ficha }];
+      const first = (await generateJson(baseCall(classifier, span.id, "Classificação", system, msgs), classifierSchema)).value;
+      if (!rankingEmpty(first, candidateInfo, routing.clarifyThreshold)) return first;
+      // Sem pedir esclarecimento, o Classificador nao pontuou ninguem (ranking
+      // vazio, ou candidato com 0): o motor perguntaria "pode contar mais?" a
+      // um relato claro. Uma segunda chamada pedindo o ranking resolve (Concierge).
+      flags.push("classificacao_refeita");
+      return (
+        await generateJson(
+          baseCall(classifier, span.id, "Classificação · ranking vazio", system, [...msgs, { role: "assistant", content: JSON.stringify(first) }, { role: "user", content: T["motor.refazer_ranking"] }]),
+          classifierSchema,
+        )
+      ).value;
     });
 
     // O modelo pode identificar o candidato pelo numero da especialidade (o
@@ -372,7 +451,7 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
       return finish({
         ...base,
         status: "blocked",
-        resposta_simples: "Não podemos orientar este caso: identificamos um possível conflito de interesse. Procure a Defensoria Pública ou um advogado de sua confiança.",
+        resposta_simples: T["resposta.conflito_interesse"],
         resposta_tecnica: "Regra Absoluta nº 2 (conflito de interesse): atendimento bloqueado pelo classificador.",
         citacoes: [],
         documentos: [],
@@ -381,7 +460,7 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
     }
     if (decision === "fora_de_escopo_sem_no") {
       flags.push("fora_de_escopo");
-      return finish({ ...base, status: "blocked", resposta_simples: "Este assunto está fora do que o Goga orienta. Procure a Defensoria Pública, a OAB da sua cidade ou um advogado.", resposta_tecnica: "Fora de escopo e o fluxo não tem nó de Encaminhamento (Ag. 5).", citacoes: [], documentos: [], especialistas: [] });
+      return finish({ ...base, status: "blocked", resposta_simples: T["resposta.fora_de_escopo"], resposta_tecnica: "Fora de escopo e o fluxo não tem nó de Encaminhamento (Ag. 5).", citacoes: [], documentos: [], especialistas: [] });
     }
     if (decision === "esclarecimento") {
       const asked = new Set(askedQuestions);
@@ -389,9 +468,9 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
       const q =
         own && !asked.has(own)
           ? own
-          : !asked.has(GENERIC_CLARIFY)
-            ? GENERIC_CLARIFY
-            : "Há mais algum detalhe importante que eu ainda não sei? Se não houver, responda “não” e eu sigo com a orientação.";
+          : !asked.has(T["resposta.esclarecimento"].trim())
+            ? T["resposta.esclarecimento"].trim()
+            : T["resposta.esclarecimento_final"].trim();
       return finish({ ...base, status: "clarify", resposta_simples: q, resposta_tecnica: `Score máximo ${top.toFixed(2)} abaixo do limiar de esclarecimento ${routing.clarifyThreshold} ou lacuna apontada pelo classificador (regra-mãe: uma lacuna por vez).`, citacoes: [], documentos: [], especialistas: [] });
     }
 
@@ -399,7 +478,7 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
     // Saudacao/agradecimento: o proprio classificador ja escreveu a resposta.
     // Sem especialista nem consolidador; so as checagens deterministicas.
     if (decision === "conversa") {
-      let text = cls.resposta_conversa.trim() || CONVERSA_PADRAO;
+      let text = cls.resposta_conversa.trim() || T["resposta.conversa"];
       const guardNode = compliance ?? consolidator;
       if (compliance) mark(compliance.id);
       const det = await ctx.tracer.wrap({ kind: "guardrail", name: "Checagens determinísticas (conversa)", nodeId: guardNode.id, parentId: root.id, input: { resposta: text } }, async () =>
@@ -408,7 +487,7 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
       const failed = det.filter((d) => !d.ok);
       if (failed.length) {
         flags.push("conversa_reprovada");
-        text = CONVERSA_PADRAO;
+        text = T["resposta.conversa"];
       }
       if (output) mark(output.id);
       return finish({
@@ -429,7 +508,7 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
       const pend = caso.documento_pendente;
       const fill = await ctx.tracer.wrap({ kind: "agent", name: `${consolidator.data.name} (documento)`, nodeId: consolidator.id, parentId: root.id, input: { pendente: pend, pareceres: caso.pareceres.length } }, async (span) => {
         const system =
-          "Você prepara documentos do caso a partir de modelos cadastrados." +
+          T["motor.documento"] +
           section("Regras globais", globalRules) +
           (await rulesOf(consolidator)) +
           section("Modelos de documento disponíveis", templates.map((t) => `${t.slug}: ${t.title} — ${t.description} (campos: ${t.fields.map((c) => `${c.nome}${c.obrigatorio ? "*" : ""} = ${c.rotulo}`).join("; ")}; * = obrigatório)`)) +
@@ -437,7 +516,7 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
           section("Pareceres do caso", caso.pareceres.length ? JSON.stringify(caso.pareceres.map((p) => ({ especialista: p.name, parecer: p.parecer }))) : "") +
           section("Documento em andamento (mantenha o modelo e os campos já coletados)", pend ? JSON.stringify(pend) : "") +
           "\n\n" +
-          FORMAT.documento;
+          withFormat("documento", T["formato.documento"]);
         const { value } = await generateJson(baseCall(consolidator, span.id, "Preenchimento de documento", system, [...historyMsgs, { role: "user", content: ficha }]), documentoSchema);
         return value;
       });
@@ -472,7 +551,7 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
       return finish({
         ...docBase,
         status: ok ? "ok" : "error",
-        resposta_simples: [ok ? `Pronto: preparei "${tpl.title}" em DOCX e PDF (arquivos abaixo). Revise os dados antes de usar; a decisão de enviar é sua.${faltou}` : `Não consegui gerar "${tpl.title}" agora. Tente de novo em instantes.`, g.settings.disclaimer].filter(Boolean).join("\n\n"),
+        resposta_simples: [ok ? renderVars(T["resposta.documento_pronto"], { titulo: tpl.title, faltou }) : renderVars(T["resposta.documento_falhou"], { titulo: tpl.title }), g.settings.disclaimer].filter(Boolean).join("\n\n"),
         resposta_tecnica: `Modelo ${tpl.slug} preenchido com: ${Object.keys(campos).join(", ") || "(nenhum campo)"}.`,
         documentos: ctx.generated,
       });
@@ -515,8 +594,11 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
         let evidencias = "";
         if (n.data.knowledge.spaces.length) {
           try {
-            // Na consulta, a busca vai pelo que o colega pediu: e o ponto que falta, nao o caso todo.
-            const consulta = requests.length ? [...requests.map((x) => neutralize(x.pergunta)), searchText].join("\n").slice(0, 1500) : searchText;
+            // Na consulta, a busca vai pelo assunto (a consulta enxuta do Classificador) e pelo
+            // comeco do que o colega pediu, com teto: os pedidos sao instrucoes ("verifique…,
+            // devolva…"), nao termos de busca, e consulta longa deixa a KB lenta (Concierge: 1.347
+            // caracteres, 18 s; a mesma curta, 1,4 s).
+            const consulta = requests.length ? [searchText.slice(0, 300), ...requests.map((x) => neutralize(x.pergunta).slice(0, 200))].join("\n").slice(0, 600) : searchText;
             const r = (await runSkill("buscar_kb", { consulta }, env)) as { resultados: { titulo: string; base: string; pagina: number | null; secao?: string | null; trecho: string; armadilha: string | null; document_id?: number; pagina_wiki_id?: number }[] };
             evidencias = r.resultados
               .filter((p) => !(n.data.knowledge.verifiedOnly && p.armadilha))
@@ -534,7 +616,7 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
         const system =
           renderVars(n.data.prompt.system, vars) +
           `\n\nEspecialidade: ${n.data.name}` +
-          `\n\n${DATA_NOTICE}` +
+          `\n\n${T["motor.aviso_dado"]}` +
           section("Regras globais", globalRules) +
           section("Alerta de manipulação", injectionAlert) +
           (await rulesOf(n)) +
@@ -546,15 +628,15 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
             .join("") +
           (n.data.prompt.examples ? section("Exemplos", n.data.prompt.examples) : "") +
           // Uma rodada de consulta so: quem foi consultado nao aciona mais ninguem.
-          (!requests.length && n.data.prompt.outputFormat === "parecer" ? consultSection(colleagues, maxConsultas) : "") +
+          (!requests.length && n.data.prompt.outputFormat === "parecer" ? consultSection(colleagues, maxConsultas, T["retriagem.consultar_colegas"]) : "") +
           "\n\n" +
-          (n.data.prompt.outputFormat === "parecer" ? FORMAT.parecer : "");
+          (n.data.prompt.outputFormat === "parecer" ? withFormat("parecer", T["formato.parecer"]) : "");
         // O parecer do colega e saida de modelo que leu documentos e anexos: vai como dado.
         const content = requests.length
           ? ficha +
             section(
               "Consulta de colegas",
-              `Outro especialista já analisou este caso e precisa de um ponto que você apura. Responda ao que ele pediu, no contexto do caso acima.\n\n${requests.map((r) => `### Pedido de ${r.de}\n${neutralize(r.pergunta)}\n\nO que ${r.de} já apurou:\n${asData(`parecer:${r.de}`, r.parecer)}`).join("\n\n")}`,
+              `${T["retriagem.pedido"].trim()}\n\n${requests.map((r) => `### Pedido de ${r.de}\n${neutralize(r.pergunta)}\n\nO que ${r.de} já apurou:\n${asData(`parecer:${r.de}`, r.parecer)}`).join("\n\n")}`,
             )
           : ficha;
         const call = { ...baseCall(n, span.id, `Parecer · ${n.data.name}`, system, [{ role: "user", content }] as ModelMessage[]), tools: await toolsFor(env, mcpTools), maxSteps: 6 };
@@ -621,12 +703,12 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
               const system =
                 renderVars(retriagem.data.prompt.system, vars) +
                 (retriagem.data.prompt.system ? "" : "Você é a Retriagem do Goga.") +
-                `\n\n${DATA_NOTICE}` +
+                `\n\n${T["motor.aviso_dado"]}` +
                 section("Regras globais", globalRules) +
                 section("Alerta de manipulação", injectionAlert) +
                 (await rulesOf(retriagem)) +
                 "\n\n" +
-                retriagemFormat(colleagues, maxConsultas);
+                retriagemFormat(colleagues, maxConsultas, T["retriagem.formato"]);
               const user =
                 `## Caso\n${relato.join("\n").slice(-3000)}\n\n## Pareceres da primeira rodada\n` +
                 answered
@@ -714,30 +796,27 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
       consolidado = await ctx.tracer.wrap({ kind: "agent", name: cycles ? `${consolidator.data.name} (revisão ${cycles})` : consolidator.data.name, nodeId: consolidator.id, parentId: root.id, input: { pareceres: okResults.length, reaproveitados: decision === "reuso", correcoes: feedback } }, async (span) => {
         const system =
           renderVars(consolidator.data.prompt.system, { ...vars, pareceres }) +
-          `\n\n${DATA_NOTICE}` +
+          `\n\n${T["motor.aviso_dado"]}` +
           section("Regras globais", globalRules) +
           section("Alerta de manipulação", injectionAlert) +
           (await rulesOf(consolidator)) +
           (decision === "reuso"
-            ? section("Continuação do caso", "Os pareceres abaixo são do turno anterior e a orientação já foi dada. Responda à mensagem atual do usuário (dúvida sobre a orientação) sem repetir a orientação inteira.")
+            ? section("Continuação do caso", T["motor.continuacao"])
             : "") +
           section("Pareceres dos especialistas", asData("pareceres", pareceres)) +
           (anyFailure
-            ? section(
-                "Consultas que falharam",
-                "Algumas ferramentas dos especialistas devolveram erro (em consultas_que_falharam). A falta de resultado delas não prova que algo não existe: nunca afirme que um direito, prazo ou cálculo não se aplica por causa delas; diga que não foi possível verificar aquilo.",
-              )
+            ? section("Consultas que falharam", T["motor.consultas_falharam"])
             : "") +
           section("Citações conferidas", allCitations.map((c) => `${c.citacao}: ${c.status}${c.bloqueada ? " (NÃO CITAR)" : ""}`)) +
           section("Modelos de documento disponíveis", templates.map((t) => `${t.slug}: ${t.title} (campos: ${t.fields.map((c) => c.nome).join(", ")})`)) +
           section("Versão anterior (reprovada pelo Compliance)", previousVersion) +
           section("Correções exigidas pelo Compliance", feedback) +
           (previousVersion
-            ? section("Como corrigir", "Parta da versão anterior e mude SÓ os trechos que as correções apontam; o resto fica como está, palavra por palavra. Reescrever o que não foi apontado abre objeções novas e atrasa a resposta.")
+            ? section("Como corrigir", T["motor.como_corrigir"])
             : "") +
           section("Disclaimer obrigatório (termine a resposta simples com ele)", disclaimer) +
           "\n\n" +
-          FORMAT.consolidado;
+          withFormat("consolidado", T["formato.consolidado"]);
         const { value } = await generateJson(baseCall(consolidator, span.id, "Consolidação", system, [...historyMsgs, { role: "user", content: ficha }]), consolidadoSchema);
         // O disclaimer e anexado pelo motor, nao confiado ao modelo: e texto
         // fixo, e o Compliance reprovaria a resposta inteira por esquecimento.
@@ -770,7 +849,7 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
         const failedDet = det.filter((d) => !d.ok).map((d) => `${d.check}: ${d.detalhe}`);
         const system =
           renderVars(compliance.data.prompt.system, vars) +
-          `\n\n${DATA_NOTICE}` +
+          `\n\n${T["motor.aviso_dado"]}` +
           section("Regras globais", globalRules) +
           section("Alerta de manipulação", injectionAlert) +
           (await rulesOf(compliance)) +
@@ -781,7 +860,7 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
           section("Citações conferidas", allCitations.map((c) => `${c.citacao}: ${c.status}${c.bloqueada ? " (NÃO CITAR)" : ""}`)) +
           section("Correções pedidas na revisão anterior", feedback) +
           "\n\n" +
-          FORMAT.compliance;
+          withFormat("compliance", T["formato.compliance"]);
         const { value } = await generateJson(baseCall(compliance, span.id, "Revisão de compliance", system, [{ role: "user", content: `Mensagem do usuário:\n${message}\n\nResposta a revisar:\n\n${text}` }]), complianceSchema);
         if (value.zona === "vermelha" && !flags.includes("zona_vermelha")) flags.push("zona_vermelha");
         // Formato antigo, sem `objecoes`: reprovacao com motivos e uma objecao bloqueante.
@@ -839,7 +918,7 @@ export async function executeTurn(ctx: RunContext, input: TurnInput): Promise<Tu
       status = "blocked";
       finalAnswer = {
         ...finalAnswer,
-        resposta_simples: [cycle.safeResponse || "Não conseguimos montar uma orientação segura para este caso. Procure a Defensoria Pública, o Procon ou um advogado.", disclaimer].filter(Boolean).join("\n\n"),
+        resposta_simples: [cycle.safeResponse || T["resposta.segura"], disclaimer].filter(Boolean).join("\n\n"),
         resposta_tecnica: `Resposta retida pelo Compliance após ${cycles} ciclo(s): ${verdict.motivos.join("; ")}`,
         documentos_solicitados: [],
       };
